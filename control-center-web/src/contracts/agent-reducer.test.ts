@@ -1563,6 +1563,27 @@ describe('AgentEventReducer', () => {
 
     expect(recovered.turnsById['turn-retry']).toMatchObject({ status: 'completed' });
     expect(recovered.turnsById['turn-retry'].failure).toBeUndefined();
+    expect(recovered.messagesById['assistant-network-failure'].status).toBe('failed');
+  });
+
+  it('keeps a later failed attempt terminal even when the turn has an earlier completed assistant message', () => {
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        serverMessage('user-retry', 'user', 'turn-retry', '继续检查'),
+        serverMessage('assistant-progress', 'assistant', 'turn-retry', '正在检查资料。'),
+        {
+          ...serverMessage('assistant-final-failure', 'assistant', 'turn-retry', '模型连接失败。'),
+          status: 'failed',
+        },
+      ],
+      liveEvents: [],
+      lastSequence: 206,
+      resumeToken: 'session-1:206',
+      status: 'idle',
+    });
+
+    expect(recovered.turnsById['turn-retry'].status).toBe('failed');
+    expect(recovered.messagesById['assistant-progress'].status).toBe('completed');
   });
 
   it('reopens a provisionally failed turn when later Tool work proves the retry is active', () => {

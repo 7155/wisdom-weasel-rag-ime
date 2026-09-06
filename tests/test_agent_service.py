@@ -4977,6 +4977,43 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(replay, [])
         stream.close()
 
+    def test_scene_skill_save_during_active_work_keeps_runtime_and_uses_new_selection(self) -> None:
+        runtime = self.service.runtime
+        revision = self.service.configuration()["configuration"]["revision"]
+        with patch.object(runtime, "runtime_status", return_value={"status": "busy"}), patch.object(
+            self.service, "_apply_runtime_policy"
+        ) as apply_runtime:
+            result = self.service.update_configuration({
+                "expectedRevision": revision,
+                "changes": {"skillRouting.ordinary": ["systematic-debugging"]},
+                "updatedBy": "app-center",
+            })
+            self.assertTrue(result["ok"])
+            self.assertIs(self.service.runtime, runtime)
+            apply_runtime.assert_not_called()
+            session = self.service.create_session({"title": "New scene selection"})["session"]
+            self.assertEqual(self.service._runtime_skill_allowlist(session), ["systematic-debugging"])
+            with self.assertRaisesRegex(ValueError, "active turn"):
+                self.service.update_configuration({
+                    "expectedRevision": result["configuration"]["revision"],
+                    "changes": {"runtime.enabled": True},
+                })
+
+    def test_prompt_settings_are_visible_and_do_not_restart_the_runtime(self) -> None:
+        runtime = self.service.runtime
+        initial = self.service.configuration()
+        self.assertEqual(initial["promptPolicy"]["appliesTo"], "new_sessions")
+        self.assertIn("<work-policy>", initial["promptPolicy"]["builtInSystemPrompt"])
+        with patch.object(runtime, "stop", side_effect=AssertionError("prompt edit restarted Runtime")):
+            result = self.service.update_configuration({
+                "expectedRevision": initial["configuration"]["revision"],
+                "changes": {"prompts.systemInstructions": "保留明确的验收边界。"},
+                "updatedBy": "settings-ui",
+            })
+        self.assertTrue(result["ok"])
+        self.assertIs(self.service.runtime, runtime)
+        self.assertEqual(self.service._runtime_prompt_settings({})["systemInstructions"], "保留明确的验收边界。")
+
     def test_kernel_configuration_drives_new_sessions_and_runtime_policy(self) -> None:
         initial_runtime = self.service.runtime
         initial = self.service.configuration()["configuration"]

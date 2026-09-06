@@ -1,5 +1,24 @@
 # PAW 面试指标与证据账本
 
+当前面试 Demo 主线、四场景指标和简历改写候选见
+[2026-09-05 简历与演示证据稿](RESUME_EVIDENCE_CURRENT.md)。
+
+最新 Memory 记录是 `memory.maintenance-pi-model-only-20260905-r3.v1`：新 Pi Session
+synthetic validation，同一 5-case fixture、full-json-v1、standard-v1、max，仅换模型。
+两侧整理、检索、回滚与重放通过；Sol/Luna 各 2 次实际请求，共 4 次、0 失败。
+Runtime DB 与 transcript 用量及成本已对账，估算 `$0.163425 → $0.0071846`
+（`95.6037%`），token 为 `14,450 → 15,078`。这是单轮合成验证，不是生产个人记忆、
+Held-out、安装态验收或旧 CLI/concise-json-v1 配对的复现；旧实验保持独立。
+原始计数、source/code/fixture hash、report refs 和逐模型成本回执保存在
+[`memory-pi-current-pair-20260905.r3.json`](runs/memory-pi-current-pair-20260905.r3.json)。
+将 `MEMORY_PI_PAIR_SOURCE` 指向保留的六份回执目录后，可运行以下只读核对，不调用 Provider：
+
+```bash
+python3 scripts/export_memory_pi_trial_pair.py --source-root "$MEMORY_PI_PAIR_SOURCE" --output eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json --check
+python3 scripts/check_interview_metrics.py
+python3 scripts/check_interview_agent_experiments.py
+```
+
 ## User Requirement Ledger
 
 这份目录只负责“指标、运行和表述边界”，不替代 PAWOS 的需求权威、Runtime

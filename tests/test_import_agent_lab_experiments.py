@@ -100,7 +100,7 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
                 write=False,
                 imported_at_ms=123,
             )
-        self.assertEqual(receipt["experimentCount"], 34)
+        self.assertEqual(receipt["experimentCount"], 35)
         self.assertIn("cloudops.agent-validation-and-falsification.v1", receipt["experimentIds"])
         self.assertIn("agent-lab.model-cost.luna-max-validation.v1", receipt["experimentIds"])
         self.assertIn("enterpriseops-csm.preloaded-tool-cost.v1", receipt["experimentIds"])
@@ -110,6 +110,7 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
         self.assertIn("enterpriseops-csm.luna-model-only-r5.v1", receipt["experimentIds"])
         self.assertIn("enterpriseops-csm.luna-prompt-adaptation-r7.v1", receipt["experimentIds"])
         self.assertIn("memory.maintenance-luna-model-only-r1.v1", receipt["experimentIds"])
+        self.assertIn("memory.maintenance-pi-model-only-20260905-r3.v1", receipt["experimentIds"])
         self.assertIn("cloudops.alert-first-luna-model-only-r1.v1", receipt["experimentIds"])
         self.assertIn("cloudops.luna-owner-mechanism-prompt-r5.v1", receipt["experimentIds"])
         self.assertIn("enterprise-rag.sol-max-standard-r6.v1", receipt["experimentIds"])
@@ -171,7 +172,7 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
             "memory.maintenance-shadow-v4": ("rejected", "reject", 5),
             "cloudops.runtime-selection-repair-retry3.v1": ("rejected", "reject", 12),
         }
-        self.assertEqual(len(by_id), 34)
+        self.assertEqual(len(by_id), 35)
         for experiment_id, (status, decision, case_count) in required.items():
             experiment = by_id[experiment_id]
             self.assertEqual(experiment["status"], status, experiment_id)

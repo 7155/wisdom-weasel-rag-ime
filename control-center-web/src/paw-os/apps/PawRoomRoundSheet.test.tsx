@@ -175,7 +175,49 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(screen.queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
   });
 
-  it('keeps the coordinator report visible after every worker submits a result', () => {
+  it('renders the complete current streaming host report without promoting it to a final', () => {
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-mars', 'session-mars', 1),
+    ]);
+    room.workItems = [activeWorkItem('work-mars', 'participant-mars')];
+    const projection = projectionWithProgress('主持正在整理');
+    appendCoordinatorPost(projection, 'progress', `${'公开汇报内容。'.repeat(80)}\n\n流式正文末尾仍然可读。`);
+    const message = Object.values(projection.messagesById).find((item) => item.role === 'assistant')!;
+    message.status = 'streaming';
+
+    render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
+
+    const report = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    expect(report).toHaveTextContent('流式正文末尾仍然可读。');
+    expect(within(report).getByRole('status')).toHaveTextContent('进行中');
+    expect(screen.queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
+  });
+
+  it('keeps idle roster cards out of a streaming coordinator reply and counts only its active lane', () => {
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-mars', 'session-mars', 1),
+      participant('participant-venus', 'session-venus', 2),
+    ]);
+    const projection = projectionWithProgress('主持正在回答');
+    appendCoordinatorPost(projection, 'progress', '这是当前问题的回复。');
+    const message = Object.values(projection.messagesById).find((item) => item.role === 'assistant')!;
+    message.status = 'streaming';
+
+    render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
+
+    const report = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    expect(report).toHaveTextContent('这是当前问题的回复。');
+    expect(within(report).getByRole('status')).toHaveTextContent('进行中');
+    expect(screen.queryByRole('region', { name: 'Mars 未分配' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Venus 未分配' })).not.toBeInTheDocument();
+    expect(screen.getByText('1 颗行星 · 协作中')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '收起协作过程' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the coordinator report visible and makes partner submissions expandable', async () => {
+    const user = userEvent.setup();
     const room = roomWith([
       participant('participant-earth', 'session-earth', 0),
       participant('participant-mars', 'session-mars', 1),
@@ -203,7 +245,14 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(screen.getByRole('region', { name: 'Earth 主控汇报' })).toHaveTextContent(
       '主控已汇总两位伙伴的最终结果',
     );
-    expect(screen.getAllByRole('region', { name: /最终结果$/u })).toHaveLength(2);
+    expect(screen.getAllByRole('region', { name: /伙伴结果$/u })).toHaveLength(2);
+    const mars = screen.getByRole('region', { name: 'Mars 伙伴结果' });
+    const disclosure = mars.querySelector('details')!;
+    expect(disclosure).not.toHaveAttribute('open');
+    await user.click(within(mars).getByText('查看结果'));
+    expect(disclosure).toHaveAttribute('open');
+    expect(within(mars).getByText('Mars 已提交结果。')).toBeVisible();
+    expect(within(mars).getByRole('button', { name: '打开 Mars Session' })).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
@@ -256,6 +305,46 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(within(table).getByText('Venus')).toBeInTheDocument();
     expect(screen.getByText('2 颗行星 · 协作中')).toBeInTheDocument();
     expect(screen.queryByText('3 颗行星 · 协作中')).not.toBeInTheDocument();
+  });
+
+  it('keeps a stopped host report readable while collapsing only the settled collaboration process', async () => {
+    const user = userEvent.setup();
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-mars', 'session-mars', 1),
+      participant('participant-venus', 'session-venus', 2),
+    ]);
+    const projection = projectionWithProgress('主持正在整理公开内容');
+    const fullReport = `## 已完成的部分\n\n${'保留真实的工作记录。'.repeat(70)}\n\n## 下一步\n\n打开产物继续核对交互。`;
+    appendCoordinatorPost(projection, 'progress', fullReport);
+    projection.turnsById['turn-1'] = {
+      ...projection.turnsById['turn-1']!,
+      status: 'aborted',
+      participantIds: ['participant-earth', 'participant-mars', 'participant-venus'],
+      activityIds: ['activity-earth', 'activity-mars', 'activity-venus'],
+    };
+    projection.activitiesById['activity-earth'] = { ...projection.activitiesById['activity-earth']!, status: 'aborted' };
+    for (const [name, id] of [['Mars', 'mars'], ['Venus', 'venus']]) {
+      projection.activitiesById[`activity-${id}`] = activityForParticipant(
+        projection.activitiesById['activity-earth']!, `activity-${id}`, `participant-${id}`, `session-${id}`, `${name} 保留当前进展`,
+      );
+    }
+    projection.activityOrder = ['activity-earth', 'activity-mars', 'activity-venus'];
+
+    render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
+
+    const report = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    expect(report).toHaveTextContent('打开产物继续核对交互。');
+    expect(within(report).getByRole('heading', { name: '下一步' })).toBeVisible();
+    expect(within(report).getByRole('status')).toHaveTextContent('已停止');
+    expect(report).not.toHaveAttribute('aria-live');
+    expect(screen.queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看协作过程' }));
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(report).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '收起协作过程' }));
+    expect(report).toBeVisible();
   });
 
   it('counts only planets assigned in this round when the Room roster has idle roles', () => {
@@ -376,10 +465,10 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(updatedEarthRow).toBe(earthRow);
     expect(updatedEarthRow).not.toHaveAttribute('data-flowing-light');
     expect(updatedEarthRow).toHaveTextContent('dispatch 回执已经核对完成');
-    expect(updatedEarthRow).toHaveTextContent('已汇合');
+    expect(updatedEarthRow).toHaveTextContent('已回复');
   });
 
-  it('lets the user fold one round without hiding the Room-level list of rounds', async () => {
+  it('keeps the latest objective static and folds only the process with an associated control', async () => {
     const user = userEvent.setup();
     render(
       <PawRoomRoundSheet
@@ -389,9 +478,14 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: '折叠本轮任务' }));
+    const processToggle = screen.getByRole('button', { name: '收起协作过程' });
+    const processId = processToggle.getAttribute('aria-controls');
+    expect(processId).toBeTruthy();
+    expect(screen.getByText('完成 Room 任务表').closest('button')).toBeNull();
+    await user.click(processToggle);
 
-    expect(screen.getByRole('button', { name: '展开本轮任务' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看协作过程' })).toHaveAttribute('aria-expanded', 'false');
+    expect(document.getElementById(processId!)).toHaveAttribute('hidden');
     expect(screen.queryByRole('table', { name: '完成 Room 任务表 · 行星进展' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Room 行星任务表' })).toBeInTheDocument();
   });
@@ -480,10 +574,11 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
         },
       },
     };
+    const completeAnswer = `验收完成，结果已写入 /work/paw/final-result.md。\n\n${'详细验收依据。'.repeat(90)}\n\n最终保留的结论。`;
     appendCoordinatorPost(
       accepted,
       'result',
-      '验收完成，结果已写入 /work/paw/final-result.md。',
+      completeAnswer,
     );
     rerender(
       <PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={accepted} room={acceptedRoom} />,
@@ -492,6 +587,10 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     const result = await screen.findByRole('region', { name: 'Earth 最终结果' });
     expect(result).toHaveAttribute('data-result-ready', 'true');
     expect(result).toHaveTextContent('验收完成');
+    expect(result).toHaveTextContent('最终保留的结论。');
+    expect(result).not.toHaveAttribute('aria-live');
+    expect(within(result).getByRole('status')).toHaveTextContent('已提交');
+    expect(within(result).getByRole('status')).not.toHaveTextContent('详细验收依据');
     expect(within(result).getByRole('link', { name: '打开文件 final-result.md' })).toBeInTheDocument();
     expect(within(result).getByRole('button', { name: '打开文件 final-result.md' })).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
@@ -767,8 +866,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     await user.click(screen.getByRole('button', { name: '打开文件 report.md' }));
     expect(openRoute).toHaveBeenCalledWith('/files?session=session-earth&path=%2Fwork%2Fpaw%2Freport.md');
 
-    const result = screen.getByRole('region', { name: 'Earth 最终结果' })
-      .querySelector<HTMLElement>('.paw-room-round__result')!;
+    const result = screen.getByRole('region', { name: 'Earth 最终结果' });
     await user.click(within(result).getByRole('link', { name: '打开文件 summary.md' }));
     expect(openRoute).toHaveBeenCalledWith('/files?session=session-earth&path=%2Fwork%2Fpaw%2Fsummary.md');
   });

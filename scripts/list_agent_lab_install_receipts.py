@@ -11,6 +11,9 @@ from typing import Iterator
 
 _RUN_REF_PREFIX = "eval/interview-metrics/runs/"
 _OPTIMAL_PATH_GLOB = "agent-lab-optimal-path-*.json"
+_CANDIDATE_EVIDENCE = {
+    "enterprise-rag.luna-prompt-v4-standard-r6.v1": "agent-lab-candidate-evidence-enterprise-rag-r6.v1.json",
+}
 
 
 def _strings(value: object) -> Iterator[str]:
@@ -50,6 +53,15 @@ def required_receipts(ledger_path: Path) -> tuple[Path, ...]:
 
     for path in runs_root.glob(_OPTIMAL_PATH_GLOB):
         receipts.add(_verified_receipt(path, runs_root, path.name))
+
+    # Public candidate details are prepared once from frozen source artifacts.
+    # The installed app needs neither private reports/qrels nor the scorer.
+    for experiment in payload.get("experiments", []):
+        if not isinstance(experiment, dict):
+            continue
+        name = _CANDIDATE_EVIDENCE.get(str(experiment.get("id") or ""))
+        if name:
+            receipts.add(_verified_receipt(runs_root / name, runs_root, name))
 
     return tuple(sorted(receipts, key=lambda path: path.name))
 

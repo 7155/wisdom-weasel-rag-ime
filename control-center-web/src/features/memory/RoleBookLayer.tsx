@@ -92,7 +92,8 @@ export function RoleBookLayer({
       ) : null}
       {rolesQuery.error ? (
         <InlineNotice title="伙伴目录暂时无法读取" tone="danger">
-          {publicErrorText(rolesQuery.error, '请刷新后重试。')}
+          <p>{publicErrorText(rolesQuery.error, '可以重新读取伙伴目录。')}</p>
+          <Button onClick={() => void rolesQuery.refetch()} size="small" variant="quiet">重新读取伙伴目录</Button>
         </InlineNotice>
       ) : null}
       {!rolesQuery.isPending && !rolesQuery.error && !roles.length ? (
@@ -119,6 +120,7 @@ export function RoleBookLayer({
                 error={roleBook.error}
                 initialReferenceId={initialReferenceId}
                 isPending={roleBook.isPending}
+                onRetry={() => void roleBook.refetch()}
                 roleName={selectedRole.displayName}
               />
             ) : null}
@@ -134,12 +136,14 @@ function RoleBookDetail({
   error,
   initialReferenceId,
   isPending,
+  onRetry,
   roleName,
 }: {
   catalog: Record<string, unknown>;
   error: Error | null;
   initialReferenceId: string;
   isPending: boolean;
+  onRetry: () => void;
   roleName: string;
 }) {
   const active = asRecord(catalog.active);
@@ -174,11 +178,12 @@ function RoleBookDetail({
   if (error) {
     return (
       <InlineNotice title="伙伴记忆暂时无法读取" tone="danger">
-        {publicErrorText(error, '这位伙伴可能还没有形成长期工作经历。')}
+        <p>{publicErrorText(error, '可以重新读取这位伙伴的长期工作经历。')}</p>
+        <Button onClick={onRetry} size="small" variant="quiet">重新读取伙伴记忆</Button>
       </InlineNotice>
     );
   }
-  if (!Object.keys(active).length) {
+  if (!revisions.length) {
     return <InlineNotice title="还没有可用版本" tone="info">这位伙伴还没有可展示的长期工作经历。</InlineNotice>;
   }
 
@@ -187,7 +192,7 @@ function RoleBookDetail({
       <header>
         <span><BookUser size={17} /></span>
         <div>
-          <small>当前伙伴记忆</small>
+          <small>所选伙伴记忆</small>
           <h3>{stringValue(revision.displayName, roleName)}</h3>
           <p>{stringValue(revision.mission, '用于让伙伴在不同对话中保持连贯。')}</p>
         </div>

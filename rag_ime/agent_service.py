@@ -28,6 +28,7 @@ from .agent_skill_routing import (
     TRACE_AGENT_SURFACE_KEYS,
     skill_allowlist_for_session,
 )
+from .agent_prompt_settings import prompt_settings_catalog
 from .agent_approval_application import AgentApprovalApplicationService
 from .agent_approval_model import ApprovalModelArbiter
 from .agent_background_jobs import AgentBackgroundJobService
@@ -175,6 +176,9 @@ from .trace_replay_verification import (
     TraceVerificationValidationError,
 )
 from .sandbox_run_store import SandboxRunStore
+from .agent_lab_scene_recipes import AgentLabSceneRecipeStore
+from .agent_lab_trial_execution import AgentLabTrialApplication, TrialAdapter
+from .agent_lab_trials import AgentLabTrialServiceUnavailable, AgentLabTrialStore
 from .eval_lab import EvalLabProjection
 from .eval_lab_evidence import EvalLabEvidenceProjection
 from .vertical_agent_suite import (
@@ -210,6 +214,7 @@ class AgentService:
         wake_scheduler_enabled: bool = False,
         wake_scheduler_poll_seconds: float = 1.0,
         background_job_execution_owner: bool = True,
+        eval_lab_trial_adapters: Mapping[str, TrialAdapter] | None = None,
         eval_schedule_executor: (
             Callable[[Mapping[str, object]], Mapping[str, object]] | None
         ) = None,
@@ -273,12 +278,30 @@ class AgentService:
             self.runtime_factory = runtime_factory
         self.sessions = AgentSessionStore(db_path, persistent_reads=True)
         self.sessions.initialize()
+        self._eval_lab_golden_lock = RLock()
+        self._eval_lab_golden_store = None
+        self._eval_lab_golden_application = None
+        self._eval_lab_golden_execution_owner = background_job_execution_owner
+        self._eval_lab_trial_lock = RLock()
+        self._eval_lab_trial_store: AgentLabTrialStore | None = None
+        self._eval_lab_trial_application: AgentLabTrialApplication | None = None
+        self._eval_lab_trial_execution_owner = background_job_execution_owner
+        self._eval_lab_trial_closed = False
+        self._eval_lab_trial_adapters = (
+            self._default_trial_adapters()
+            if eval_lab_trial_adapters is None
+            else dict(eval_lab_trial_adapters)
+        )
         # The checked-in public ledger is a read-only projection source for the
         # Agent Lab page.  Explicit import remains append-only persistence;
         # this avoids hiding newly recorded cards when an external demo DB is
         # older than the current source checkout.
         source_ledger = Path(__file__).resolve().parents[1] / "eval/interview-metrics/agent-experiments.v1.json"
         self.eval_lab = EvalLabProjection(db_path, source_ledger_path=source_ledger)
+        self.eval_lab_scene_recipe_store = AgentLabSceneRecipeStore(
+            db_path,
+            experiment_provider=lambda: self.eval_lab.list_runs()["experiments"],
+        )
         # The evidence catalog is a read-only view over the optional
         # source-local evaluation archive.  It never joins the archive into
         # ordinary Agent Sessions and never starts a Provider; the App asks for
@@ -396,6 +419,9 @@ class AgentService:
             events=self.events.publish,
             execution_owner=background_job_execution_owner,
         )
+        if background_job_execution_owner and startup_recovery_enabled:
+            self._golden_store().recover_interrupted_jobs()
+            self._trial_store().recover_interrupted()
         self.work_documents = WorkDocumentService(
             db_path,
             sessions=self.sessions,
@@ -415,6 +441,7 @@ class AgentService:
                 tool_manifest_provider=self._runtime_tool_manifest,
                 skill_allowlist_provider=self._runtime_skill_allowlist,
                 compaction_observer=self._checkpoint_runtime_compaction,
+                prompt_settings_provider=self._runtime_prompt_settings,
             ),
             purpose="interactive",
             session_context_provider=self._runtime_session_context,
@@ -456,6 +483,7 @@ class AgentService:
             tool_gateway_url=self.tool_gateway_url,
             tool_manifest_provider=self._runtime_tool_manifest,
             compaction_observer=self._checkpoint_runtime_compaction,
+            prompt_settings_provider=self._runtime_prompt_settings,
             room_context_provider=self._room_delegation_context,
             model_route_provider=self._configured_model_route,
             startup_recovery=False,
@@ -1434,7 +1462,11 @@ class AgentService:
             "schemaVersion": "rag-ime.agent-configuration-get.v1",
             "ok": True,
             "configuration": self.configuration_store.snapshot(),
+            "promptPolicy": prompt_settings_catalog(),
         }
+
+    def _runtime_prompt_settings(self, _session: Mapping[str, object]) -> Mapping[str, object]:
+        return self.configuration_store.snapshot()["configuration"]["prompts"]
 
     def update_configuration(self, payload: Mapping[str, object]) -> dict[str, object]:
         with self._configuration_lock:
@@ -1455,10 +1487,9 @@ class AgentService:
             "runtime.startup",
             "runtime.idleTimeoutSeconds",
         }
-        runtime_change = bool(runtime_keys.intersection(str(key) for key in changes)) or any(
-            str(key).startswith("skillRouting.")
-            for key in changes
-        )
+        # Resource selection is read when a new Pi Session is bound. Existing
+        # Sessions keep their resourceSnapshot, including across reconnects.
+        runtime_change = bool(runtime_keys.intersection(str(key) for key in changes))
         if runtime_change:
             status = self.runtime.runtime_status()
             if status.get("status") in {"starting", "busy"}:
@@ -1500,9 +1531,11 @@ class AgentService:
         }
 
     def ensure_runtime(self, payload: Mapping[str, object]) -> dict[str, object]:
-        session_id = _required_text(payload, "sessionId")
-        with self._direct_agent_entry(session_id):
-            return self.session_application.ensure_runtime(payload)
+        # Opening a Room prewarms its Session. This is not a user-message
+        # admission: keeping a priority claim through the optional memory
+        # probe makes an idle participant reject the user's actual send.
+        # Pi's ensure() already owns Host/Session lifecycle serialization.
+        return self.session_application.ensure_runtime(payload)
 
     def list_sessions(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
         return self.session_application.list_sessions(payload)
@@ -1510,11 +1543,174 @@ class AgentService:
     def eval_lab_runs(self) -> dict[str, object]:
         return self.eval_lab.list_runs()
 
+    def _default_trial_adapters(self) -> dict[str, TrialAdapter]:
+        # The resident Pi can evaluate the fixed Memory fixture. RAG and
+        # CloudOps need explicit host assets and stay absent until registered.
+        # An explicit registry, including {}, replaces this default.
+        if not self._eval_lab_trial_execution_owner:
+            return {}
+        artifact_root = self.sessions.db_path.expanduser().resolve().parent / "agent-lab-trials" / "memory"
+        if artifact_root.is_relative_to(Path(__file__).resolve().parents[1]):
+            # A source-local database is not a private evaluation artifact
+            # owner. Its host can inject an adapter with external storage.
+            return {}
+        from .agent_lab_memory_trial import AgentLabMemoryTrialAdapter
+
+        def executor():
+            from .agent_lab_golden_pi import AgentLabGoldenPiExecutor
+            return AgentLabGoldenPiExecutor(
+                self.sessions.db_path, sessions=self.sessions, runtime=lambda: self.runtime,
+            )
+
+        return {"memory": AgentLabMemoryTrialAdapter(
+            artifact_root, pi_executor_factory=executor,
+            abort_session=lambda session_id: self.runtime.abort(session_id),
+            production_db=self.sessions.db_path, project=self.project or "personal-agent-workbench",
+        )}
+
+    def _trial_store(self) -> AgentLabTrialStore:
+        with self._eval_lab_trial_lock:
+            if self._eval_lab_trial_store is None:
+                self._eval_lab_trial_store = AgentLabTrialStore(self.sessions.db_path)
+            return self._eval_lab_trial_store
+
+    def _trial_application(self) -> AgentLabTrialApplication:
+        with self._eval_lab_trial_lock:
+            if not self._eval_lab_trial_execution_owner or self._eval_lab_trial_closed:
+                raise AgentLabTrialServiceUnavailable()
+            if self._eval_lab_trial_application is None:
+                self._eval_lab_trial_application = AgentLabTrialApplication(
+                    self._trial_store(), self._eval_lab_trial_adapters,
+                )
+            return self._eval_lab_trial_application
+
+    @staticmethod
+    def _trial_command_payload(payload: Mapping[str, object], fields: set[str]) -> None:
+        if not isinstance(payload, Mapping) or set(payload) != fields:
+            raise ValueError("Trial command fields are invalid")
+        for key in fields - {"spec"}:
+            value = payload[key]
+            if not isinstance(value, str) or not value.strip() or len(value) > 256:
+                raise ValueError("Trial identifiers must be nonempty strings of at most 256 characters")
+        if "spec" in fields and not isinstance(payload["spec"], Mapping):
+            raise ValueError("Trial spec must be a JSON mapping")
+
+    def eval_lab_trials(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
+        # Reads never construct the execution Application or recover jobs.
+        if payload is not None and (not isinstance(payload, Mapping) or set(payload) - {"jobId"}):
+            raise ValueError("Trial read fields are invalid")
+        job_id = (payload or {}).get("jobId", "")
+        if not isinstance(job_id, str) or len(job_id) > 256 or (job_id and not job_id.strip()):
+            raise ValueError("Trial jobId is invalid")
+        response = self._trial_store().read(job_id)
+        if not job_id:
+            # Registry membership is configuration, not asset validation or
+            # permission to execute a scene. Reading it starts no workers.
+            response["registeredSceneIds"] = sorted(self._eval_lab_trial_adapters)
+        return response
+
+    def eval_lab_trial_start(self, payload: Mapping[str, object]) -> dict[str, object]:
+        self._trial_command_payload(payload, {"clientRequestId", "sceneId", "spec"})
+        if not self._eval_lab_trial_execution_owner or self._eval_lab_trial_closed:
+            raise AgentLabTrialServiceUnavailable()
+        return self._trial_application().start(payload["clientRequestId"], payload["sceneId"], payload["spec"])
+
+    def eval_lab_trial_cancel(self, payload: Mapping[str, object]) -> dict[str, object]:
+        self._trial_command_payload(payload, {"jobId"})
+        return self._trial_application().cancel(payload["jobId"])
+
+    def _golden_store(self):
+        from .agent_lab_golden import AgentLabGoldenStore
+        with self._eval_lab_golden_lock:
+            if self._eval_lab_golden_store is None:
+                self._eval_lab_golden_store = AgentLabGoldenStore(self.sessions.db_path)
+            return self._eval_lab_golden_store
+
+    def _golden_current_model(self) -> dict[str, str]:
+        configuration = self.configuration_store.snapshot()["configuration"]
+        primary = configuration.get("modelRouting", {}).get("primary", {})
+        profile = str(primary.get("modelProfile") or "inherit")
+        if profile == "inherit":
+            profile = str(configuration["sessionDefaults"]["modelProfile"])
+        provider, separator, model_id = profile.partition("/")
+        if not separator:
+            raise ValueError("configured Session model must contain provider/model")
+        thinking = str(primary.get("thinkingLevel") or "high")
+        return {"provider": provider, "model": model_id,
+                "thinkingLevel": "high" if thinking == "inherit" else thinking, "prompt": ""}
+
+    def eval_lab_golden(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
+        # Read replicas do not recover jobs or create a Runtime worker.
+        return self._golden_store().read(str((payload or {}).get("suiteId") or ""))
+
+    def eval_lab_golden_command(self, payload: Mapping[str, object]) -> dict[str, object]:
+        from .agent_lab_golden import AgentLabGoldenServiceUnavailable, AgentLabGoldenStore
+        from .agent_lab_golden_execution import AgentLabGoldenApplication
+        from .agent_lab_golden_pi import AgentLabGoldenPiExecutor
+        if payload.get("action") == "create":
+            # Capture current settings for this suite only. Existing standards
+            # and replayed command receipts keep their original model binding.
+            return AgentLabGoldenStore(
+                self.sessions.db_path, default_model=self._golden_current_model(),
+            ).command(payload)
+        if payload.get("action") not in {"draft", "calibrate", "experiment", "cancel", "resume"}:
+            return self._golden_store().command(payload)
+        if not self._eval_lab_golden_execution_owner:
+            raise AgentLabGoldenServiceUnavailable()
+        with self._eval_lab_golden_lock:
+            if self._eval_lab_golden_application is None:
+                executor = AgentLabGoldenPiExecutor(
+                    self.sessions.db_path, sessions=self.sessions, runtime=lambda: self.runtime,
+                )
+                self._eval_lab_golden_application = AgentLabGoldenApplication(
+                    store=self._golden_store(), complete=executor.complete,
+                    completed_result=executor.completed_result,
+                    abort=lambda session_id: self.runtime.abort(session_id),
+                )
+        return self._eval_lab_golden_application.command(payload)
+
     def eval_lab_evidence_read(
         self,
         payload: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         return self.eval_lab_evidence.read(payload)
+
+    def eval_lab_scene_recipes(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        request = payload or {}
+        return self.eval_lab_scene_recipe_store.get_state(
+            str(request.get("sceneId") or ""),
+            experiment_id=str(request.get("experimentId") or ""),
+        )
+
+    def eval_lab_scene_recipe_apply(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        revision = payload.get("expectedRevision")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+            raise ValueError("expectedRevision must be a non-negative integer")
+        return self.eval_lab_scene_recipe_store.apply_candidate(
+            _required_text(payload, "sceneId"),
+            experiment_id=_required_text(payload, "experimentId"),
+            expected_revision=revision,
+            client_request_id=_required_text(payload, "clientRequestId"),
+        )
+
+    def eval_lab_scene_recipe_rollback(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        revision = payload.get("expectedRevision")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+            raise ValueError("expectedRevision must be a non-negative integer")
+        return self.eval_lab_scene_recipe_store.rollback(
+            _required_text(payload, "sceneId"),
+            expected_revision=revision,
+            client_request_id=_required_text(payload, "clientRequestId"),
+        )
 
     def ensure_surface_session(
         self,
@@ -6185,6 +6381,15 @@ class AgentService:
 
 
     def close(self) -> None:
+        with self._eval_lab_trial_lock:
+            self._eval_lab_trial_closed = True
+            trial_application = self._eval_lab_trial_application
+        if trial_application is not None:
+            # Abort observed calls and wait for adapter cleanup while its
+            # Runtime, Session store and event owners are still available.
+            trial_application.close()
+        if self._eval_lab_golden_application is not None:
+            self._eval_lab_golden_application.close()
         self.delegation.close()
         self.runtime.stop()
         self.background_jobs.close()
@@ -6221,6 +6426,7 @@ class AgentService:
                 tool_manifest_provider=self._runtime_tool_manifest,
                 skill_allowlist_provider=self._runtime_skill_allowlist,
                 compaction_observer=self._checkpoint_runtime_compaction,
+                prompt_settings_provider=self._runtime_prompt_settings,
             ),
             purpose="interactive",
             session_context_provider=self._runtime_session_context,
@@ -6242,6 +6448,7 @@ class AgentService:
                 tool_manifest_provider=self._runtime_tool_manifest,
                 skill_allowlist_provider=self._runtime_skill_allowlist,
                 compaction_observer=self._checkpoint_runtime_compaction,
+                prompt_settings_provider=self._runtime_prompt_settings,
             ),
             purpose="interactive",
             session_context_provider=self._runtime_session_context,
@@ -6462,6 +6669,7 @@ def agent_service_from_environment(
     project: str = "",
     memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
+    eval_lab_trial_adapters: Mapping[str, TrialAdapter] | None = None,
 ) -> AgentService:
     return AgentService(
         db_path=db_path,
@@ -6473,6 +6681,7 @@ def agent_service_from_environment(
         ),
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
+        eval_lab_trial_adapters=eval_lab_trial_adapters,
     )
 
 
@@ -6535,6 +6744,7 @@ def agent_service_from_settings(
     wake_scheduler_enabled: bool = True,
     runtime_execution_owner: bool = True,
     defer_startup_recovery: bool = False,
+    eval_lab_trial_adapters: Mapping[str, TrialAdapter] | None = None,
 ) -> AgentService:
     runtime_config = pi_runtime_config_from_settings(settings)
     agent = settings.get("agent") if isinstance(settings.get("agent"), Mapping) else {}
@@ -6565,6 +6775,7 @@ def agent_service_from_settings(
         background_job_execution_owner=runtime_execution_owner,
         startup_recovery_enabled=runtime_execution_owner,
         defer_startup_recovery=defer_startup_recovery,
+        eval_lab_trial_adapters=eval_lab_trial_adapters,
     )
 
 

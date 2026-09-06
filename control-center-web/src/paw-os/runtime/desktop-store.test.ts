@@ -281,6 +281,24 @@ describe('PAWOS desktop store', () => {
     }
   });
 
+  it('preserves Room focus for background work and exits it when another App is opened', () => {
+    const store = createPawDesktopStore('agent');
+    store.getState().bindAgentMain('agent', { kind: 'room', id: 'room-reading', title: '研究' });
+    store.getState().setCollaborationFocusGroup('room:room-reading');
+
+    store.getState().openApp('files', { background: true });
+    expect(store.getState().activeWindowId).toBe('agent');
+    expect(store.getState().collaborationFocusGroup).toBe('room:room-reading');
+    store.getState().openApp('agent');
+    expect(store.getState().collaborationFocusGroup).toBe('room:room-reading');
+
+    store.getState().openApp('files');
+    expect(store.getState().activeWindowId).toBe('files');
+    expect(store.getState().collaborationFocusGroup).toBeNull();
+    expect(store.getState().collaborationFocusReturnWindowId).toBeNull();
+    expect(store.getState().windows.agent?.target?.id).toBe('room-reading');
+  });
+
   it('binds an existing Agent window to the Room target without creating another main window', () => {
     const store = createPawDesktopStore();
     const mainId = store.getState().openApp('agent');

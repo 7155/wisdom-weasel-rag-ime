@@ -1,0 +1,53 @@
+.lab-result-summary {
+  --result-ink: var(--lab-ink, #253247);
+  --result-muted: var(--lab-muted, #59677a);
+  --result-line: var(--lab-line, #e1e6ed);
+  --result-blue: var(--lab-accent, #3167b1);
+  --result-green: var(--lab-success, #267366);
+  background: var(--lab-surface, #fff);
+  box-sizing: border-box;
+  color: var(--result-ink);
+  container: lab-result-summary / inline-size;
+  font-size: 13px;
+  min-width: 0;
+}
+.lab-result-summary ::selection { background: var(--lab-accent-soft); color: var(--lab-ink); }
+.lab-result-summary__heading h3 { font-size: 20px; font-weight: 650; letter-spacing: -.02em; line-height: 1.4; margin: 0; text-wrap: balance; }
+.lab-result-summary__heading p { color: var(--result-muted); font-size: 12px; line-height: 1.65; margin: 6px 0 0; max-width: 76ch; }
+.lab-result-summary__metrics { margin-top: 16px; min-width: 0; }
+.lab-result-summary__metrics table { border-collapse: collapse; table-layout: fixed; text-align: left; width: 100%; }
+.lab-result-summary__metrics th { font-weight: 550; }
+.lab-result-summary__metrics thead th { color: var(--result-muted); font-size: 11px; padding: 0 14px 7px; }
+.lab-result-summary__metrics thead th:first-child { padding-left: 0; width: 31%; }
+.lab-result-summary__metric { border-top: 1px solid var(--result-line); }
+.lab-result-summary__metric th { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; padding: 10px 12px 10px 0; vertical-align: middle; }
+.lab-result-summary__metric td { padding: 10px 14px; vertical-align: middle; }
+.lab-result-summary__metric th > span { display: block; }
+.lab-result-summary__delta { color: var(--result-muted); display: block; font-size: 11px; font-weight: 400; margin-top: 3px; }
+.lab-result-summary__metric strong { color: var(--result-ink); display: block; font-size: 16px; font-variant-numeric: tabular-nums; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.lab-result-summary__metric strong[data-unavailable] { color: var(--result-muted); font-size: 12px; font-weight: 400; }
+.lab-result-summary__bar { background: var(--lab-surface-subtle); display: block; height: 5px; margin-top: 6px; width: 100%; }
+.lab-result-summary__bar > span { background: var(--lab-muted); display: block; height: 100%; }
+.lab-result-summary__after .lab-result-summary__bar > span { background: var(--result-blue); }
+.lab-result-summary__metric[data-change='improved'] .lab-result-summary__after .lab-result-summary__bar > span { background: var(--result-green); }
+.lab-result-summary__metric[data-change='regressed'] .lab-result-summary__after .lab-result-summary__bar > span { background: var(--lab-danger); }
+.lab-result-summary__cost-note { color: var(--result-muted); font-size: 11px; line-height: 1.6; margin: 7px 0 12px; overflow-wrap: anywhere; }
+.lab-result-summary__fallback { color: var(--result-ink); font-size: 13px; line-height: 1.65; margin: 18px 0; max-width: 72ch; overflow-wrap: anywhere; }
+.lab-result-summary__method { border-top: 1px solid var(--result-line); min-width: 0; }
+.lab-result-summary__method > summary { align-items: center; color: var(--result-muted); cursor: pointer; display: flex; font-size: 12px; gap: 10px; justify-content: space-between; line-height: 1.5; list-style: none; min-height: 36px; }
+.lab-result-summary__method > summary::-webkit-details-marker { display: none; }
+.lab-result-summary__method > summary:hover { color: var(--result-blue); }
+.lab-result-summary__method > summary:focus-visible { border-radius: 4px; outline: 2px solid var(--result-blue); outline-offset: 3px; }
+.lab-result-summary__method[open] > summary svg { transform: rotate(180deg); }
+.lab-result-summary__method > dl { display: grid; gap: 14px; margin: 0; padding: 6px 0 18px; }
+.lab-result-summary__method dt { font-size: 12px; font-weight: 600; line-height: 1.5; }
+.lab-result-summary__method dd { color: var(--result-muted); font-size: 12px; line-height: 1.7; margin: 5px 0 0; overflow-wrap: anywhere; }
+.lab-result-summary__source { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; }
+.lab-result-summary__accessible { clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+@container lab-result-summary (max-width: 400px) {
+  .lab-result-summary__heading h3 { font-size: 18px; }
+  .lab-result-summary__metrics thead th:first-child { width: 34%; }
+  .lab-result-summary__metrics thead th, .lab-result-summary__metric td { padding-right: 6px; padding-left: 6px; }
+  .lab-result-summary__metric th { font-size: 12px; padding-right: 8px; }
+  .lab-result-summary__metric strong { font-size: 14px; }
+}

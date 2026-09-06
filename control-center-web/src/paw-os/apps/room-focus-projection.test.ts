@@ -123,6 +123,26 @@ function projectionWithParallelRuntime(): RoomProjectionState {
 }
 
 describe('buildRoomFocusProjection', () => {
+  it('reads production nested intercom endpoints and updates one message across delivery receipts', () => {
+    const projection = createRoomProjection('room-sol');
+    const message = { id: 'peer-ask', kind: 'ask', sourceParticipantId: 'p-earth', targetParticipantId: 'p-mars', content: '请核对接口', replyTo: '' };
+    for (const [index, phase] of ['queued', 'delivered', 'replied'].entries()) {
+      const id = `intercom-event-${index}`;
+      projection.activityOrder.push(id);
+      projection.activitiesById[id] = {
+        id, turnId: 'peer-turn', kind: 'dispatch', sourceSessionId: 's-mars', participantId: 'p-mars', status: 'completed', summary: 'participant_activity',
+        payload: { activityKind: 'intercom', phase, message: { ...message, status: phase } }, createdAtMs: index + 10, updatedAtMs: index + 10, sequence: index + 1,
+      };
+    }
+    const packets = buildRoomFocusProjection(room(), projection).flow;
+    expect(packets).toHaveLength(1);
+    expect(packets[0]).toMatchObject({
+      id: 'intercom:peer-ask', kind: 'question', sourceParticipantId: 'p-earth', targetParticipantIds: ['p-mars'],
+      summary: '请核对接口', status: 'replied', createdAtMs: 10,
+      receiptIds: ['intercom-event-0', 'intercom-event-1', 'intercom-event-2'],
+    });
+  });
+
   it('keeps the real goal and projects runtime branches beneath the explicit root work item', () => {
     const root = work({
       id: 'work-root',

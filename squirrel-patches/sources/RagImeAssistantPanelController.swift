@@ -23,6 +23,7 @@ final class RagImeAssistantPanelController: NSObject {
   private var visibleSince: Date?
   private var generatingTimer: Timer?
   private var generatingFrame = 0
+  private var generatingMotionSuppressed = false
   private var didTraceCreation = false
   private var presentationGeneration = 0
   private var ownershipGeneration = 0
@@ -61,6 +62,11 @@ final class RagImeAssistantPanelController: NSObject {
     cardView.autoresizingMask = [.width, .height]
     cardView.onSelect = { [weak self] candidate, index, mode in self?.onSelect?(candidate, index, mode) }
     cardView.onAction = { [weak self] action in self?.handle(action) }
+    cardView.onLayoutChange = { [weak self] in
+      guard let self, self.currentState == .explicitGenerating,
+        let payload = self.currentPayload else { return }
+      _ = self.applyVisible(payload, state: .explicitGenerating, anchor: self.lastReliableCaretAnchor, forceContent: true)
+    }
   }
 
   var isVisible: Bool { panel.isVisible }
@@ -127,10 +133,11 @@ final class RagImeAssistantPanelController: NSObject {
     return true
   }
 
-  func showConfirmation(text _: String = "✓ 已插入") {
+  func showConfirmation(text: String = "✓ 已插入") {
     guard let payload = currentPayload else { return }
     let reduceMotion = !fadeAnimationEnabled(for: payload) || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     currentState = .transientConfirmation
+    cardView.setConfirmationText(text)
     cardView.animateAccepted(reduceMotion: reduceMotion)
     panel.ignoresMouseEvents = true
     trace("assistant_surface_state_changed", [
@@ -406,20 +413,28 @@ final class RagImeAssistantPanelController: NSObject {
       return
     }
     generatingFrame = 0
-    let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    let reduceMotion = !fadeAnimationEnabled(for: payload) || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    generatingMotionSuppressed = reduceMotion
     cardView.updateGeneratingFrame(generatingFrame, reduceMotion: reduceMotion)
-    cardView.setGeneratingPulse(active: true, reduceMotion: reduceMotion)
+    cardView.setGeneratingPulse(active: state == .pendingPrediction, reduceMotion: reduceMotion)
     trace("assistant_generating_animation_started", [
-      "intervalMs": 500,
+      "intervalMs": 1000,
       "reduceMotion": reduceMotion,
       "surfaceState": state.rawValue,
     ])
-    guard !reduceMotion, generatingTimer == nil else { return }
-    let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+    // Elapsed time is status information, so it remains live under reduced motion.
+    guard (state == .explicitGenerating || !reduceMotion), generatingTimer == nil else { return }
+    let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
       guard let self,
         self.currentState == .explicitGenerating || self.currentState == .pendingPrediction else { return }
       self.generatingFrame = (self.generatingFrame + 1) % 4
-      self.cardView.updateGeneratingFrame(self.generatingFrame, reduceMotion: false)
+      let motionSuppressed = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        || !(self.currentPayload.map(self.fadeAnimationEnabled(for:)) ?? true)
+      if motionSuppressed != self.generatingMotionSuppressed {
+        self.generatingMotionSuppressed = motionSuppressed
+        self.cardView.setGeneratingPulse(active: self.currentState == .pendingPrediction, reduceMotion: motionSuppressed)
+      }
+      self.cardView.updateGeneratingFrame(self.generatingFrame, reduceMotion: motionSuppressed)
     }
     generatingTimer = timer
     RunLoop.main.add(timer, forMode: .common)
@@ -431,6 +446,7 @@ final class RagImeAssistantPanelController: NSObject {
     generatingTimer = nil
     generatingFrame = 0
     cardView.setGeneratingPulse(active: false, reduceMotion: true)
+    cardView.stopGenerationProgress()
     if wasRunning {
       trace("assistant_generating_animation_stopped", ["reason": "surface_state_changed"])
     }
@@ -460,7 +476,7 @@ final class RagImeAssistantPanelController: NSObject {
     case .explicitGenerating:
       return NSSize(
         width: min(configuredMaximumWidth, RagImeSuggestionCardView.thinkingWidth),
-        height: RagImeSuggestionCardView.thinkingHeight
+        height: cardView.generationHeight
       )
     case .explicitNoSuggestion, .explicitError:
       return NSSize(width: max(320, predictionWidth), height: RagImeSuggestionCardView.errorHeight)
@@ -801,10 +817,7 @@ final class RagImeAssistantPanelController: NSObject {
       RagImeSuggestionCardView.isRealCandidate($0) || RagImeSuggestionCardView.isActionCandidate($0)
     }.map { candidate in
       [
-        candidate.candidateStableId ?? "",
-        candidate.sourceType,
-        candidate.text,
-        candidate.insertText,
+        candidate.assistantPresentationSignature,
         candidate.evidencePreview,
         canReplaceSelection(in: payload) ? "replace" : "insert",
       ].joined(separator: "\u{1f}")
@@ -819,6 +832,8 @@ final class RagImeAssistantPanelController: NSObject {
       state.rawValue,
       payload.snapshotId,
       payload.statusText,
+      payload.animation.kind,
+      String(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion),
       String(payload.expiresAfterMs),
       payload.dismissReason,
       String(describing: candidateFontSize(for: payload)),
@@ -833,6 +848,9 @@ final class RagImeAssistantPanelController: NSObject {
     if let transaction = payload.frontendTransaction,
       case .string(let status)? = transaction["diagnosticStatus"],
       status.contains("error") || status.contains("failed") {
+      return true
+    }
+    if case .string("sensitive_field_blocked")? = payload.frontendTransaction?["diagnosticStatus"] {
       return true
     }
     let status = payload.statusText.lowercased()

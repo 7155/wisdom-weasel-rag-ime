@@ -11,7 +11,7 @@ const timeoutMs = Number.parseInt(
   process.env.RAG_IME_BENCHMARK_GATEWAY_TIMEOUT_MS ?? "120000",
   10,
 );
-const nativeFetch = globalThis.fetch.bind(globalThis);
+let httpFetch = globalThis.fetch.bind(globalThis);
 
 if (!spoolDir || !runtimeEntrypoint) {
   throw new Error("benchmark spool runtime wrapper is not configured");
@@ -53,7 +53,7 @@ function requestHeaders(input, init) {
 async function spoolFetch(input, init = undefined) {
   const url = requestUrl(input);
   if (new URL(url).protocol !== "rag-ime-spool:") {
-    return await nativeFetch(input, init);
+    return await httpFetch(input, init);
   }
   const requestId = randomUUID();
   const requestPath = path.join(spoolDir, `${requestId}.request.json`);
@@ -110,5 +110,20 @@ async function spoolFetch(input, init = undefined) {
   }
 }
 
-globalThis.fetch = spoolFetch;
+// Pi initializes its HTTP dispatcher after this wrapper imports the Runtime.
+// undici.install() assigns a fresh global fetch at that point. Keep one scheme
+// router installed and adopt that assignment as the HTTP delegate, so ordinary
+// HTTP still uses Pi's configured dispatcher without losing private spool I/O.
+Object.defineProperty(globalThis, "fetch", {
+  configurable: true,
+  enumerable: true,
+  get: () => spoolFetch,
+  set: (replacement) => {
+    if (replacement === spoolFetch) return;
+    if (typeof replacement !== "function") {
+      throw new TypeError("benchmark transport requires a callable HTTP fetch");
+    }
+    httpFetch = replacement.bind(globalThis);
+  },
+});
 await import(pathToFileURL(runtimeEntrypoint).href);

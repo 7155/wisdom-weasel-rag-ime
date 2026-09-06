@@ -11,6 +11,9 @@
 .history-filter-toolbar__submit { grid-area: submit; }
 .history-filter-toolbar__source { grid-area: source; }
 
+.history-refresh-issue { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.history-refresh-issue > .ui-button { flex: none; }
+
 .history-filter-toolbar .ui-field { gap: 4px; min-width: 0; }
 
 .history-filter-toolbar .ui-field__label {

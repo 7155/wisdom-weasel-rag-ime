@@ -21,6 +21,7 @@ from rag_ime.agent_delegation import (
     _subagent_prompt,
 )
 from rag_ime.agent_events import AgentEventHub
+from rag_ime.agent_execution_policy import APPROVAL_AUTO, APPROVAL_DENY, approval_strategy
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_templates import AgentTemplateBudget, agent_template as real_agent_template
 from rag_ime.pi_runtime import PiRuntimeConfig
@@ -690,6 +691,93 @@ class AgentDelegationTests(unittest.TestCase):
                     )
             finally:
                 invalid_policy_coordinator.close()
+        finally:
+            coordinator.close()
+
+    def test_nested_room_children_inherit_permissions_without_rebinding_dispatch(self) -> None:
+        room_parent = self.sessions.create(
+            title="Room 私有委派链",
+            mode="coordinator",
+            execution_mode="full_trust",
+            tool_profile_version="control-center-auto-approve-v1",
+            workspace_roots=[str(self.root), "/"],
+        )
+        room_context = {
+            "roomBound": True,
+            "roomId": "room:nested",
+            "rootId": "room-turn:original",
+            "taskId": "",
+            "dispatchId": "room-dispatch:original",
+            "generation": 1,
+            "permissionPolicy": {
+                "schemaVersion": "rag-ime.room-permission-policy.v1",
+                "room": {"executionMode": "full_trust"},
+                "partner": {"executionMode": "inherit"},
+                "toolAgent": {"executionMode": "inherit"},
+            },
+        }
+        coordinator = self.coordinator(
+            room_context_provider=lambda session_id: (
+                room_context
+                if session_id == str(room_parent["id"])
+                else {
+                    "roomBound": False,
+                    "roomId": "",
+                    "rootId": "",
+                    "taskId": "",
+                    "dispatchId": "",
+                    "generation": 0,
+                }
+            ),
+        )
+        try:
+            for requested_access in ("inherit", "read_only"):
+                with self.subTest(access=requested_access):
+                    room_context.update({
+                        "rootId": "room-turn:original",
+                        "dispatchId": "room-dispatch:original",
+                        "generation": 1,
+                    })
+                    first = coordinator.delegate(
+                        str(room_parent["id"]),
+                        {
+                            "agent": "delegate",
+                            "task": "第一层 Tool Agent",
+                            "access": requested_access,
+                            "wait": True,
+                            **_TASK_CONTRACT,
+                        },
+                    )["batch"]
+                    # A later root turn must not replace the private child's
+                    # original causal receipt when it delegates again.
+                    room_context.update({
+                        "rootId": "room-turn:next",
+                        "dispatchId": "room-dispatch:next",
+                        "generation": 2,
+                    })
+                    second = coordinator.delegate(
+                        str(first["runs"][0]["childSessionId"]),
+                        {
+                            "agent": "worker",
+                            "task": "第二层继续已授予的权限",
+                            "wait": True,
+                            **_TASK_CONTRACT,
+                        },
+                    )["batch"]
+                    child = self.sessions.get(str(second["runs"][0]["childSessionId"]))
+                    expected_mode = "full_trust" if requested_access == "inherit" else "read_only"
+                    self.assertEqual(child["executionMode"], expected_mode)
+                    self.assertEqual(
+                        child["toolProfileVersion"],
+                        "control-center-auto-approve-v1"
+                        if requested_access == "inherit"
+                        else "subagent-readonly-v1",
+                    )
+                    self.assertEqual(
+                        approval_strategy(child, tool="workspace_patch", operation="apply"),
+                        APPROVAL_AUTO if requested_access == "inherit" else APPROVAL_DENY,
+                    )
+                    self.assertEqual(second["causalMetadata"], first["causalMetadata"])
         finally:
             coordinator.close()
 
@@ -1547,7 +1635,7 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual(response["batch"]["resultDeliveryMode"], "next_turn")
         run_id = str(response["batch"]["runs"][0]["id"])
         _wait_until(
-            lambda: coordinator.store.get_run(run_id)["resultContextScheduledAtMs"]
+            lambda: coordinator.store.get_run(run_id, hydrate_artifacts=False)["resultContextScheduledAtMs"]
             is not None
         )
         terminal = coordinator.store.get_run(run_id)
@@ -1888,7 +1976,7 @@ class AgentDelegationTests(unittest.TestCase):
                     ]
 
                 _wait_until(
-                    lambda: coordinator.store.get_run(run_id)["resultContextScheduledAtMs"]
+                    lambda: coordinator.store.get_run(run_id, hydrate_artifacts=False)["resultContextScheduledAtMs"]
                     is not None
                 )
                 _wait_until(lambda: len(failed_parent_progress()) == 1)
@@ -2851,7 +2939,7 @@ class AgentDelegationTests(unittest.TestCase):
 
         coordinator = self.coordinator(_CompletingRuntime)
         _wait_until(
-            lambda: coordinator.store.get_batch(str(queued["id"]))["state"] == "completed"
+            lambda: coordinator.store.get_batch(str(queued["id"]), hydrate_artifacts=False)["state"] == "completed"
         )
         failed = coordinator.store.get_batch(str(running["id"]))
         self.assertEqual(failed["state"], "failed")
@@ -2867,7 +2955,7 @@ class AgentDelegationTests(unittest.TestCase):
             },
         )
         _wait_until(
-            lambda: coordinator.store.get_batch(str(running["id"]))["state"]
+            lambda: coordinator.store.get_batch(str(running["id"]), hydrate_artifacts=False)["state"]
             == "completed"
         )
         resumed = coordinator.store.get_batch(str(running["id"]))["runs"][0]
@@ -3007,7 +3095,7 @@ class AgentDelegationTests(unittest.TestCase):
         )
         run_id = str(response["batch"]["runs"][0]["id"])
         child_session_id = str(response["batch"]["runs"][0]["childSessionId"])
-        _wait_until(lambda: coordinator.store.get_run(run_id)["state"] == "failed")
+        _wait_until(lambda: coordinator.store.get_run(run_id, hydrate_artifacts=False)["state"] == "failed")
         coordinator.control(
             str(self.parent["id"]),
             run_id,
@@ -3017,7 +3105,7 @@ class AgentDelegationTests(unittest.TestCase):
                 "message": "从失败位置继续，不要重复已完成步骤。",
             },
         )
-        _wait_until(lambda: coordinator.store.get_run(run_id)["state"] == "completed")
+        _wait_until(lambda: coordinator.store.get_run(run_id, hydrate_artifacts=False)["state"] == "completed")
         resumed = coordinator.store.get_run(run_id)
         self.assertEqual(resumed["childSessionId"], child_session_id)
         self.assertEqual(_ResumeRuntime.prompts[-1], "从失败位置继续，不要重复已完成步骤。")

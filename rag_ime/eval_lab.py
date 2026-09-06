@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from .agent_sessions import AgentSessionStore
 from .agent_lab_experiments import AgentLabExperimentStore
+from .agent_lab_candidate_evidence import project_candidate_evidence
 from .contracts.json_schema import load_contract, validate_contract
 
 
@@ -172,7 +173,16 @@ class EvalLabProjection:
             return stored
         merged = {str(item["experimentId"]): item for item in stored}
         merged.update({str(item["experimentId"]): item for item in projected})
-        return sorted(merged.values(), key=lambda item: str(item["experimentId"]))
+        experiments = sorted(merged.values(), key=lambda item: str(item["experimentId"]))
+        # Optional public detail is an installed receipt projection, never a
+        # live private rescore or rewrite of an imported experiment revision.
+        root = self.source_ledger_path.resolve().parents[2]
+        for experiment in experiments:
+            detail = project_candidate_evidence(experiment, root=root)
+            if detail is not None:
+                experiment["optimizationEvidence"] = detail
+                validate_contract(experiment, "agent-lab-experiment.v1.json")
+        return experiments
 
     @staticmethod
     def _run_payload(

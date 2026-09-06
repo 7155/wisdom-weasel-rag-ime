@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from rag_ime.pi_runtime import PiRuntimeConfig
 from rag_ime.rag_benchmark_agent import RagBenchmarkAgentGateway
@@ -24,6 +24,37 @@ from scripts.canary_rag_benchmark_agent import (
 
 
 class RagBenchmarkAgentCanaryTests(unittest.TestCase):
+    def test_isolated_runtime_never_changes_process_environment_during_discovery(self) -> None:
+        import os
+        from scripts import canary_rag_benchmark_agent as runner
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installation = SimpleNamespace(executable=root / "cli.mjs", extension_path=root / "tools.mjs",
+                node_executable="fixture-node", pi_version="0.84.2", protocol_version="2", tools=("agents",), manifest_sha256="fixture")
+            before = dict(os.environ)
+            def discover(**kwargs):
+                self.assertEqual([], [key for key in set(before) | set(os.environ) if before.get(key) != os.environ.get(key)])
+                return PiRuntimeConfig(enabled=True, executable=None, agent_dir=root / "installed-config",
+                    session_dir=root / "installed-sessions", logs_dir=root / "installed-logs",
+                    installation_error="unrelated installed runtime unavailable")
+            with patch.object(runner, "snapshot_managed_pi_runtime_payload", return_value=installation), patch.object(runner.PiRuntimeConfig, "from_environment", side_effect=discover):
+                config = runner._isolated_runtime_config(root / "run", agent_config=root / "config", runtime_payload=root / "payload")
+            self.assertEqual(before, dict(os.environ))
+            self.assertEqual(installation.extension_path, config.extension_path)
+            self.assertEqual(installation.node_executable, config.node_executable)
+            self.assertEqual(installation.pi_version, config.pi_version)
+            self.assertEqual("", config.installation_error)
+
+    def test_wait_cancel_aborts_owned_pi_session_without_waiting_for_timeout(self) -> None:
+        from scripts import canary_rag_benchmark_agent as runner
+        service = Mock()
+        service.events.replay.return_value = ([], False)
+        with self.assertRaises(BaseException) as raised:
+            runner._wait_for_terminal(service, session_id="owned", turn_id="turn-owned", timeout_seconds=30, cancelled=lambda: True)
+        self.assertEqual("RagEvaluationCancelled", type(raised.exception).__name__)
+        service.abort.assert_called_once_with("owned")
+        service.events.replay.assert_not_called()
+
     def test_isolated_runtime_does_not_reinject_a_bundled_skill(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-canary-runtime-") as temporary:
             root = Path(temporary)

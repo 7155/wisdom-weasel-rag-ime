@@ -1860,6 +1860,47 @@ class AgentRoomStore:
             ).fetchone()
         return row is not None
 
+    def append_child_terminal_projection(
+        self,
+        *,
+        runtime_event_id: str,
+        dispatch_id: str,
+        room_id: str,
+        event_type: str,
+        payload: Mapping[str, object],
+        turn_id: str = "",
+        participant_id: str | None = None,
+        source_session_id: str = "",
+        topic_id: str = "",
+        created_at_ms: int | None = None,
+    ) -> tuple[dict[str, object] | None, bool]:
+        """Publish one Pi child terminal across live delivery and recovery.
+
+        Recovery may have less display metadata than the live event. Its
+        identity is the exact dispatch and Runtime event, while ordinary
+        public projections continue requiring identical payloads on replay.
+        """
+        identity = (str(dispatch_id).strip(), str(runtime_event_id).strip())
+        if (
+            not all(identity)
+            or event_type != "participant_activity"
+            or not _matches_child_terminal(payload, identity)
+        ):
+            raise ValueError("invalid Room child Runtime terminal projection")
+        return self._append_event(
+            room_id=room_id,
+            event_type=event_type,
+            payload=payload,
+            turn_id=turn_id,
+            participant_id=participant_id,
+            source_session_id=source_session_id,
+            topic_id=topic_id,
+            created_at_ms=created_at_ms,
+            retain_per_room=2000,
+            projection_key=f"room-partner-terminal:{identity[0]}:{identity[1]}",
+            child_terminal_identity=identity,
+        )
+
     def has_tool_terminal(
         self,
         room_id: str,
@@ -1935,6 +1976,7 @@ class AgentRoomStore:
         created_at_ms: int | None,
         retain_per_room: int,
         projection_key: str,
+        child_terminal_identity: tuple[str, str] | None = None,
     ) -> tuple[dict[str, object] | None, bool]:
         if event_type not in ROOM_EVENT_TYPES:
             raise ValueError(f"unsupported agent room event type: {event_type}")
@@ -1951,6 +1993,10 @@ class AgentRoomStore:
             topic_id=topic_id,
         )
         with self._connect() as conn:
+            if child_terminal_identity is not None:
+                # A live callback and startup recovery can race, including
+                # through separate EventHub instances sharing this database.
+                conn.execute("BEGIN IMMEDIATE")
             if projection_key:
                 receipt = conn.execute(
                     """
@@ -1963,17 +2009,64 @@ class AgentRoomStore:
                 if receipt is not None:
                     if (
                         str(receipt["room_id"]) != room_id
-                        or str(receipt["payload_hash"]) != projection_hash
+                        or (
+                            child_terminal_identity is None
+                            and str(receipt["payload_hash"]) != projection_hash
+                        )
                     ):
                         raise ValueError("Room projection key was rebound")
                     row = conn.execute(
                         "SELECT * FROM agent_room_events WHERE event_id = ?",
                         (str(receipt["event_id"]),),
                     ).fetchone()
+                    if row is not None and child_terminal_identity is not None:
+                        existing = _room_event_payload(row)
+                        if (
+                            str(existing["turnId"]) != turn_id
+                            or existing["participantId"] != participant_id
+                            or str(existing["sourceSessionId"]) != source_session_id
+                            or not _matches_child_terminal(
+                                existing["payload"], child_terminal_identity,
+                                phase=_child_terminal_data(payload).get("phase"),
+                            )
+                        ):
+                            raise ValueError("Room projection key was rebound")
                     return (
                         _room_event_payload(row) if row is not None else None,
                         False,
                     )
+            if child_terminal_identity is not None:
+                # Older live publications predate durable projection keys.
+                # Adopt their exact event without replaying another UI row.
+                rows = conn.execute(
+                    """
+                    SELECT * FROM agent_room_events
+                    WHERE room_id = ? AND turn_id = ?
+                      AND participant_id IS ? AND source_session_id = ?
+                      AND event_type = 'participant_activity'
+                      AND (json_extract(payload_json, '$.sourceEventId') = ?
+                           OR json_extract(payload_json, '$.sourceRuntimeEventId') = ?)
+                    ORDER BY sequence DESC
+                    """,
+                    (room_id, turn_id, participant_id, source_session_id,
+                     child_terminal_identity[1], child_terminal_identity[1]),
+                ).fetchall()
+                for row in rows:
+                    existing = _room_event_payload(row)
+                    if not _matches_child_terminal(
+                        existing["payload"], child_terminal_identity,
+                        phase=_child_terminal_data(payload).get("phase"),
+                    ):
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO agent_room_public_projection_receipts(
+                            projection_key, room_id, event_id, payload_hash, created_at_ms
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (projection_key, room_id, existing["eventId"], projection_hash, timestamp),
+                    )
+                    return existing, False
             room = conn.execute("SELECT * FROM agent_rooms WHERE id = ?", (room_id,)).fetchone()
             if room is None:
                 raise AgentRoomNotFound(room_id)
@@ -2567,6 +2660,17 @@ class AgentRoomEventHub:
             self._fanout(event)
         return event
 
+    def publish_child_terminal(self, **values: object) -> dict[str, object] | None:
+        with self._lock:
+            event, created = self.store.append_child_terminal_projection(
+                **values,  # type: ignore[arg-type]
+            )
+        if created:
+            if event is None:
+                raise RuntimeError("created Room child terminal has no event")
+            self._fanout(event)
+        return event
+
     def has_projection(self, projection_key: str) -> bool:
         return self.store.has_projection(projection_key)
 
@@ -2857,6 +2961,27 @@ def _room_event_payload(row: sqlite3.Row) -> dict[str, object]:
     }
     validate_contract(payload, "agent-room-event.v1.json")
     return payload
+
+
+def _child_terminal_data(payload: Mapping[str, object]) -> Mapping[str, object]:
+    data = payload.get("data")
+    return data if isinstance(data, Mapping) else payload
+
+
+def _matches_child_terminal(
+    payload: Mapping[str, object],
+    identity: tuple[str, str],
+    *,
+    phase: object = None,
+) -> bool:
+    data = _child_terminal_data(payload)
+    return (
+        data.get("activityKind") == "child"
+        and data.get("phase") in {"completed", "failed", "aborted"}
+        and (phase is None or data.get("phase") == phase)
+        and str(data.get("dispatchId") or data.get("childDispatchId") or "") == identity[0]
+        and str(payload.get("sourceEventId") or payload.get("sourceRuntimeEventId") or "") == identity[1]
+    )
 
 
 def _room_projection_hash(

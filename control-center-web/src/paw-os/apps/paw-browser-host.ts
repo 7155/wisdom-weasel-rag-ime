@@ -8,6 +8,20 @@ export type PawBrowserHost = {
   activate(tab: { title: string; url: string; webContentsId: number }): void;
   clearBrowsingData(action: 'cache' | 'site-data'): Promise<PawBrowserMaintenanceReceipt>;
   clearHistory(): Promise<PawBrowserHistoryEntry[]>;
+  /** Optional while older Electron hosts are still in circulation. */
+  getBookmarks?(): Promise<PawBrowserBookmark[]>;
+  /** Optional while older Electron hosts are still in circulation. */
+  addBookmark?(bookmark: { title: string; url: string }): Promise<PawBrowserBookmark[]>;
+  /** Optional while older Electron hosts are still in circulation. */
+  removeBookmark?(bookmarkId: string): Promise<PawBrowserBookmark[]>;
+  /** Optional while older Electron hosts are still in circulation. */
+  getDownloads?(): Promise<PawBrowserDownload[]>;
+  /** Optional while older Electron hosts are still in circulation. */
+  openDownload?(downloadId: string): Promise<PawBrowserDownload & { opened: boolean }>;
+  /** Optional while older Electron hosts are still in circulation. */
+  revealDownload?(downloadId: string): Promise<PawBrowserDownload & { revealed: boolean }>;
+  /** Optional while older Electron hosts are still in circulation. */
+  cancelDownload?(downloadId: string): Promise<PawBrowserDownload>;
   getHistory(): Promise<PawBrowserHistoryEntry[]>;
   getSettings(): Promise<PawBrowserSettings>;
   listExtensions(): Promise<PawBrowserExtension[]>;
@@ -21,6 +35,10 @@ export type PawBrowserHost = {
   setStartPage(startPage: string): Promise<{ startPage: string }>;
   takeScreenshot(webContentsId: number): Promise<{ path: string; saved: boolean }>;
   onCommand(listener: (command: { action: 'new_tab'; commandId: string; url: string }) => void): () => void;
+  /** Optional while older Electron hosts are still in circulation. */
+  onBookmarksChanged?(listener: (bookmarks: PawBrowserBookmark[]) => void): () => void;
+  /** Optional while older Electron hosts are still in circulation. */
+  onDownloadsChanged?(listener: (downloads: PawBrowserDownload[]) => void): () => void;
   onGuestClosed(listener: (tabId: string) => void): () => void;
   onHistoryChanged(listener: (history: PawBrowserHistoryEntry[]) => void): () => void;
   onOpenUrl(listener: (url: string) => void): () => void;
@@ -37,6 +55,35 @@ export type PawBrowserHistoryEntry = {
   title: string;
   url: string;
   visitedAt: number;
+};
+
+export type PawBrowserBookmark = {
+  id: string;
+  title: string;
+  url: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type PawBrowserDownloadState =
+  | 'pending'
+  | 'progressing'
+  | 'completed'
+  | 'cancelled'
+  | 'interrupted'
+  | 'failed';
+
+export type PawBrowserDownload = {
+  id: string;
+  filename: string;
+  url: string;
+  path: string;
+  state: PawBrowserDownloadState;
+  receivedBytes: number;
+  totalBytes: number;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
 };
 
 export type PawBrowserExtension = {

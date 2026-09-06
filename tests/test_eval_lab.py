@@ -157,6 +157,13 @@ class EvalLabProjectionTests(unittest.TestCase):
         experiment_ids = {item["experimentId"] for item in payload["experiments"]}
         self.assertIn("agent-lab.model-cost.luna-max-validation.v1", experiment_ids)
         self.assertIn("trace-agent.closed-loop-historical-replay.v1", experiment_ids)
+        memory = next(item for item in payload["experiments"]
+                      if item["experimentId"] == "memory.maintenance-pi-model-only-20260905-r3.v1")
+        self.assertEqual(memory["dataset"]["split"], "synthetic_validation")
+        self.assertEqual(memory["candidate"]["metrics"]["apiCostUsd"], 0.0071846)
+        self.assertEqual(memory["candidate"]["metrics"]["requestCount"], 2)
+        self.assertEqual(memory["baseline"]["metrics"]["apiCostUsd"], 0.163425)
+        self.assertIn("memory.maintenance-luna-model-only-r1.v1", experiment_ids)
 
     def test_projects_optimal_path_receipt_without_exposing_raw_evidence(self) -> None:
         payload = EvalLabProjection(

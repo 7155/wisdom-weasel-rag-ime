@@ -32,6 +32,11 @@ class _RoomEvents:
     def publish(self, **values: object) -> None:
         self.items.append(dict(values))
 
+    def publish_child_terminal(
+        self, *, runtime_event_id: str, dispatch_id: str, **values: object,
+    ) -> None:
+        self.publish(**values)
+
 
 class _Turns:
     def __init__(self, *, child: bool = False) -> None:

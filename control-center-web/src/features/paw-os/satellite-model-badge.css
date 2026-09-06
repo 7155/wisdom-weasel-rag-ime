@@ -1,0 +1,3 @@
+.paw-satellite-model { display: inline-block; flex-shrink: 1; max-width: 160px; overflow: hidden; color: var(--color-text-secondary, #64748b); font-size: 11px; font-weight: 500; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.paw-planet-model-slot { display: flex; flex: 0 1 160px; justify-content: flex-end; min-width: 0; margin-left: auto; }
+.paw-planet-model-slot:empty { display: none; }

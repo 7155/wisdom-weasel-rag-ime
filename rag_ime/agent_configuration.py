@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agent_role_identity import canonical_agent_role_id
+from .agent_prompt_settings import default_prompt_settings, normalize_prompt_settings, prompt_text
 from .agent_skill_routing import (
     SKILL_SCENARIOS,
     default_skill_routing,
@@ -31,7 +32,6 @@ _RUNTIME_KEYS = frozenset(
         "runtime.enabled",
         "runtime.startup",
         "runtime.idleTimeoutSeconds",
-        *(f"skillRouting.{scenario}" for scenario in SKILL_SCENARIOS),
     }
 )
 _MODEL_ROUTE_IDS = (
@@ -104,6 +104,7 @@ def default_agent_configuration(
         "coordination": {"enabled": bool(coordinator_enabled)},
         "modelRouting": _default_model_routing(),
         "skillRouting": default_skill_routing(),
+        "prompts": default_prompt_settings(),
         "capabilityDisclosure": {"projectPreferences": {}},
     }
     _validate_configuration(configuration)
@@ -146,6 +147,7 @@ class AgentConfigurationStore:
         if self._initialized:
             return
         configuration = copy.deepcopy(dict(seed))
+        configuration.setdefault("prompts", default_prompt_settings())
         defaults = configuration.get("sessionDefaults")
         if isinstance(defaults, dict):
             defaults.setdefault("capabilityDisclosurePreferences", {})
@@ -201,6 +203,9 @@ class AgentConfigurationStore:
             raise RuntimeError("agent configuration row is invalid")
         configuration = copy.deepcopy(raw)
         changed_keys: list[str] = []
+        if "prompts" not in configuration:
+            configuration["prompts"] = default_prompt_settings()
+            changed_keys.append("prompts")
 
         defaults = configuration.get("sessionDefaults")
         if not isinstance(defaults, dict):
@@ -764,6 +769,7 @@ def _configuration_from_row(
         {"projectPreferences": {}},
     )
     _ensure_model_routing(raw)
+    raw.setdefault("prompts", default_prompt_settings())
     _validate_configuration(raw)
     return raw
 
@@ -810,6 +816,8 @@ def _normalize_changes(changes: Mapping[str, object]) -> dict[str, object]:
         elif key.startswith("skillRouting."):
             scenario = key.removeprefix("skillRouting.")
             normalized[key] = normalize_skill_route(value, scenario=scenario)
+        elif key in {"prompts.systemInstructions", "prompts.compactionInstructions"}:
+            normalized[key] = prompt_text(value, field=key)
         elif key == "capabilityDisclosure.projectPreferences":
             normalized[key] = _project_disclosure_preferences(value)
         else:
@@ -825,6 +833,7 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
         "modelRouting",
         "capabilityDisclosure",
         "skillRouting",
+        "prompts",
     }:
         raise ValueError("agent configuration sections are invalid")
     runtime = _mapping(configuration.get("runtime"), field="runtime")
@@ -857,6 +866,7 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
     if set(disclosure) != {"projectPreferences"}:
         raise ValueError("agent capability disclosure fields are invalid")
     normalize_skill_routing(skill_routing)
+    normalize_prompt_settings(configuration.get("prompts"))
     runtime_policy_from_configuration(configuration)
     _boolean(defaults.get("resumeLastSession"), field="sessionDefaults.resumeLastSession")
     _identifier(defaults.get("roleId"), field="sessionDefaults.roleId", maximum=80)

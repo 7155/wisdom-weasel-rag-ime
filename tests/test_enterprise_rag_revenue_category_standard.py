@@ -7,6 +7,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from tests.frozen_rag_replay import frozen_source_sha256, run_frozen_standard_verifier
+
 
 ROOT = Path(__file__).resolve().parents[1]
 STANDARD_V2 = ROOT / "eval/interview-metrics/enterprise-rag-answer-evidence-standard.v2.json"
@@ -75,6 +77,7 @@ def _fact(qrels: dict[str, object], query_id: str, fact_id: str) -> dict[str, ob
 
 
 class EnterpriseRagRevenueCategoryStandardTests(unittest.TestCase):
+    @unittest.skipUnless(all(path.is_file() for path in (QRELS_R3, QRELS_R4, AUDIT_R4)), "Private RAG corpus is not bundled in public source")
     def test_r4_is_a_direct_append_only_r3_successor_changing_only_f4(self) -> None:
         self.assertEqual(EXPECTED_STANDARD_V2_FILE_SHA256, _sha256(STANDARD_V2))
         self.assertEqual(EXPECTED_STANDARD_R3_FILE_SHA256, _sha256(STANDARD_R3))
@@ -128,7 +131,6 @@ class EnterpriseRagRevenueCategoryStandardTests(unittest.TestCase):
         self.assertNotEqual(prior_standard["manifestSha256"], standard["manifestSha256"])
 
     def test_public_receipt_is_body_free_and_preserves_post_validation_claims(self) -> None:
-        audit = _read(AUDIT_R4)
         standard = _read(STANDARD_R4)
         receipt = _read(RECEIPT_R4)
 
@@ -142,7 +144,6 @@ class EnterpriseRagRevenueCategoryStandardTests(unittest.TestCase):
         self.assertFalse(receipt["formalAcceptanceEligible"])
         self.assertFalse(receipt["unbiasedPromotionClaimAllowed"])
         self.assertTrue(receipt["auditBoundary"]["candidateCitationsAccessed"])
-        self.assertTrue(audit["candidateAware"])
         self.assertEqual(["qst_0477/F4"], receipt["calibrationDelta"]["changedFacts"])
         self.assertEqual(0, receipt["calibrationDelta"]["otherFactBindingsAdded"])
         self.assertEqual(7, receipt["frozenCandidateRescore"]["coveredFactCount"])
@@ -153,7 +154,7 @@ class EnterpriseRagRevenueCategoryStandardTests(unittest.TestCase):
             receipt["frozenCandidateRescore"]["scorerContract"],
         )
         self.assertEqual(
-            _sha256(ROOT / "scripts/run_rag_agent_ablation.py"),
+            frozen_source_sha256("scripts/run_rag_agent_ablation.py"),
             receipt["frozenCandidateRescore"]["runnerFileSha256"],
         )
         self.assertEqual(
@@ -163,6 +164,16 @@ class EnterpriseRagRevenueCategoryStandardTests(unittest.TestCase):
         for key, value in receipt["publicSafety"].items():
             if key.startswith("contains"):
                 self.assertFalse(value, key)
+        self.assertEqual(
+            _read(STANDARD_R4)["calibrationSource"]["auditReceiptSha256"],
+            receipt["auditBoundary"]["auditReceiptFileSha256"],
+        )
+        if not AUDIT_R4.is_file():
+            return  # Private-body comparison requires the local corpus.
+        self.assertEqual(_sha256(AUDIT_R4), receipt["auditBoundary"]["auditReceiptFileSha256"])
+        audit = _read(AUDIT_R4)
+        self.assertTrue(audit["candidateAware"])
+
         serialized = json.dumps(receipt, ensure_ascii=False)
         serialized_standard = json.dumps(standard, ensure_ascii=False)
         self.assertNotIn(audit["frozenSemanticUnit"]["question"], serialized)
@@ -175,13 +186,7 @@ class EnterpriseRagRevenueCategoryStandardTests(unittest.TestCase):
         self.assertNotIn(audit["acceptedCategoryBinding"]["quote"], serialized_standard)
 
     def test_dedicated_verifier_recomputes_the_frozen_candidate_offline(self) -> None:
-        completed = subprocess.run(
-            [sys.executable, "scripts/verify_enterprise_rag_revenue_category_standard.py"],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        completed = run_frozen_standard_verifier("verify_enterprise_rag_revenue_category_standard.py")
         self.assertEqual(0, completed.returncode, completed.stderr)
         payload = json.loads(completed.stdout)
         self.assertEqual("ENTERPRISE_RAG_REVENUE_CATEGORY_STANDARD_R4_OK", payload["event"])

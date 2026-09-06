@@ -504,14 +504,36 @@ class AgentExtensionServiceTests(unittest.TestCase):
         )
         self.assertEqual(receipt["receipt"]["action"], "install")
         self.assertTrue(self.runtime.installed[0]["enabled"])
+        replay = self.service.apply({
+            "previewToken": preview["previewToken"],
+            "payloadSha256": preview["payloadSha256"],
+            "confirmText": "apply",
+        })
+        self.assertEqual(replay, receipt)
+        self.assertEqual(len([call for call in self.runtime.calls if call[0] == "install"]), 1)
+
+    def test_wrong_preview_digest_does_not_consume_the_valid_install(self) -> None:
+        validation = self.service.validate({"packageSource": "npm:pi-test@1.0.0"})
+        preview = self.service.preview({"action": "install", "validationToken": validation["validationToken"]})
+        with self.assertRaisesRegex(ValueError, "digest does not match"):
+            self.service.apply({"previewToken": preview["previewToken"], "payloadSha256": "0" * 64, "confirmText": "apply"})
+        receipt = self.service.apply({"previewToken": preview["previewToken"], "payloadSha256": preview["payloadSha256"], "confirmText": "apply"})
+        self.assertTrue(receipt["ok"])
+
+    def test_uncertain_host_apply_is_never_replayed(self) -> None:
+        validation = self.service.validate({"packageSource": "npm:pi-test@1.0.0"})
+        preview = self.service.preview({"action": "install", "validationToken": validation["validationToken"]})
+        attempts = []
+        def interrupted(payload):
+            attempts.append(payload)
+            raise AgentRuntimeError("host disconnected after admission")
+        self.runtime.plugin_install = interrupted
+        payload = {"previewToken": preview["previewToken"], "payloadSha256": preview["payloadSha256"], "confirmText": "apply"}
+        with self.assertRaises(AgentRuntimeError):
+            self.service.apply(payload)
         with self.assertRaisesRegex(ValueError, "invalid or expired"):
-            self.service.apply(
-                {
-                    "previewToken": preview["previewToken"],
-                    "payloadSha256": preview["payloadSha256"],
-                    "confirmText": "apply",
-                }
-            )
+            self.service.apply(payload)
+        self.assertEqual(len(attempts), 1)
 
     def test_catalog_projects_native_pi_packages_and_prepares_them_in_pi(self) -> None:
         catalog = self.service.catalog()
@@ -809,6 +831,20 @@ class AgentExtensionServiceTests(unittest.TestCase):
         self.assertEqual(
             self.runtime.calls[-1][0],
             "create_package",
+        )
+        self.assertEqual(result["draft"]["sourcePath"], "/managed/pi-package-draft")
+        validation = self.service.validate(
+            {"packageSource": result["draft"]["sourcePath"]}
+        )
+        self.assertTrue(validation["ok"])
+        self.assertTrue(validation["validationToken"])
+        self.assertEqual(
+            [method for method, _ in self.runtime.calls],
+            ["create_package", "prepare_package"],
+        )
+        self.assertEqual(
+            self.runtime.calls[-1],
+            ("prepare_package", "/managed/pi-package-draft"),
         )
 
     def test_rejects_symlinks_and_unsupported_files_before_runtime_validation(self) -> None:

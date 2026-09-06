@@ -546,7 +546,12 @@ class PiRuntimeConfig:
             return [self.node_executable, str(executable)]
         return [str(executable)]
 
-    def system_prompt_for_session(self, session: Mapping[str, object]) -> str:
+    def system_prompt_for_session(
+        self,
+        session: Mapping[str, object],
+        *,
+        prompt_settings: Mapping[str, object] | None = None,
+    ) -> str:
         tool_profile = str(session.get("toolProfileVersion") or "")
         if tool_profile == "ime-surface-v1":
             return _IME_SURFACE_SYSTEM_PROMPT
@@ -589,6 +594,9 @@ class PiRuntimeConfig:
         if session_mode_prompt:
             layers.append(("session_mode_policy", session_mode_prompt))
         layers.append(("agent_template_policy", capability_prompt))
+        user_instructions = str((prompt_settings or {}).get("systemInstructions") or "").strip()
+        if user_instructions:
+            layers.append(("user_system_instructions", user_instructions))
         return _render_session_prompt(layers)
 
     def resolved_model_reference(self, session: Mapping[str, object]) -> tuple[str, str]:
@@ -822,6 +830,7 @@ class PiRuntimeDriverFactory:
             tool_manifest_provider=context.tool_manifest_provider,
             skill_allowlist_provider=context.skill_allowlist_provider,
             compaction_observer=context.compaction_observer,
+            prompt_settings_provider=context.prompt_settings_provider,
         )
 
     def reconfigure(self, config: object) -> None:
@@ -1057,6 +1066,7 @@ class PiRuntimeManager:
         tool_manifest_provider: Callable[[Mapping[str, object]], list[Mapping[str, object]]] | None = None,
         skill_allowlist_provider: SkillAllowlistProvider | None = None,
         compaction_observer: CompactionObserver | None = None,
+        prompt_settings_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
@@ -1066,6 +1076,7 @@ class PiRuntimeManager:
         self._tool_manifest_provider = tool_manifest_provider
         self._skill_allowlist_provider = skill_allowlist_provider
         self._compaction_observer = compaction_observer
+        self._prompt_settings_provider = prompt_settings_provider
         self._lifecycle_lock = threading.RLock()
         self._lock = threading.RLock()
         self._client: PiRpcClient | None = None

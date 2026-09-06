@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -12,6 +13,7 @@ from rag_ime.pi_provider_auth import (
     PiProviderAuthError,
     PiProviderAuthService,
     PiProviderBridgeConfig,
+    _OAuthJob,
     _openai_codex_login_uri,
 )
 from rag_ime.pi_runtime import PiRuntimeConfig
@@ -360,6 +362,79 @@ class PiProviderAuthTests(unittest.TestCase):
             self.assertEqual(opened, [status["verificationUri"]])
         finally:
             service.close()
+
+    def test_oauth_terminal_events_reap_a_bridge_that_does_not_exit(self) -> None:
+        root = Path(self.temporary.name)
+        for terminal_state in ("failed", "completed"):
+            with self.subTest(terminal_state=terminal_state):
+                bridge = root / f"terminal_{terminal_state}.py"
+                bridge.write_text(
+                    "import json, sys, time\n"
+                    "json.load(sys.stdin)\n"
+                    f"print(json.dumps({{'event': '{terminal_state}', "
+                    "'error': 'fixture OAuth failure'}), flush=True)\n"
+                    "time.sleep(30)\n",
+                    encoding="utf-8",
+                )
+                service = PiProviderAuthService(
+                    PiProviderBridgeConfig(
+                        node_executable=sys.executable,
+                        package_entry=root / "index.js",
+                        agent_dir=root / "agent",
+                        bridge_script=bridge,
+                        oauth_timeout_seconds=30,
+                    )
+                )
+                try:
+                    started = service._start_oauth(
+                        "openai-codex", "ChatGPT Plus/Pro", method="browser"
+                    )
+                    job = service._oauth_jobs[str(started["loginId"])]
+                    deadline = time.monotonic() + 4
+                    while job.process.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertIsNotNone(job.process.poll(), "terminal OAuth bridge was left running")
+                    self.assertEqual(service.oauth_status(started["loginId"])["state"], terminal_state)
+                finally:
+                    service.close()
+                    for job in service._oauth_jobs.values():
+                        if job.process.poll() is None:
+                            job.process.kill()
+                            job.process.wait(timeout=2)
+
+    def test_cancel_and_close_reap_terminal_bridge_processes_idempotently(self) -> None:
+        for action in ("cancel", "close"):
+            for terminal_state in ("failed", "completed", "cancelled"):
+                with self.subTest(action=action, terminal_state=terminal_state):
+                    service = PiProviderAuthService(self.service.config)
+                    process = subprocess.Popen(
+                        [sys.executable, "-c", "import time; time.sleep(30)"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                    job = _OAuthJob(
+                        login_id="terminal-fixture",
+                        provider="openai-codex",
+                        provider_name="ChatGPT Plus/Pro",
+                        login_method="browser",
+                        process=process,
+                        state=terminal_state,
+                    )
+                    service._oauth_jobs[job.login_id] = job
+                    try:
+                        for _ in range(2):
+                            if action == "cancel":
+                                result = service.oauth_cancel({"loginId": job.login_id})
+                                self.assertEqual(result["state"], terminal_state)
+                            else:
+                                service.close()
+                            self.assertIsNotNone(process.poll(), "terminal OAuth process survived cleanup")
+                            self.assertEqual(job.state, terminal_state)
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait(timeout=2)
 
 
 if __name__ == "__main__":

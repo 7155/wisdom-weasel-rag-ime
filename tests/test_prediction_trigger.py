@@ -159,6 +159,50 @@ class PredictionTriggerTest(unittest.TestCase):
         self.trigger.record_commit(group_id="doc:a", text="新的输入六个字", context_hash="b", reliable=True)
         self.assertFalse(self.trigger.complete(old, result_count=1))
 
+    def test_stale_ignored_result_does_not_cooldown_newer_generation(self) -> None:
+        self.trigger = PredictionTrigger(
+            PredictionTriggerConfig(idle_ms=0, ignore_cooldown_ms=400),
+            clock_ms=lambda: self.now,
+        )
+        self.trigger.record_commit(group_id="doc:a", text="旧输入", context_hash="old", reliable=True)
+        old = self.trigger.poll("doc:a")
+
+        self.now = 1
+        self.trigger.record_commit(group_id="doc:a", text="新输入", context_hash="new", reliable=True)
+        newer = self.trigger.poll("doc:a")
+        self.assertTrue(newer.should_call_predictor)
+
+        self.now = 2
+        self.assertFalse(self.trigger.complete(old, result_count=0, ignored=True, now=self.now))
+        self.assertTrue(self.trigger.complete(newer, result_count=1, now=self.now))
+
+        self.now = 3
+        self.trigger.record_commit(group_id="doc:a", text="后续输入", context_hash="next", reliable=True)
+        self.assertTrue(self.trigger.poll("doc:a").should_call_predictor)
+
+    def test_stale_t0_resolution_does_not_remove_newer_provider_budget(self) -> None:
+        self.trigger = PredictionTrigger(
+            PredictionTriggerConfig(idle_ms=0, max_calls_per_10s=2),
+            clock_ms=lambda: self.now,
+        )
+        self.trigger.record_commit(group_id="doc:a", text="旧输入", context_hash="old", reliable=True)
+        old = self.trigger.poll("doc:a")
+
+        self.now = 1
+        self.trigger.record_commit(group_id="doc:a", text="新输入", context_hash="new", reliable=True)
+        newer = self.trigger.poll("doc:a")
+        self.assertTrue(newer.should_call_predictor)
+
+        self.now = 2
+        self.assertFalse(self.trigger.complete(old, result_count=1, provider_called=False, now=self.now))
+        self.assertTrue(self.trigger.complete(newer, result_count=1, now=self.now))
+
+        self.now = 3
+        self.trigger.record_commit(group_id="doc:a", text="后续输入", context_hash="next", reliable=True)
+        limited = self.trigger.poll("doc:a")
+        self.assertFalse(limited.should_call_predictor)
+        self.assertEqual(limited.reason, "max_calls_per_10s")
+
     def test_t0_resolution_does_not_consume_provider_rate_budget(self) -> None:
         for index in range(2):
             self.now = index * 1_000

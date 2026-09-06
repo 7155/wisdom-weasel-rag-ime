@@ -13,5 +13,6 @@ describe('syntax highlighter', () => {
     expect(owned).not.toMatch(/<pre[^>]*style=/);
     // Token spans keep their escaped palette; only the root surface is ceded.
     expect(owned).toMatch(/<span[^>]*style="color:/);
+    expect(owned).toContain('--shiki-light:');
   });
 });

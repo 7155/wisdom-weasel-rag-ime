@@ -1,0 +1,247 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import threading
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+from rag_ime.agent_lab_golden_pi import AgentLabGoldenPiExecutor, GoldenPiCallError, normalize_golden_usage
+from rag_ime.agent_sessions import AgentSessionStore
+
+
+class Runtime:
+    def __init__(self) -> None:
+        self.calls = []
+        self.waits = []
+        self.fail_admission = False
+        self.fail_lookup = False
+        self.wrong_identity = False
+        self.failed = False
+        self.aborts = []
+
+    def set_model(self, session_id, *, provider, model_id):
+        return {"selected": {"provider": provider, "id": model_id}}
+
+    def set_thinking_level(self, session_id, *, level):
+        return {"thinkingLevel": level}
+
+    def prompt(self, session_id, message, *, client_message_id, images):
+        self.calls.append((session_id, message, client_message_id))
+        if self.fail_admission:
+            raise TimeoutError("unknown admission")
+        return {"accepted": True, "turnId": "turn-1"}
+
+    def session_snapshot(self, session_id):
+        return {"activeTurn": None}
+
+    def await_turn_settled(self, session_id, turn_id, *, client_message_id, timeout_seconds):
+        self.waits.append((session_id, turn_id, client_message_id))
+        if self.fail_lookup:
+            raise TimeoutError("lookup unavailable")
+        return {
+            "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+            "sessionId": "wrong" if self.wrong_identity else session_id,
+            "turnId": turn_id, "clientMessageId": client_message_id,
+            "runtimeSessionId": "pi-session",
+            "receipt": {
+                "schemaVersion": "pi.agent-settled.v2", "sessionId": "pi-session",
+                "disposition": "failed" if self.failed else "completed",
+                "aborted": False, "pendingOperations": 0,
+                "finalMessage": {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "never expose this"},
+                    {"type": "text", "text": '{"cases":[]}'},
+                ], "usage": {"input": 100, "output": 20}},
+            },
+        }
+
+    def abort(self, session_id):
+        self.aborts.append(session_id)
+        return {"ok": True}
+
+
+class GoldenPiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "golden.sqlite"
+        self.sessions = AgentSessionStore(self.path)
+        self.sessions.initialize()
+        self.addCleanup(self.sessions.close)
+        self.runtime = Runtime()
+        self.executor = AgentLabGoldenPiExecutor(self.path, sessions=self.sessions, runtime=lambda: self.runtime)
+        self.model = {"provider": "openai-codex", "model": "gpt-6-astra", "thinkingLevel": "high", "prompt": ""}
+
+    def complete(self, **kwargs):
+        return self.executor.complete(request_id="job:draft", model=self.model, prompt="draft grounded cases", on_session=lambda _sid: None, cancelled=lambda: False, **kwargs)
+
+    def test_owned_pi_session_and_exact_terminal_receipt_are_persisted(self):
+        result = self.complete()
+        self.assertEqual(result["text"], '{"cases":[]}')
+        session = self.sessions.get(result["sessionId"])
+        self.assertEqual(session["ownerAppId"], "extension:agent-lab")
+        self.assertFalse(session["projectContextEnabled"])
+        self.assertEqual(result["usage"], {"inputTokens": 100, "outputTokens": 20, "totalTokens": 120})
+        self.assertNotIn("never expose this", json.dumps(result))
+        self.assertEqual(self.complete(), result)
+        self.assertEqual(len(self.runtime.calls), 1)
+
+    def test_restart_recovers_original_accepted_turn_without_second_prompt(self):
+        self.runtime.fail_lookup = True
+        with self.assertRaises(GoldenPiCallError):
+            self.complete()
+        self.runtime.fail_lookup = False
+        self.executor = AgentLabGoldenPiExecutor(self.path, sessions=self.sessions, runtime=lambda: self.runtime)
+        self.assertEqual(self.complete()["turnId"], "turn-1")
+        self.assertEqual(len(self.runtime.calls), 1)
+        self.assertEqual(len(self.runtime.waits), 2)
+
+    def test_unknown_admission_is_not_blindly_replayed(self):
+        self.runtime.fail_admission = True
+        with self.assertRaises(GoldenPiCallError):
+            self.complete()
+        self.runtime.fail_admission = False
+        with self.assertRaises(GoldenPiCallError):
+            self.complete()
+        self.assertEqual(len(self.runtime.calls), 1)
+
+    def test_request_cannot_be_rebound_to_new_prompt(self):
+        self.complete()
+        with self.assertRaises(GoldenPiCallError):
+            self.executor.complete(request_id="job:draft", model=self.model, prompt="different", on_session=lambda _sid: None, cancelled=lambda: False)
+        self.assertEqual(len(self.runtime.calls), 1)
+
+    def test_wrong_or_failed_settlement_never_becomes_success(self):
+        for attr in ("wrong_identity", "failed"):
+            with self.subTest(attr=attr):
+                setattr(self.runtime, attr, True)
+                with self.assertRaises(GoldenPiCallError):
+                    self.executor.complete(request_id=f"job:{attr}", model=self.model, prompt="answer", on_session=lambda _sid: None, cancelled=lambda: False)
+                setattr(self.runtime, attr, False)
+
+    def test_cancelled_before_admission_does_not_call_provider(self):
+        with self.assertRaises(GoldenPiCallError):
+            self.executor.complete(request_id="cancelled", model=self.model, prompt="answer", on_session=lambda _sid: None, cancelled=lambda: True)
+        self.assertEqual(self.runtime.calls, [])
+
+    def test_catalog_cost_is_an_estimate_and_missing_cost_stays_missing(self):
+        usage = normalize_golden_usage({"input": 10, "output": 4, "cacheRead": 6, "cost": {"total": 0.003}})
+        self.assertEqual(usage["totalTokens"], 20)
+        self.assertEqual(usage["estimatedCostUsd"], 0.003)
+        self.assertEqual(usage["costBasis"], "model_catalog_estimate")
+        self.assertNotIn("costUsd", usage)
+        self.assertNotIn("costUsd", normalize_golden_usage({"input": 1}))
+
+    def test_failed_settlement_keeps_real_usage_and_replays_failure_receipt(self):
+        self.runtime.failed = True
+        with self.assertRaises(GoldenPiCallError) as first:
+            self.complete()
+        completion = first.exception.completion
+        self.assertEqual(completion["usage"], {"inputTokens": 100, "outputTokens": 20, "totalTokens": 120})
+        self.assertEqual(completion["receipt"]["status"], "failed")
+        self.assertEqual(completion["receipt"]["requestId"], "job:draft")
+        self.assertEqual(completion["receipt"]["settlementReceiptId"], "")
+        self.assertEqual(completion["turnId"], "turn-1")
+        self.assertNotIn("never expose this", json.dumps(completion))
+        row = self.executor._row("job:draft")
+        self.assertEqual(row["state"], "failed")
+        self.assertEqual(json.loads(row["receipt_json"]), completion["receipt"])
+        with self.assertRaises(GoldenPiCallError) as replay:
+            self.complete()
+        self.assertEqual(replay.exception.completion, completion)
+        self.assertEqual(len(self.runtime.calls), 1)
+        self.assertEqual(len(self.runtime.waits), 1)
+
+    def test_wrong_identity_does_not_manufacture_failure_completion(self):
+        self.runtime.wrong_identity = True
+        with self.assertRaises(GoldenPiCallError) as failed:
+            self.complete()
+        self.assertIsNone(getattr(failed.exception, "completion", None))
+        self.assertEqual(json.loads(self.executor._row("job:draft")["receipt_json"]), {})
+
+    def test_late_observer_timeout_reuses_completed_call_across_executor_instances(self):
+        first_wait = threading.Event()
+        second_wait = threading.Event()
+        first_completed = threading.Event()
+
+        class RacingRuntime(Runtime):
+            def __init__(self):
+                super().__init__()
+                self.lock = threading.Lock()
+                self.wait_count = 0
+
+            def await_turn_settled(self, session_id, turn_id, *, client_message_id, timeout_seconds):
+                with self.lock:
+                    index = self.wait_count
+                    self.wait_count += 1
+                if index == 0:
+                    first_wait.set()
+                    if not second_wait.wait(5):
+                        raise TimeoutError("second observer did not enter")
+                    return super().await_turn_settled(session_id, turn_id, client_message_id=client_message_id, timeout_seconds=timeout_seconds)
+                second_wait.set()
+                if not first_completed.wait(5):
+                    raise TimeoutError("first observer did not complete")
+                raise TimeoutError("late observer timeout")
+
+        self.runtime = RacingRuntime()
+        duplicate = AgentLabGoldenPiExecutor(self.path, sessions=self.sessions, runtime=lambda: self.runtime)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.complete)
+            self.assertTrue(first_wait.wait(5))
+            second = pool.submit(duplicate.complete, request_id="job:draft", model=self.model, prompt="draft grounded cases", on_session=lambda _: None, cancelled=lambda: False)
+            try:
+                result = first.result(5)
+                self.assertEqual(self.executor._row("job:draft")["state"], "completed")
+            finally:
+                first_completed.set()
+            self.assertEqual(second.result(5), result)
+        self.assertEqual(self.executor._row("job:draft")["state"], "completed")
+        self.assertEqual(self.complete(), result)
+        self.assertEqual(len(self.runtime.calls), 1)
+
+    def test_short_settlement_wait_rechecks_same_turn_without_another_prompt(self):
+        original = self.runtime.await_turn_settled
+        waits = []
+
+        def deferred(session_id, turn_id, *, client_message_id, timeout_seconds):
+            waits.append((session_id, turn_id, client_message_id, timeout_seconds))
+            if len(waits) == 1:
+                raise TimeoutError("Pi Session turn settlement timed out")
+            return original(session_id, turn_id, client_message_id=client_message_id, timeout_seconds=timeout_seconds)
+
+        self.runtime.await_turn_settled = deferred
+        result = self.complete()
+        self.assertEqual(len(waits), 2)
+        self.assertEqual(waits[0][:3], waits[1][:3])
+        self.assertTrue(all(0 < wait[3] <= 5 for wait in waits))
+        self.assertEqual(result["turnId"], "turn-1")
+        self.assertEqual(len(self.runtime.calls), 1)
+
+    def test_completed_result_is_read_only_and_does_not_bind_a_changed_template(self):
+        self.assertIsNone(self.executor.completed_result("not-admitted", self.model))
+        original = self.complete()
+        self.executor.runtime = lambda: self.fail("completed_result must not touch the Runtime")
+        self.assertEqual(self.executor.completed_result("job:draft", self.model), original)
+        self.assertEqual(len(self.runtime.calls), 1)
+        with self.assertRaises(GoldenPiCallError):
+            self.executor.completed_result("job:draft", {**self.model, "model": "different-model"})
+        # The explicit cache API does not weaken ordinary exact-request replay.
+        with self.assertRaises(GoldenPiCallError):
+            self.executor.complete(request_id="job:draft", model=self.model, prompt="changed generation template", on_session=lambda _: None, cancelled=lambda: False)
+
+    def test_completed_result_does_not_return_failed_or_unknown_work_as_success(self):
+        self.runtime.failed = True
+        with self.assertRaises(GoldenPiCallError):
+            self.complete()
+        self.assertIsNone(self.executor.completed_result("job:draft", self.model))
+        self.runtime.failed = False
+        self.runtime.fail_lookup = True
+        with self.assertRaises(GoldenPiCallError):
+            self.executor.complete(request_id="unfinished", model=self.model, prompt="task", on_session=lambda _: None, cancelled=lambda: False)
+        self.assertIsNone(self.executor.completed_result("unfinished", self.model))
+
+
+if __name__ == "__main__":
+    unittest.main()

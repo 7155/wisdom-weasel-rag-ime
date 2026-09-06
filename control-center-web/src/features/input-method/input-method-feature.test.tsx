@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -96,6 +96,101 @@ const review = {
 afterEach(cleanup);
 
 describe('InputMethodFeature', () => {
+  it('keeps input settings refresh available while the independent live Trace is still loading', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+      'overview.get': { ok: true, profile: '标准模式' },
+      'configuration.settings': settings,
+      'configuration.schema': schema,
+      'diagnostics.models': { ok: true },
+      'input.prediction.liveTrace': () => new Promise(() => {}),
+    } });
+    renderFeature(transport);
+    await screen.findByText('正在等待本机最近请求的摘要。');
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled());
+    const before = transport.requests.filter(({ request }) => request.pathId === 'configuration.settings').length;
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+    await waitFor(() => expect(transport.requests.filter(({ request }) => request.pathId === 'configuration.settings')).toHaveLength(before + 1));
+  });
+
+  it.each(['empty', 'failed'] as const)('preserves the applied lexicon receipt and exact rollback after a refreshed review is %s', async (refreshResult) => {
+    const user = userEvent.setup();
+    let refreshed = false;
+    const transport = new MockControlTransport({ routes: {
+      'input.lexicon.review': () => {
+        if (!refreshed) return review;
+        if (refreshResult === 'failed') throw new Error('review unavailable');
+        return { ...emptyReview, reviewToken: 'b'.repeat(64) };
+      },
+      'input.lexicon.apply': {
+        schemaVersion: 'rag-ime.rime-lexicon-review.v1', ok: true,
+        applied: true, entryCount: 1, rollbackId: 'saved-lexicon-write', requiresRedeploy: true,
+      },
+      'input.lexicon.rollback': {
+        schemaVersion: 'rag-ime.rime-lexicon-review.v1', ok: true,
+        rolledBack: true, rollbackId: 'saved-lexicon-write', requiresRedeploy: true,
+      },
+    } });
+    renderLexiconFeature(transport);
+    await user.click(await screen.findByRole('button', { name: '加入所选词条' }));
+    await screen.findByText('词条已加入用户词库');
+    refreshed = true;
+    await user.click(screen.getByRole('button', { name: '刷新审阅' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新审阅' })).toBeEnabled());
+    expect(screen.getByText('词条已加入用户词库')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '撤销这次更新' }));
+    await screen.findByText('词库更新已撤销');
+    await waitFor(() => expect(transport.requests.filter(({ request }) => request.pathId === 'input.lexicon.review')).toHaveLength(3));
+    expect(screen.getByText('词库更新已撤销')).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'input.lexicon.apply')).toHaveLength(1);
+    expect(transport.requests.find(({ request }) => request.pathId === 'input.lexicon.rollback')?.request.body).toEqual({ rollbackId: 'saved-lexicon-write' });
+  });
+
+  it('keeps an in-flight lexicon write bound to its original review while a new review arrives', async () => {
+    const user = userEvent.setup();
+    let resolve!: (value: unknown) => void;
+    const pendingApply = new Promise((done) => { resolve = done; });
+    let refreshed = false;
+    const transport = new MockControlTransport({ routes: {
+      'input.lexicon.review': () => refreshed ? {
+        ...review, reviewToken: 'b'.repeat(64), entries: [{ ...review.entries[0], text: '新词条', reviewKey: 'next-entry' }],
+      } : review,
+      'input.lexicon.apply': () => pendingApply,
+    } });
+    renderLexiconFeature(transport);
+    await user.click(await screen.findByRole('button', { name: '加入所选词条' }));
+    refreshed = true;
+    await user.click(screen.getByRole('button', { name: '刷新审阅' }));
+    expect(await screen.findByRole('checkbox', { name: '选择 新词条' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '加入所选词条' })).toBeDisabled();
+    await act(async () => resolve({
+      schemaVersion: 'rag-ime.rime-lexicon-review.v1', ok: true,
+      applied: true, entryCount: 1, rollbackId: 'original-review-write', requiresRedeploy: true,
+    }));
+    expect(await screen.findByText('词条已加入用户词库')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '继续审阅' }));
+    expect(screen.getByRole('checkbox', { name: '选择 新词条' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '撤销这次更新' })).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'input.lexicon.apply')).toHaveLength(1);
+    expect(transport.requests.find(({ request }) => request.pathId === 'input.lexicon.apply')?.request.body).toMatchObject({
+      reviewToken: review.reviewToken, selectedKeys: [review.entries[0].reviewKey],
+    });
+  });
+
+  it('does not classify unread settings as a custom input preset', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'configuration.settings': () => new Promise(() => {}),
+        'configuration.schema': schema,
+        'overview.get': { ok: true, profile: '标准模式' },
+      },
+    }));
+
+    expect(screen.queryByText('当前设置不属于任何预设。')).not.toBeInTheDocument();
+    expect(await screen.findByText('正在读取当前设置，暂不判断使用方式。')).toBeInTheDocument();
+  });
+
   it('lets mode descriptions grow under Dynamic Type instead of clipping them', () => {
     expect(inputMethodCss).toContain(
       ".input-mode-card__note {\n  display: block;\n  overflow: visible;",

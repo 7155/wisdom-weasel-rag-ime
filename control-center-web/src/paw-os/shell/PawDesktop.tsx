@@ -5,7 +5,7 @@ import { pawApp, pawAppForPath, pawApps, type PawAppDefinition, type PawAppId } 
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import { dockMagnetics } from './dock-magnification';
 import { PawAppIcon, PawBrandMark } from './PawAppIcon';
-import { PawCompositionField } from './PawCompositionField';
+import { PawStellarWallpaper } from './PawStellarBackdrop';
 import { pulsePawComposition } from '../runtime/composition-pulse';
 import { PawContextMenu, type PawContextMenuCloseReason, type PawContextMenuItem } from './PawContextMenu';
 import { pawDesktopGridEntries, pawDesktopGridPosition, pawDesktopMovePosition, pawDesktopOccupiedPositions, pawDesktopResolvePersistedPositions, pawDesktopSnapPosition, usePawDesktopGridLayout } from './desktop-grid';
@@ -44,9 +44,15 @@ const LAUNCHPAD_GROUP_LABEL: Record<(typeof LAUNCHPAD_GROUP_ORDER)[number], stri
   tool: '工具',
   system: '系统',
 };
-const DESKTOP_APP_IDS: readonly PawAppId[] = LAUNCHPAD_GROUP_ORDER.flatMap((kind) => (
-  pawApps.filter((app) => !isPawExtensionAppId(app.id) && launchpadGroup(app) === kind).map((app) => app.id)
-));
+const CORE_WORK_APP_IDS: readonly PawAppId[] = ['agent', 'eval-lab'];
+const DESKTOP_APP_IDS: readonly PawAppId[] = [
+  ...CORE_WORK_APP_IDS,
+  ...LAUNCHPAD_GROUP_ORDER.flatMap((kind) => (
+    pawApps.filter((app) => !isPawExtensionAppId(app.id)
+      && !CORE_WORK_APP_IDS.includes(app.id)
+      && launchpadGroup(app) === kind).map((app) => app.id)
+  )),
+];
 const PAW_APP_IDS = new Set<PawAppId>(pawApps.map((app) => app.id));
 const PAW_DOCK_APP_MIME = 'application/x-paw-dock-app';
 
@@ -371,8 +377,11 @@ function PawDesktopSurface() {
    * [data-paw-desktop-ui] and never starts a band. */
   const startLasso = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    const target = event.target as HTMLElement;
-    if (target.closest('button, input, textarea, select, a, summary, [data-paw-window-id], [data-paw-text-selection], [data-paw-desktop-ui], [data-wayfinder-icon]')) {
+    const target = event.target;
+    // Body Portals still bubble through the desktop's React tree. Only the
+    // viewport's own DOM can start a selection or capture its pointer.
+    if (!(target instanceof Element) || !event.currentTarget.contains(target)) return;
+    if (target.closest('button, input, textarea, select, a, summary, [role="button"], [role="menu"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="listbox"], [role="option"], [role="combobox"], [role="dialog"], [data-paw-window-id], [data-paw-text-selection], [data-paw-desktop-ui], [data-wayfinder-icon]')) {
       /* Like the macOS desktop, pressing a window or desktop furniture drops
        * the icon selection; icons themselves handle their own clicks. */
       if (!target.closest('[data-desktop-app], [data-wayfinder-icon]')) {
@@ -937,7 +946,7 @@ const Wayfinder = memo(function Wayfinder({ onArchive, onOpen, onSelectIcon, sel
   return (
     <section className="paw-wayfinder" aria-label="项目场" onDragOver={(event) => { if ([...event.dataTransfer.types].includes(WAYFINDER_DRAG_MIME)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }} onDrop={dropOnDesktop}>
       <div aria-hidden="true" className="paw-field-media">
-        <PawCompositionField effects />
+        <PawStellarWallpaper />
       </div>
       {/* The first viewport is one composition, not two matching corner cards
           around an empty middle: a single column states what the machine is
@@ -1242,7 +1251,10 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
     // one choreography that reads in document order — section, then contents.
     let order = 0;
     return LAUNCHPAD_GROUP_ORDER.flatMap((kind) => {
-      const apps = filtered.filter((app) => launchpadGroup(app) === kind);
+      const apps = filtered.filter((app) => launchpadGroup(app) === kind).sort((left, right) => {
+        const priority = (app: PawAppDefinition) => CORE_WORK_APP_IDS.includes(app.id) ? CORE_WORK_APP_IDS.indexOf(app.id) : CORE_WORK_APP_IDS.length;
+        return priority(left) - priority(right);
+      });
       return apps.length
         ? [{ kind, label: LAUNCHPAD_GROUP_LABEL[kind], order: order++, apps: apps.map((app) => ({ app, order: order++ })) }]
         : [];
@@ -1383,7 +1395,7 @@ function sameIconSelection(left: ReadonlySet<string>, right: ReadonlySet<string>
 
 function launchpadGroup(app: PawAppDefinition): (typeof LAUNCHPAD_GROUP_ORDER)[number] {
   if (app.id === 'memory' || app.id === 'knowledge') return 'library';
-  if (app.id === 'project-workbench' || app.kind === 'agent') return 'work';
+  if (app.id === 'project-workbench' || CORE_WORK_APP_IDS.includes(app.id) || app.kind === 'agent') return 'work';
   if (app.kind === 'system') return 'system';
   return 'tool';
 }

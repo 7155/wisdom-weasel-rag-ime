@@ -166,6 +166,58 @@ const focus: RoomFocusProjection = {
 };
 
 describe('PawRoomFocusOverview', () => {
+  it('shows a bilateral reply path and lets the user return to the original message', () => {
+    const traffic: RoomFocusProjection = { ...focus, flow: [
+      { id: 'intercom:ask', intercomId: 'ask', sourceParticipantId: 'p-earth', targetParticipantIds: ['p-mars'], kind: 'question', summary: '接口是否可用？', status: 'replied', createdAtMs: 100, sequence: 1, refs: [] },
+      { id: 'intercom:reply', intercomId: 'reply', replyToPacketId: 'intercom:ask', sourceParticipantId: 'p-mars', targetParticipantIds: ['p-earth'], kind: 'answer', summary: '接口已验证，可以接入 `room_partner`。', status: 'delivered', createdAtMs: 200, deliveredAtMs: 210, sequence: 2, refs: ['test:api'] },
+      { id: 'approval', sourceParticipantId: 'p-earth', targetParticipantIds: ['root'], kind: 'approval', summary: 'approval_resolved', status: 'completed', createdAtMs: 300, sequence: 3, refs: [] },
+    ] };
+    render(<PawRoomFocusOverview focus={traffic} />);
+    const packets = screen.getByRole('list', { name: '往来事件' });
+    expect(within(packets).getAllByRole('listitem')).toHaveLength(2);
+    expect(packets).toHaveTextContent('Earth → Mars');
+    expect(packets).toHaveTextContent('Mars → Earth');
+    const route = screen.getByLabelText('选中消息的流转方向');
+    expect(route.textContent).toMatch(/Mars.*回复.*已送达.*Earth/);
+    expect(document.querySelector('.paw-room-focus-overview__message-content code')).toHaveTextContent('room_partner');
+    const selectedMessage = route.parentElement as HTMLDivElement;
+    const scrollToSelection = vi.fn();
+    Object.defineProperty(selectedMessage, 'scrollIntoView', { value: scrollToSelection, configurable: true });
+    expect(selectedMessage.compareDocumentPosition(packets) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Earth：接口是否可用？' }));
+    expect(scrollToSelection).toHaveBeenCalledWith({ block: 'start', behavior: 'auto' });
+    expect(route.textContent).toMatch(/Earth.*询问.*已回复.*Mars/);
+    fireEvent.click(screen.getByRole('button', { name: '查看 Mars 的回复' }));
+    fireEvent.click(screen.getByText('消息证据'));
+    expect(screen.getByText('test:api')).toBeVisible();
+    expect(screen.getByText('送达时间')).toBeVisible();
+    fireEvent.change(screen.getByRole('combobox', { name: '消息类型' }), { target: { value: 'all' } });
+    expect(within(packets).getAllByRole('listitem')).toHaveLength(3);
+    expect(packets).not.toHaveTextContent('approval_resolved');
+  });
+
+  it('shows per-planet satellite status and unknown separately from a confirmed empty Session', () => {
+    render(<PawRoomFocusOverview focus={focus} satellitesByParticipant={{
+      'p-earth': { status: 'ready', satellites: [
+        { id: 'run-1', nodeId: 'node-1', sessionId: 'child-1', task: '核对传递方向', state: 'running', stateLabel: '进行中', depth: 1, result: '', error: '' },
+        { id: 'run-2', nodeId: 'node-2', sessionId: 'child-2', task: '验证消息回执', state: 'returned', stateLabel: '已返回', depth: 1, result: '回执已核对', error: '' },
+      ] },
+      'p-mars': { status: 'ready', satellites: [] },
+      'p-venus': { status: 'error', satellites: [] },
+    }} />);
+    const mesh = screen.getByRole('group', { name: '协作网状图' });
+    const earth = within(mesh).getByRole('button', { name: /^Earth，/ });
+    expect(earth).toHaveTextContent('卫星 2');
+    expect(earth).toHaveTextContent('进行 1 · 已返回 1');
+    expect(within(mesh).getByRole('button', { name: /^Mars，/ })).toHaveTextContent('卫星 0');
+    expect(within(mesh).getByRole('button', { name: /^Venus，/ })).toHaveTextContent('卫星暂不可用');
+    fireEvent.click(earth);
+    const satellites = screen.getByRole('region', { name: 'Earth 的 Session 卫星' });
+    fireEvent.click(within(satellites).getByText('验证消息回执'));
+    expect(satellites).toHaveTextContent('回执已核对');
+    expect(satellites).toHaveTextContent('child-2');
+  });
+
   it('answers partner responsibility, state and handoff without drawing Sol or tasks as partners', () => {
     const { container } = render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
@@ -178,12 +230,13 @@ describe('PawRoomFocusOverview', () => {
     // A dispatched handoff is a real attempt, but not yet an established
     // success edge; it stays inspectable in the bounded disclosure.
     expect(container.querySelector('.paw-room-focus-overview__mesh-edge[data-kind="handoff"][data-state="dispatched"]')).toBeNull();
-    const attemptSummary = screen.getByText(/未进入成功 DAG/).closest('summary');
+    const attemptSummary = screen.getByText(/未确认关系/).closest('summary');
     expect(attemptSummary).not.toBeNull();
     fireEvent.click(attemptSummary!);
     const attempts = attemptSummary!.closest('details')!;
     expect(attempts).toHaveTextContent(/Earth\s*→\s*Mars/);
     expect(attempts).toHaveTextContent('交接 · 已分派');
+    fireEvent.click(within(mesh).getByText(/协作关系 ·/));
     expect(within(mesh).getByRole('button', { name: 'Earth → Mars，分派，已完成' })).toBeInTheDocument();
     expect(within(mesh).queryByRole('list', { name: '协作关系列表' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
@@ -194,8 +247,7 @@ describe('PawRoomFocusOverview', () => {
     const mesh = screen.getByRole('group', { name: '协作网状图' });
     const planets = Array.from(mesh.querySelectorAll<HTMLButtonElement>('.paw-room-focus-overview__mesh-node'));
     expect(planets).toHaveLength(3);
-    expect(new Set(planets.map((planet) => planet.style.top))).toHaveLength(2);
-    expect(new Set(planets.map((planet) => planet.style.left))).toHaveLength(2);
+    expect(mesh).toHaveAttribute('data-view', 'roster');
     expect(within(mesh).getByText('实现任务图交互')).toBeInTheDocument();
     expect(within(mesh).getByText('实现依赖数据投影')).toBeInTheDocument();
     expect(within(mesh).getByText('整合 Room 任务图')).toBeInTheDocument();
@@ -225,6 +277,7 @@ describe('PawRoomFocusOverview', () => {
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={onOpenParticipant} />);
     const mesh = screen.getByRole('group', { name: '协作网状图' });
 
+    fireEvent.click(within(mesh).getByText(/协作关系 ·/));
     const relationLabel = mesh.querySelector<HTMLButtonElement>('.paw-room-focus-overview__mesh-edge-label[data-kind="dispatch"]')!;
     await user.click(relationLabel);
 
@@ -268,8 +321,9 @@ describe('PawRoomFocusOverview', () => {
     const { container } = render(<PawRoomFocusOverview focus={failedDispatchFocus} onOpenParticipant={vi.fn()} />);
 
     const mesh = screen.getByRole('group', { name: '协作网状图' });
-    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="dispatch"]')).toHaveLength(1);
-    const summary = screen.getByText(/未进入成功 DAG/).closest('summary');
+    fireEvent.click(within(mesh).getByText(/协作关系 ·/));
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge-label[data-kind="dispatch"]')).toHaveLength(1);
+    const summary = screen.getByText(/未确认关系/).closest('summary');
     expect(summary).not.toBeNull();
     expect(summary).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(summary!);
@@ -293,7 +347,7 @@ describe('PawRoomFocusOverview', () => {
     };
     render(<PawRoomFocusOverview focus={deliveredFocus} onOpenParticipant={vi.fn()} />);
 
-    const summary = screen.getByText(/未进入成功 DAG/).closest('summary')!;
+    const summary = screen.getByText(/未确认关系/).closest('summary')!;
     fireEvent.click(summary);
     const disclosure = summary.closest('details')!;
     expect(disclosure).toHaveTextContent('回执 · 已送达');
@@ -320,6 +374,7 @@ describe('PawRoomFocusOverview', () => {
     };
     const { container } = render(<PawRoomFocusOverview focus={confirmedDispatchFocus} onOpenParticipant={vi.fn()} />);
     const mesh = screen.getByRole('group', { name: '协作网状图' });
+    fireEvent.click(within(mesh).getByText(/协作关系 ·/));
     fireEvent.click(mesh.querySelector<HTMLAnchorElement>('.paw-room-focus-overview__mesh-edge-label[data-kind="dispatch"]')!);
 
     const detail = screen.getByRole('region', { name: '协作关系详情' });
@@ -330,7 +385,7 @@ describe('PawRoomFocusOverview', () => {
     expect(receiptItems[0]).toHaveTextContent('dispatch-success-1');
     expect(receiptItems[1]).toHaveTextContent('第二次成功分派');
     expect(receiptItems[1]).toHaveTextContent('dispatch-success-2');
-    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="dispatch"]')).toHaveLength(1);
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge-label[data-kind="dispatch"]')).toHaveLength(1);
   });
 
   it('keeps WorkItem detail in the inspector without drawing a WorkItem node', () => {
@@ -344,6 +399,8 @@ describe('PawRoomFocusOverview', () => {
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
 
     const ledger = screen.getByRole('region', { name: '往来记录' });
+    expect(within(ledger).getByText('最近 2 / 共 2 条')).toBeInTheDocument();
+    fireEvent.change(within(ledger).getByRole('combobox', { name: '消息类型' }), { target: { value: 'all' } });
     expect(within(ledger).getByText('最近 3 / 共 3 条')).toBeInTheDocument();
     const packets = within(ledger).getByRole('list', { name: '往来事件' });
     expect(packets).toHaveTextContent('Sol → Earth');
@@ -354,6 +411,7 @@ describe('PawRoomFocusOverview', () => {
     fireEvent.click(within(ledger).getByRole('button', { name: /分派依赖投影支线/ }));
     const detail = ledger.querySelector('.paw-room-focus-overview__packet-detail')!;
     expect(detail).toHaveTextContent('任务分派');
+    fireEvent.click(within(ledger).getByText('消息证据'));
     expect(detail).toHaveTextContent('context://room/brief');
     expect(detail).toHaveTextContent('mars');
   });
@@ -394,11 +452,8 @@ describe('PawRoomFocusOverview', () => {
     expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="handoff"]')).toHaveLength(0);
     expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge[data-kind="review"]')).toHaveLength(0);
     expect(container.querySelector('.paw-room-focus-overview__mesh-node--work')).toBeNull();
-    const legend = screen.getByRole('list', { name: '关系图例' });
-    expect(legend).not.toHaveTextContent('任务依赖');
-    expect(legend).not.toHaveTextContent('交接');
-    expect(legend).not.toHaveTextContent('职责');
-    expect(legend).not.toHaveTextContent('复核');
+    expect(screen.queryByRole('list', { name: '关系图例' })).not.toBeInTheDocument();
+    expect(within(mesh).getByText(/协作关系 · 1 条已确认/)).toBeInTheDocument();
   });
 
   it('answers the dual-axis review verdict inside the inspector', () => {

@@ -2908,7 +2908,10 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(context_refresh["ok"])
         self.assertEqual(context_refresh["result"]["trigger"], "first_user_prompt")
         self.assertEqual(context_refresh["result"]["sourceCount"], 0)
-        self.assertEqual(context_refresh["result"]["sessionContext"], "")
+        # An empty recall still carries the coverage boundary; it must not
+        # imply that the user has never expressed a relevant preference.
+        self.assertIn("记忆整理覆盖范围尚未确认", context_refresh["result"]["sessionContext"])
+        self.assertIn("无命中不代表用户没有表达过", context_refresh["result"]["sessionContext"])
         self.assertEqual(approvals["items"][0]["approvalId"], approval["approvalId"])
         self.assertEqual(decision["approval"]["state"], "rejected")
         self.assertEqual(approval_result["approval"]["state"], "rejected")

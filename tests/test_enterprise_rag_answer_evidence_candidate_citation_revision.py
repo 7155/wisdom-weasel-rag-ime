@@ -73,6 +73,7 @@ def _fact_by_id(qrels: dict[str, object], query_id: str, fact_id: str) -> dict[s
 
 
 class EnterpriseRagCandidateCitationRevisionTests(unittest.TestCase):
+    @unittest.skipUnless(all(path.is_file() for path in (QRELS_V2, QRELS)), "Private RAG corpus is not bundled in public source")
     def test_revision_is_append_only_and_only_adds_verified_candidate_chunks(self) -> None:
         self.assertEqual(EXPECTED_QRELS_V2_FILE_SHA256, _sha256(QRELS_V2))
 
@@ -145,6 +146,7 @@ class EnterpriseRagCandidateCitationRevisionTests(unittest.TestCase):
         for addition in EXPECTED_ADDITIONS.values():
             self.assertNotIn(addition["quote"], serialized)
 
+    @unittest.skipUnless(QRELS.is_file(), "Private RAG corpus is not bundled in public source")
     def test_dedicated_verifier_reproduces_the_fixed_point_offline(self) -> None:
         completed = subprocess.run(
             [sys.executable, "scripts/verify_enterprise_rag_answer_evidence_candidate_citation_revision.py"],

@@ -6,6 +6,7 @@ import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawOsAppSurfaceProvider } from '@/features/paw-os/surface-context';
 import { PawBrowserApp } from './PawBrowserApp';
+import type { PawBrowserDownload } from './paw-browser-host';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 
 beforeEach(() => {
@@ -209,6 +210,8 @@ describe('PAW Browser App', () => {
     expect(screen.queryByRole('button', { name: '浏览历史' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Browser 设置' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Browser 菜单' })).toBeNull();
+    expect(screen.getByRole('note', { name: 'Browser 宿主能力说明' })).toHaveTextContent('完整浏览器请在 PAW 桌面应用中使用');
+    expect(screen.getByRole('note', { name: 'Browser 宿主能力说明' })).toHaveTextContent('历史、书签和下载记录保存在桌面应用中');
     // Navigation and the Agent trace remain fully real in this mode.
     expect(screen.getByRole('button', { name: '后退' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '显示 Agent 浏览器轨迹' })).toBeInTheDocument();
@@ -663,6 +666,124 @@ describe('PAW Browser App', () => {
     expect(screen.getByRole('button', { name: 'Browser 设置' })).toHaveClass('paw-browser-settings-toggle');
   });
 
+  it('uses the persistent host for current-page bookmarks and reopens a stored bookmark in the same guest', async () => {
+    const user = userEvent.setup();
+    const addBookmark = vi.fn(async () => [{ id: 'bookmark-current', title: 'Current page', url: 'https://current.example/', createdAt: 1, updatedAt: 1 }]);
+    const getBookmarks = vi.fn(async () => []);
+    const loadURL = vi.fn(async () => undefined);
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      addBookmark,
+      getBookmarks,
+      removeBookmark: async () => [],
+      getHistory: async () => [],
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+
+    const guest = document.querySelector('webview') as Element & Record<string, unknown>;
+    Object.assign(guest, { loadURL });
+    mockGuestIdentity(guest, { title: 'Current page', url: 'https://current.example/', webContentsId: 314 });
+    fireEvent(guest, new Event('dom-ready'));
+
+    await user.click(await screen.findByRole('button', { name: '书签' }));
+    const library = await screen.findByRole('region', { name: '浏览书签' });
+    await user.click(within(library).getByRole('button', { name: '收藏当前页面' }));
+    await waitFor(() => expect(addBookmark).toHaveBeenCalledWith({ title: 'Current page', url: 'https://current.example/' }));
+    expect(within(library).getAllByText('Current page').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders host download jobs and sends file actions to the matching host job ID', async () => {
+    const user = userEvent.setup();
+    const download = { id: 'download-report', filename: 'report.pdf', url: 'https://example.com/report.pdf', path: '/tmp/report.pdf', state: 'completed' as const, receivedBytes: 10, totalBytes: 10, startedAt: 1, updatedAt: 2, completedAt: 2 };
+    const openDownload = vi.fn(async () => ({ ...download, opened: true }));
+    const revealDownload = vi.fn(async () => ({ ...download, revealed: true }));
+    const cancelDownload = vi.fn(async () => ({ ...download, state: 'cancelled' as const }));
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getDownloads: async () => [download],
+      openDownload,
+      revealDownload,
+      cancelDownload,
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '下载记录' }));
+    const library = await screen.findByRole('region', { name: '下载记录' });
+    expect(within(library).getByText('report.pdf')).toBeInTheDocument();
+    await user.click(within(library).getByRole('button', { name: '打开下载 report.pdf' }));
+    await user.click(within(library).getByRole('button', { name: '显示下载 report.pdf' }));
+    await waitFor(() => expect(openDownload).toHaveBeenCalledWith('download-report'));
+    expect(revealDownload).toHaveBeenCalledWith('download-report');
+    expect(cancelDownload).not.toHaveBeenCalled();
+  });
+
+  it('keeps live download updates when an older library read finishes later', async () => {
+    const user = userEvent.setup();
+    const download: PawBrowserDownload = { id: 'download-race', filename: 'race.pdf', url: 'https://example.com/race.pdf', path: '/tmp/race.pdf', state: 'progressing', receivedBytes: 1, totalBytes: 10, startedAt: 1, updatedAt: 1 };
+    let resolveRead!: (downloads: PawBrowserDownload[]) => void;
+    const pendingRead = new Promise<PawBrowserDownload[]>((resolve) => { resolveRead = resolve; });
+    let notifyDownloads!: (downloads: PawBrowserDownload[]) => void;
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getDownloads: () => pendingRead,
+      openDownload: async () => ({ ...download, opened: true }),
+      revealDownload: async () => ({ ...download, revealed: true }),
+      cancelDownload: async () => download,
+      onDownloadsChanged: (listener) => { notifyDownloads = listener; return () => undefined; },
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+    await user.click(await screen.findByRole('button', { name: '下载记录' }));
+    act(() => notifyDownloads([{ ...download, state: 'completed', receivedBytes: 10, updatedAt: 2 }]));
+    const library = screen.getByRole('region', { name: '下载记录' });
+    expect(within(library).getByText('已完成')).toBeInTheDocument();
+    await act(async () => resolveRead([download]));
+    expect(within(library).getByText('已完成')).toBeInTheDocument();
+    expect(within(library).queryByText('下载中')).toBeNull();
+  });
+
+  it('keeps a terminal host event when an earlier cancellation receipt arrives late', async () => {
+    const user = userEvent.setup();
+    const download: PawBrowserDownload = { id: 'download-race', filename: 'race.pdf', url: 'https://example.com/race.pdf', path: '/tmp/race.pdf', state: 'progressing', receivedBytes: 1, totalBytes: 10, startedAt: 1, updatedAt: 1 };
+    let resolveCancel!: (value: PawBrowserDownload) => void;
+    const pendingCancel = new Promise<PawBrowserDownload>((resolve) => { resolveCancel = resolve; });
+    let notifyDownloads!: (downloads: PawBrowserDownload[]) => void;
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getDownloads: async () => [download],
+      openDownload: async () => ({ ...download, opened: true }),
+      revealDownload: async () => ({ ...download, revealed: true }),
+      cancelDownload: () => pendingCancel,
+      onDownloadsChanged: (listener) => { notifyDownloads = listener; return () => undefined; },
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+    await user.click(await screen.findByRole('button', { name: '下载记录' }));
+    await user.click(await screen.findByRole('button', { name: '取消下载 race.pdf' }));
+    act(() => notifyDownloads([{ ...download, state: 'cancelled', updatedAt: 2 }]));
+    await act(async () => resolveCancel(download));
+    const library = screen.getByRole('region', { name: '下载记录' });
+    expect(within(library).getByText('已取消')).toBeInTheDocument();
+    expect(within(library).queryByText('下载中')).toBeNull();
+  });
+
+  it('does not claim cancellation when the host reports the download already completed', async () => {
+    const user = userEvent.setup();
+    const download: PawBrowserDownload = { id: 'download-race', filename: 'race.pdf', url: 'https://example.com/race.pdf', path: '/tmp/race.pdf', state: 'progressing', receivedBytes: 1, totalBytes: 10, startedAt: 1, updatedAt: 1 };
+    const completed = { ...download, state: 'completed' as const, receivedBytes: 10, updatedAt: 2 };
+    let current = download;
+    window.pawBrowserHost = {
+      ...electronBrowserHost(),
+      getDownloads: async () => [current],
+      openDownload: async () => ({ ...current, opened: true }),
+      revealDownload: async () => ({ ...current, revealed: true }),
+      cancelDownload: async () => { current = completed; return completed; },
+    };
+    render(<ControlTransportProvider transport={browserTransport()}><PawBrowserApp /></ControlTransportProvider>);
+    await user.click(await screen.findByRole('button', { name: '下载记录' }));
+    await user.click(await screen.findByRole('button', { name: '取消下载 race.pdf' }));
+    expect(await screen.findByText('下载已完成，未取消')).toBeInTheDocument();
+    expect(screen.queryByText('下载已取消')).toBeNull();
+  });
+
   it('reports the real find-in-page match position from the guest and clears on close', async () => {
     const user = userEvent.setup();
     window.pawBrowserHost = electronBrowserHost();
@@ -697,6 +818,11 @@ describe('PAW Browser App', () => {
       result: { activeMatchOrdinal: 0, matches: 0, finalUpdate: true },
     }));
     expect(await screen.findByText('无匹配')).toBeInTheDocument();
+
+    await user.type(findInput, ' workspace');
+    expect(findInPage).toHaveBeenLastCalledWith('paw workspace', { findNext: false, forward: true });
+    expect(screen.queryByText('无匹配')).not.toBeInTheDocument();
+    expect(screen.queryByText('2/8')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '关闭页内查找' }));
     expect(stopFindInPage).toHaveBeenCalledWith('clearSelection');

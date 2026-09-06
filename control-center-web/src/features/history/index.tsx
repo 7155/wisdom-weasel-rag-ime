@@ -74,7 +74,7 @@ export function HistoryFeature() {
     && rawRuntimeRevision >= 0
     ? rawRuntimeRevision
     : null;
-  const selectedEventId = Number(selectedId);
+  const selectedEventId = rows.some((row) => String(row.id) === selectedId) ? Number(selectedId) : 0;
   const tombstoneDraft = {
     eventId: selectedEventId,
     reason: 'control-center-history',
@@ -85,6 +85,11 @@ export function HistoryFeature() {
     setSelectedId(String(eventId));
     setDetailEventId(eventId);
   };
+  const search = () => {
+    const next = draftQuery.trim();
+    if (next !== query) setSelectedId('');
+    setQuery(next);
+  };
 
   return (
     <ManagementPage
@@ -94,7 +99,7 @@ export function HistoryFeature() {
       routeId="history"
       title="输入记录"
     >
-      <QueryState error={pages.error as Error | null} isPending={pages.isPending} onRetry={() => void pages.refetch()}>
+      {pages.data ? (
         <ManagementSection title="当前记录">
           <MetricStrip items={[
             { label: '已显示', value: rows.length, detail: '这一页', icon: History },
@@ -103,15 +108,20 @@ export function HistoryFeature() {
           ]} />
           <InlineNotice title="隐私" tone="info">列表只显示脱敏摘要；完整输入仅在你主动打开详情时读取。</InlineNotice>
         </ManagementSection>
+      ) : null}
 
         <ManagementSection title="查找记录">
           <div aria-label="筛选输入记录" className="history-filter-toolbar" role="search">
             <Field className="history-filter-toolbar__search" htmlFor="history-search" label="搜索">
-              <Input id="history-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="文本、应用或项目" value={draftQuery} />
+              <Input id="history-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                event.preventDefault();
+                search();
+              }} placeholder="文本、应用或项目" value={draftQuery} />
             </Field>
-            <Button className="history-filter-toolbar__submit" leadingIcon={<Search size={14} />} onClick={() => setQuery(draftQuery.trim())} size="small">查找</Button>
+            <Button className="history-filter-toolbar__submit" leadingIcon={<Search size={14} />} onClick={search} size="small">查找</Button>
             <Field className="history-filter-toolbar__source" htmlFor="history-source-filter" label="来源">
-              <Select id="history-source-filter" onValueChange={setFilter} options={[
+              <Select id="history-source-filter" onValueChange={(next) => { setSelectedId(''); setFilter(next); }} options={[
                 { value: '', label: '全部来源' },
                 { value: 'rime_commit', label: '输入法' },
                 { value: 'assistant_candidate', label: '联想候选' },
@@ -120,10 +130,17 @@ export function HistoryFeature() {
               ]} value={filter} />
             </Field>
           </div>
+          {pages.error && pages.data ? <div className="history-refresh-issue">
+            <InlineNotice title={pages.isFetchNextPageError ? '后续记录未能加载' : '记录刷新失败'} tone="warning">已加载的记录仍可查看，筛选条件保持不变。</InlineNotice>
+            <Button loading={pages.isFetching} onClick={() => void (pages.isFetchNextPageError ? pages.fetchNextPage() : pages.refetch())} size="small">
+              {pages.isFetchNextPageError ? '重试加载更多' : '重试刷新'}
+            </Button>
+          </div> : null}
+          <QueryState error={pages.data ? null : pages.error as Error | null} isPending={pages.isPending} onRetry={() => void pages.refetch()}>
           {rows.length ? (
             <>
               <HistoryTable onOpen={openDetail} productName={identity.productName} rows={rows} />
-              <PaginationBar count={rows.length} hasMore={pages.hasNextPage} isFetching={pages.isFetchingNextPage} onLoadMore={() => void pages.fetchNextPage()} />
+              {!pages.isFetchNextPageError ? <PaginationBar count={rows.length} hasMore={pages.hasNextPage} isFetching={pages.isFetchingNextPage} onLoadMore={() => void pages.fetchNextPage()} /> : null}
             </>
           ) : <EmptyState
             description={query || filter
@@ -132,6 +149,7 @@ export function HistoryFeature() {
             icon={Search}
             title={query || filter ? '没有找到符合条件的记录' : '还没有输入记录'}
           />}
+          </QueryState>
         </ManagementSection>
 
         {rows.length ? (
@@ -140,7 +158,7 @@ export function HistoryFeature() {
               <Select id="history-record" onValueChange={setSelectedId} options={[
                 { value: '', label: '请选择一条记录' },
                 ...rows.map((row) => ({ value: stringValue(row.id), label: `${stringValue(row.created)} · ${stringValue(row.text)}` })),
-              ]} value={selectedId} />
+              ]} value={selectedEventId > 0 ? selectedId : ''} />
             </Field>
             <div style={{ marginTop: 12, maxWidth: 540 }}>
             <ManagementMutationWorkflow
@@ -213,7 +231,6 @@ export function HistoryFeature() {
             </div>
           </ManagementSection>
         ) : null}
-      </QueryState>
       <HistoryDetailDialog
         eventId={detailEventId}
         onOpenChange={(open) => { if (!open) setDetailEventId(null); }}

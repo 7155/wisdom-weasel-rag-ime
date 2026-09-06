@@ -1,0 +1,836 @@
+/* PAWOS stellar dark identity.
+ *
+ * This file is loaded after the light stellar surface and is intentionally
+ * scoped to the real PAWOS root. The global ThemeProvider owns the preference
+ * and `data-theme` attribute; this layer only translates that choice into the
+ * desktop, its opaque windows, and the feature surfaces mounted inside them.
+ * The sky stays a deep blue field with cool light, rather than a filtered copy
+ * of the light theme, so text and controls remain readable without a costly
+ * full-viewport invert pass.
+ */
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] {
+  color-scheme: dark;
+  --paw-stellar-bg: #050817;
+  --paw-stellar-surface: #0f172a;
+  --paw-stellar-process: #111e34;
+  --paw-stellar-raised: #18243b;
+  --paw-stellar-ink: #eff6ff;
+  --paw-stellar-muted: #aebed7;
+  --paw-stellar-line: rgb(159 185 230 / 24%);
+  --paw-stellar-accent: #82b7ff;
+  --paw-stellar-success: #67e7b7;
+  --paw-stellar-warning: #f6c76f;
+  --paw-stellar-danger: #ff819d;
+  --paw-stellar-violet: #b8a2ff;
+
+  --paw-bg: var(--paw-stellar-bg);
+  --paw-panel: var(--paw-stellar-surface);
+  --paw-panel-strong: #101b31;
+  --paw-panel-soft: var(--paw-stellar-process);
+  --paw-line: var(--paw-stellar-line);
+  --paw-line-soft: rgb(159 185 230 / 14%);
+  --paw-ink: var(--paw-stellar-ink);
+  --paw-muted: var(--paw-stellar-muted);
+  --paw-accent: var(--paw-stellar-accent);
+  --paw-accent-strong: #a6ccff;
+  --paw-accent-soft: rgb(130 183 255 / 16%);
+  --paw-success: var(--paw-stellar-success);
+  --paw-warning: var(--paw-stellar-warning);
+  --paw-danger: var(--paw-stellar-danger);
+
+  --paw-chrome-veil: rgb(7 14 30 / 88%);
+  --paw-chrome-hairline: rgb(154 185 236 / 26%);
+  --paw-chrome-highlight: inset 0 1px 0 rgb(214 236 255 / 10%);
+  --paw-chrome-blur: blur(18px) saturate(130%);
+  --paw-chrome: rgb(10 20 40 / 92%);
+  --paw-chrome-soft: #111e34;
+  --paw-chrome-ink: var(--paw-stellar-ink);
+  --paw-chrome-muted: var(--paw-stellar-muted);
+  --paw-desktop-ink: var(--paw-stellar-ink);
+  --paw-desktop-muted: var(--paw-stellar-muted);
+  --paw-desktop-surface: rgb(10 20 40 / 78%);
+  --paw-selection-plate: #4f8cff;
+  --paw-shadow-rest: 0 16px 40px -22px rgb(0 0 0 / 60%);
+  --paw-shadow: 0 28px 72px -24px rgb(0 0 0 / 72%);
+  --paw-menu-ink: var(--paw-stellar-ink);
+  --paw-menu-bg: #101c32;
+  --paw-menu-line: var(--paw-stellar-line);
+  --paw-menu-selected-ink: #ffffff;
+  --paw-menu-selected-bg: rgb(82 139 255 / 30%);
+  background: var(--paw-stellar-bg);
+  color: var(--paw-stellar-ink);
+}
+
+/* The authored sky has its own dark materials. The separate static planet is
+ * kept visible as decoration and is dimmed only when live agent planets are
+ * present by the existing scene state contract. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-desktop {
+  background: var(--paw-stellar-bg);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-field-media {
+  background: #08122b;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-field-media::after {
+  background: linear-gradient(180deg, rgb(10 28 67 / 42%), transparent 28%, transparent 72%, rgb(2 7 22 / 64%));
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-scene__daylight {
+  background: linear-gradient(180deg, rgb(8 19 48 / 34%), transparent 50%),
+    radial-gradient(80% 70% at 76% 62%, rgb(52 113 191 / 22%), transparent 68%),
+    linear-gradient(110deg, rgb(18 67 133 / 20%), transparent 64%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-scene__nebula {
+  opacity: .76;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-scene__planet {
+  opacity: .74;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-scene:not([data-agent-count='0']) .paw-stellar-scene__planet {
+  opacity: .18;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-scene__stars i {
+  color: #d9f2ff;
+  box-shadow: 0 0 10px 1px rgb(125 207 255 / 84%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-scene__stars i[data-bright-sky] {
+  color: #a6d8ff;
+  box-shadow: 0 0 7px 1px rgb(101 177 255 / 76%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-field-stage::before {
+  background: radial-gradient(50% 50% at 50% 50%, rgb(9 24 53 / 80%), rgb(7 17 39 / 56%) 70%, transparent);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-field-lede__mark, .paw-field-lede__copy) {
+  color: var(--paw-stellar-muted);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-field-lede__title, .paw-field-lede__copy b) {
+  color: var(--paw-stellar-ink);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-field-lede__title em {
+  color: var(--paw-stellar-accent);
+}
+
+/* Desktop shortcuts remain readable against stars and retain a quiet halo so
+ * labels do not compete with the particle field. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+  color: var(--paw-stellar-ink);
+  background: rgb(5 12 29 / 72%);
+  text-shadow: 0 1px 10px rgb(0 0 0 / 84%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-desktop-shortcuts button:hover, .paw-wayfinder-work__project > summary:hover, .paw-wayfinder-work__loose-file:hover, .paw-wayfinder-work__project[open] > summary:not([data-selected])) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+  background: rgb(42 79 139 / 54%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-desktop-shortcuts button, .paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is([aria-pressed='true'], [data-selected], :focus-visible) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+  color: #ffffff;
+  background: rgb(71 125 228 / 62%);
+  box-shadow: inset 0 0 0 1px rgb(176 216 255 / 28%);
+}
+
+/* Desktop chrome and transient surfaces. These are the few places where a
+ * controlled veil is useful; working windows below stay opaque for cost. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-menu-bar, .paw-dock, .paw-dock-tip) {
+  color-scheme: dark;
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-chrome);
+  box-shadow: var(--paw-chrome-highlight), var(--paw-shadow-rest);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-menu-bar::after {
+  background: linear-gradient(90deg, transparent, rgb(105 180 255 / 82%) 35%, rgb(174 129 255 / 70%) 65%, transparent);
+  opacity: .56;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-menu-app[data-app], .paw-menu-extra, .paw-menu-status, .paw-dock button, .paw-dock .paw-dock-launchpad, .paw-dock .paw-dock-overview) {
+  color: var(--paw-stellar-muted);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-system-mark, .paw-menu-app, .paw-menu-extra, .paw-dock button, .paw-dock .paw-dock-launchpad, .paw-dock .paw-dock-overview):is(:hover, [aria-expanded='true'], [aria-pressed='true'], [aria-current='page']) {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-raised);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-dock > i {
+  background: var(--paw-stellar-line);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'][data-window-interaction] :is(.paw-menu-bar, .paw-dock) {
+  background: rgb(9 18 37 / 96%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-menu, .paw-context-menu, .paw-wayfinder-work, .paw-wayfinder-work__project-content, .paw-wayfinder-work__context-sheet, .paw-archive-undo, .paw-launchpad) {
+  --paw-ink: var(--paw-stellar-ink);
+  --paw-muted: var(--paw-stellar-muted);
+  --paw-panel: var(--paw-stellar-raised);
+  --paw-panel-strong: var(--paw-stellar-surface);
+  --paw-panel-soft: var(--paw-stellar-process);
+  --paw-accent: var(--paw-stellar-accent);
+  --paw-accent-strong: var(--paw-stellar-accent);
+  --paw-line: var(--paw-stellar-line);
+  --paw-line-soft: var(--paw-stellar-line);
+  color-scheme: dark;
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+  box-shadow: var(--paw-shadow);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-menu, .paw-context-menu) {
+  --paw-menu-ink: var(--paw-stellar-ink);
+  --paw-menu-bg: var(--paw-stellar-surface);
+  --paw-menu-line: var(--paw-stellar-line);
+  --paw-menu-selected-ink: #ffffff;
+  --paw-menu-selected-bg: rgb(82 139 255 / 32%);
+}
+
+/* Wayfinder is the desktop's transparent interaction plane. Its project
+ * labels and nested sheets own their own surfaces; filling this parent would
+ * paint over the authored sky and hide live particles. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-wayfinder-work {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-launchpad {
+  background: rgb(8 17 36 / 96%);
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-launchpad section > header input[type='search'], .paw-launchpad section > header button, .paw-wayfinder-work__repeats-toggle, .paw-wayfinder-work__state button) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-process);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-launchpad :is(input, textarea, select)::placeholder {
+  color: var(--paw-stellar-muted);
+  opacity: 1;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-launchpad .paw-launchpad-title > span, .paw-launchpad .paw-launchpad-group, .paw-launchpad section > div > button small, .paw-wayfinder-work__project-copy small) {
+  color: var(--paw-stellar-muted);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-launchpad section > div > button strong {
+  color: var(--paw-stellar-ink);
+}
+
+/* Every App keeps an opaque, cool navy canvas. App accents still come from the
+ * existing per-App identity tokens, while material and text are shared. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] {
+  --paw-app-canvas: #0b1327;
+  --paw-app-nav: #0f1b31;
+  --paw-app-surface: #101b31;
+  --paw-app-surface-strong: #14213a;
+  --paw-app-support-soft: #172640;
+  --paw-app-selection: rgb(82 139 255 / 24%);
+  --paw-app-line: var(--paw-stellar-line);
+  --paw-control-ink: var(--paw-stellar-ink);
+  --paw-control-muted: var(--paw-stellar-muted);
+  --paw-control-bg: var(--paw-app-surface);
+  --paw-control-bg-soft: var(--paw-app-nav);
+  --paw-control-line: var(--paw-stellar-line);
+  --paw-control-line-strong: rgb(180 210 255 / 52%);
+  --paw-focus-line: var(--paw-stellar-accent);
+  --paw-focus-halo: rgb(130 183 255 / 24%);
+  --paw-panel-bg: var(--paw-app-surface);
+  --paw-panel-line: var(--paw-stellar-line);
+  --paw-button-primary-ink: #071326;
+  --paw-button-primary-bg: var(--paw-stellar-accent);
+  color-scheme: dark;
+  color: var(--paw-stellar-ink);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-window {
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-canvas);
+  box-shadow: var(--paw-shadow);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-window-titlebar {
+  color-scheme: dark;
+  color: var(--paw-stellar-ink);
+  border-bottom-color: var(--paw-stellar-line);
+  background: var(--paw-app-nav);
+  box-shadow: inset 0 1px 0 rgb(218 237 255 / 7%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-window-title,
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-desktop-shortcuts button strong, .paw-wayfinder-work__project-copy strong) {
+  color: var(--paw-stellar-ink);
+  text-shadow: none;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell:not([data-active]) .paw-window-title {
+  color: var(--paw-stellar-muted);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-active][data-app] .paw-window-titlebar::after {
+  background: linear-gradient(90deg, transparent, var(--paw-stellar-accent), transparent);
+  opacity: .72;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-native-app,
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-native-stage,
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-native-page {
+  --color-canvas: var(--paw-app-canvas);
+  --color-chrome: var(--paw-app-nav);
+  --color-paper: var(--paw-app-surface);
+  --color-paper-subtle: var(--paw-app-support-soft);
+  --color-surface: var(--paw-app-surface-strong);
+  --color-surface-raised: var(--paw-app-surface-strong);
+  --color-surface-subtle: var(--paw-app-nav);
+  --color-surface-hover: #1b3154;
+  --color-surface-pressed: #23436f;
+  --color-border-soft: rgb(159 185 230 / 14%);
+  --color-border: var(--paw-stellar-line);
+  --color-border-strong: rgb(180 210 255 / 52%);
+  --color-text: var(--paw-stellar-ink);
+  --color-text-primary: var(--paw-stellar-ink);
+  --color-text-secondary: var(--paw-stellar-muted);
+  --color-text-tertiary: #8193b3;
+  --color-focus: var(--paw-stellar-accent);
+  --color-accent: var(--paw-app-accent, var(--paw-stellar-accent));
+  --color-accent-strong: var(--paw-app-accent-strong, var(--paw-stellar-accent));
+  --color-accent-soft: var(--paw-app-selection);
+  --color-accent-subtle: rgb(130 183 255 / 10%);
+  background: var(--paw-app-canvas);
+  color: var(--paw-stellar-ink);
+}
+
+/* Agent and Room share one reading palette, including the portalled chrome. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] {
+  --color-code-bg: #151a21;
+  --color-code-surface: #1b222b;
+  --color-code-border: #35404d;
+  --color-code-text: #eef3f7;
+  --color-code-muted: #aeb9c5;
+  --paw-ink: var(--paw-stellar-ink);
+  --paw-muted: var(--paw-stellar-muted);
+  --paw-panel: var(--paw-stellar-raised);
+  --paw-panel-strong: var(--paw-stellar-surface);
+  --paw-panel-soft: var(--paw-stellar-process);
+  --paw-line: var(--paw-stellar-line);
+  --paw-line-soft: rgb(159 185 230 / 14%);
+  --paw-accent: var(--paw-stellar-accent);
+  --paw-accent-strong: #a6ccff;
+  --paw-accent-soft: rgb(130 183 255 / 16%);
+  --paw-success: var(--paw-stellar-success);
+  --paw-warning: var(--paw-stellar-warning);
+  --paw-danger: var(--paw-stellar-danger);
+  --paw-chat-surface: var(--paw-stellar-surface);
+  --paw-chat-surface-subtle: var(--paw-stellar-process);
+  --paw-chat-surface-hover: #1b3154;
+  --paw-chat-user-bubble: rgb(82 139 255 / 24%);
+  --paw-chat-text: var(--paw-stellar-ink);
+  --paw-chat-text-secondary: var(--paw-stellar-muted);
+  --paw-chat-text-tertiary: #8193b3;
+  --paw-chat-icon: var(--paw-stellar-muted);
+  --paw-chat-border: var(--paw-stellar-line);
+  --paw-chat-border-translucent: rgb(159 185 230 / 14%);
+  --paw-chat-accent: var(--paw-stellar-accent);
+  --paw-chat-ok: var(--paw-stellar-success);
+  --paw-chat-warn: var(--paw-stellar-warning);
+  --paw-chat-violet: var(--paw-stellar-violet);
+  --paw-chat-danger: var(--paw-stellar-danger);
+  --room-accent: var(--paw-stellar-accent);
+  --room-accent-soft: rgb(130 183 255 / 16%);
+  --room-queued: #8193b3;
+  --room-running: var(--paw-stellar-accent);
+  --room-waiting: var(--paw-stellar-warning);
+  --room-review: var(--paw-stellar-violet);
+  --room-complete: var(--paw-stellar-success);
+  --room-failed: var(--paw-stellar-danger);
+  --an-paper: var(--paw-stellar-surface);
+  --an-paper-bright: var(--paw-stellar-surface);
+  --an-paper-soft: var(--paw-stellar-process);
+  --an-paper-sink: var(--paw-stellar-bg);
+  --an-ink: var(--paw-stellar-ink);
+  --an-ink-2: var(--paw-stellar-muted);
+  --an-ink-3: #8193b3;
+  --an-hairline: var(--paw-stellar-line);
+  --an-rule: rgb(159 185 230 / 25%);
+  --an-rule-strong: rgb(180 210 255 / 52%);
+  --an-red: var(--paw-stellar-danger);
+  --an-yellow: var(--paw-stellar-warning);
+  --an-cobalt: var(--paw-stellar-accent);
+  --an-violet: var(--paw-stellar-violet);
+  --an-teal: var(--paw-stellar-success);
+  --an-rose: #e18db6;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] :is(.paw-agent-app, .paw-agent-stage, .paw-session-workspace, .paw-room-workspace, .paw-session-workspace__body, .paw-session-workspace__primary, .paw-session-workspace__conversation, .paw-session-workspace__trace, .paw-session-workspace__loading) {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-surface);
+  border-color: var(--paw-stellar-line);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-rail {
+  border-right-color: var(--paw-stellar-line);
+  background: #0c172c;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-search {
+  color: var(--paw-stellar-muted);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] :is(.paw-agent-row:hover, .paw-agent-project-folder > summary:hover) {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-process);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-row[aria-current='page'] {
+  color: var(--paw-stellar-ink);
+  background: rgb(82 139 255 / 22%);
+  box-shadow: inset 2px 0 var(--paw-stellar-accent);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.an-home-root, .an-home) {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-surface);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-home-orbit {
+  border-color: rgb(130 183 255 / 56%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-home-orbit::before {
+  border-color: rgb(184 162 255 / 56%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-home-orbit::after {
+  background: var(--paw-stellar-violet);
+  box-shadow: 0 0 12px rgb(184 162 255 / 74%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-home-orbit > span {
+  background: var(--paw-stellar-accent);
+  box-shadow: 0 0 14px rgb(130 183 255 / 65%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-composer {
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-process);
+  box-shadow: inset 0 1px 0 rgb(214 236 255 / 7%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-composer:focus-within {
+  border-color: var(--paw-stellar-accent);
+  box-shadow: 0 0 0 3px rgb(130 183 255 / 17%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-mode-seg button[aria-checked='true'] {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-raised);
+  box-shadow: inset 0 0 0 1px var(--paw-stellar-line);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-send {
+  color: #071326;
+  background: var(--paw-stellar-accent);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-send:hover:not(:disabled) {
+  background: #a6ccff;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-send:disabled {
+  color: #7184a5;
+  background: #1b2a46;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.an-starter:hover, .an-recent-card:hover, .an-recent-card.is-room:hover) {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-process);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .an-recent-card {
+  border-bottom-color: var(--paw-stellar-line);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__header, .paw-room-workspace__header, .paw-room-workspace__signal, .paw-room-window-chrome, .paw-session-workspace__header nav, .paw-room-window-chrome > nav, .paw-room-tools, .paw-room-tools__header, .paw-room-tools__tabs, .paw-room-workspace__composer) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__header nav, .paw-room-window-chrome > nav) {
+  background: var(--paw-stellar-process);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__header nav button[aria-pressed='true'], .paw-room-window-chrome nav button[aria-pressed='true'], .paw-room-tools__tabs > button[aria-selected='true']) {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-raised);
+  box-shadow: inset 0 0 0 1px var(--paw-stellar-line);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-room-tools__header small, .paw-room-tools__actions > button, .paw-room-tools__tabs > button, .paw-room-workspace__mode, .paw-room-window-chrome, .paw-room-workspace__objective span) {
+  color: var(--paw-stellar-muted);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer {
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-process);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__delivery button[aria-checked='true'] {
+  color: var(--paw-stellar-ink);
+  background: rgb(82 139 255 / 26%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message .agent-markdown {
+  color: var(--paw-stellar-ink);
+  border-color: rgb(130 183 255 / 30%);
+  background: rgb(82 139 255 / 22%);
+}
+
+/* Room cards rendered by the feature surface use these names instead of the
+ * migrated workspace names. They inherit the same dark material in Agent. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] :is(.rooms-feature, .rooms-rail, .room-workspace, .room-timeline, .room-status-work, .room-task-graph, .paw-room-round) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] :is(.rooms-rail, .room-workspace > header, .room-status-work > header, .room-task-graph > header) {
+  background: var(--paw-stellar-process);
+}
+
+/* Memory is a native reading App. Most of its rules already consume the
+ * global semantic tokens; these final selectors close the remaining white
+ * catalog and topic cards without changing their information hierarchy. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='memory'] {
+  --memory-signal: #8dc4ff;
+  --memory-signal-strong: #b6d8ff;
+  --memory-signal-soft: rgb(82 139 255 / 24%);
+  --memory-gold: #f6c76f;
+  --memory-line: rgb(159 185 230 / 24%);
+  --memory-line-soft: rgb(159 185 230 / 14%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='memory'] :is(.memory-second-brain, .memory-library, .memory-layer-list, .memory-layer-detail, .memory-catalog-detail, .memory-preferences, .memory-curation, .memory-relations, .memory-topic-page, .memory-topic-map, .memory-role-book-workspace, .memory-reference-view, .memory-steward, .activity-timeline, .activity-calendar, .activity-day-map, .daily-journal) {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-app-surface);
+  border-color: var(--paw-stellar-line);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='memory'] :is(.memory-layer-list, .memory-library__status, .memory-role-book-sections > section > header, .memory-catalog-filters__query-box, .memory-preferences__persistence) {
+  background: var(--paw-app-nav);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='memory'] :is(.memory-layer-list .mgmt-list__row, .memory-topic-map__originals button, .memory-role-book-revisions button, .memory-steward__suggestions button, .memory-catalog-detail, .memory-reference-view, .memory-edit-dialog) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-surface-strong);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='memory'] :is(.memory-layer-list .mgmt-list__row[data-selected], .memory-topic-map__originals button:hover, .memory-role-book-revisions button[aria-current='true']) {
+  background: rgb(82 139 255 / 22%);
+  border-color: rgb(130 183 255 / 48%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='memory'] .memory-topic-map__claim {
+  border-color: rgb(141 196 255 / 58%);
+  background: rgb(42 82 142 / 42%);
+  color: var(--paw-stellar-ink);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='memory'] .memory-topic-map__claim :is(strong, span, small) {
+  color: var(--paw-stellar-ink);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='memory'] :is(input, textarea, select) {
+  color-scheme: dark;
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-surface-strong);
+}
+
+/* Browser chrome deliberately keeps the page viewport dominant. The guest
+ * page itself remains provider-owned and is never recoloured by this shell. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-direct-browser {
+  --paw-browser-chrome: var(--paw-app-nav);
+  --paw-browser-control: var(--paw-app-surface-strong);
+  --paw-browser-hover: rgb(130 183 255 / 16%);
+  --paw-browser-line: var(--paw-stellar-line);
+  --paw-browser-ink: var(--paw-stellar-ink);
+  --paw-browser-muted: var(--paw-stellar-muted);
+  background: var(--paw-app-surface);
+  color: var(--paw-stellar-ink);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] :is(.paw-window-titlebar[data-window-chrome='browser-tabs'], .paw-browser-toolbar) {
+  border-bottom-color: var(--paw-stellar-line);
+  background: var(--paw-app-nav);
+  box-shadow: inset 0 1px 0 rgb(214 236 255 / 7%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-window-titlebar[data-window-chrome='browser-tabs'] .paw-window-title {
+  color: var(--paw-stellar-muted);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-browser-tab {
+  color: var(--paw-stellar-muted);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-browser-tab[data-active] {
+  border-color: var(--paw-stellar-line);
+  border-bottom-color: var(--paw-app-surface);
+  background: var(--paw-app-surface);
+  color: var(--paw-stellar-ink);
+  box-shadow: 0 -1px 4px rgb(0 0 0 / 22%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] :is(.paw-nav-buttons button, .paw-toolbar-actions > button, .paw-browser-tab-close, .paw-browser-new-tab) {
+  color: var(--paw-stellar-muted);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-omnibox-form {
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-surface-strong);
+  box-shadow: inset 0 1px 0 rgb(214 236 255 / 5%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-omnibox-form:focus-within {
+  border-color: var(--paw-stellar-accent);
+  box-shadow: 0 0 0 3px rgb(130 183 255 / 18%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] :is(.paw-omnibox-form input, .paw-browser-history-search, .paw-browser-find) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-surface-strong);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] :is(.paw-browser-workspace, .paw-browser-viewport) {
+  background: var(--paw-app-surface);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] :is(.paw-browser-error, .paw-browser-page-card, .paw-browser-agent-stream, .paw-browser-menu, .paw-browser-find, .paw-browser-surface-card) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-surface-strong);
+  box-shadow: var(--paw-shadow-rest);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] :is(.paw-browser-history, .paw-browser-settings, .paw-browser-settings-body) {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-app-canvas);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-browser-agent-stream article[data-source='agent'][data-status='claimed'],
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-browser-agent-stream article[data-source='agent'][data-status='queued'] {
+  background: rgb(20 184 200 / 16%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='browser'] .paw-browser-agent-stream > footer {
+  border-top-color: var(--paw-stellar-line);
+  background: var(--paw-app-nav);
+  color: var(--paw-stellar-muted);
+}
+
+/* Files and Terminal use the same shell contract; Terminal's intentionally
+ * dark console remains dark while its surrounding controls gain shared focus
+ * and border tokens. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='files'] :is(.paw-files-app, .paw-files-tree),
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='terminal'] :is(.paw-terminal-app, .paw-terminal-app__toolbar) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-surface);
+}
+
+/* Migrated System Apps carry a light neutral bridge in their own stylesheet.
+ * Override that bridge at its owner so Settings, Monitor, Input Studio, and
+ * App Center share the dark window contract without painting unrelated Apps. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-system-app {
+  --paw-system-accent: #82b7ff;
+  --paw-system-accent-soft: rgb(130 183 255 / 18%);
+  --paw-system-stage: #0b1327;
+  --paw-system-surface: #101b31;
+  --paw-system-fill: rgb(130 183 255 / 13%);
+  --paw-system-line: var(--paw-stellar-line);
+  --paw-system-ink: var(--paw-stellar-ink);
+  --paw-system-muted: var(--paw-stellar-muted);
+  --color-canvas: var(--paw-system-stage);
+  --color-surface: var(--paw-system-surface);
+  --color-surface-raised: #14213a;
+  --color-surface-subtle: var(--paw-app-nav);
+  --color-surface-hover: #1b3154;
+  --color-surface-pressed: #23436f;
+  --color-paper: var(--paw-system-surface);
+  --color-chrome: var(--paw-system-stage);
+  --color-border: var(--paw-stellar-line);
+  --color-border-soft: rgb(159 185 230 / 14%);
+  --color-border-strong: rgb(180 210 255 / 52%);
+  --color-text: var(--paw-system-ink);
+  --color-text-primary: var(--paw-system-ink);
+  --color-text-secondary: var(--paw-system-muted);
+  --color-text-tertiary: #8193b3;
+  --color-focus: var(--paw-system-accent);
+  color-scheme: dark;
+  color: var(--paw-system-ink);
+  background: var(--paw-system-stage);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-system-app__nav, .paw-system-app__stage, .paw-system-app__workspace, .paw-system-app__page) {
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-system-stage);
+  color: var(--paw-system-ink);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-system-app__nav {
+  background: #0c172c;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-system-app__chrome {
+  background: var(--paw-system-surface);
+  border-bottom-color: var(--paw-stellar-line);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-system-app .mgmt-page {
+  background: var(--paw-system-stage);
+  color: var(--paw-system-ink);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-system-app .mgmt-section {
+  background: var(--paw-system-surface);
+  border-color: var(--paw-stellar-line);
+}
+
+/* System Settings is a native App too. Its appearance preview and choice
+ * cards intentionally use hard-coded paper in the light stylesheet, so give
+ * those cards the same dark contract while preserving the selected state. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] :is(.paw-os-appearance-preview, .paw-os-theme-option, .paw-os-appearance-motion__option, .paw-os-appearance-apps li) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-surface);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] .paw-os-appearance-preview {
+  background: radial-gradient(120% 90% at 18% 0%, rgb(130 183 255 / 18%), transparent 52%),
+    linear-gradient(158deg, #0d1a35 0%, #0b1630 48%, #081126 100%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] :is(.paw-os-appearance-preview__menu, .paw-os-appearance-preview__dock) {
+  background: rgb(10 21 43 / 88%);
+  border-color: var(--paw-stellar-line);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] .paw-os-appearance-preview__window {
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-app-surface);
+  box-shadow: var(--paw-shadow-rest);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] .paw-os-appearance-preview__titlebar {
+  border-bottom-color: var(--paw-stellar-line);
+  background-color: var(--paw-app-nav);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] .paw-os-appearance-preview__rail {
+  border-right-color: var(--paw-stellar-line);
+  background: var(--paw-app-nav);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] .paw-os-appearance-preview__content {
+  background-color: var(--paw-app-surface);
+  background-image: linear-gradient(rgb(214 236 255 / 18%), rgb(214 236 255 / 18%)),
+    linear-gradient(rgb(214 236 255 / 11%), rgb(214 236 255 / 11%)),
+    linear-gradient(rgb(214 236 255 / 11%), rgb(214 236 255 / 11%)),
+    linear-gradient(rgb(130 183 255 / 32%), rgb(130 183 255 / 32%));
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] :is(.paw-os-theme-option[data-selected], .paw-os-appearance-motion__option[data-selected]) {
+  border-color: rgb(130 183 255 / 58%);
+  background: rgb(82 139 255 / 18%);
+  box-shadow: 0 0 0 2.5px rgb(130 183 255 / 14%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='system-settings'] :is(.paw-os-theme-option__copy small, .paw-os-appearance-motion__copy small, .paw-os-appearance-motion__state, .paw-os-theme-state) {
+  color: var(--paw-stellar-muted);
+}
+
+/* Agent planet captions sit above the field, so they need their own contrast
+ * independent of the window palette. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-agents__links line {
+  stroke: rgb(141 196 255 / 58%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-agent__sphere {
+  box-shadow: 0 0 0 1px rgb(214 236 255 / 38%), 0 0 28px rgb(87 168 255 / 64%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-agent__sphere::after {
+  background: radial-gradient(circle at 26% 20%, rgb(213 235 255 / 18%), transparent 38%, rgb(4 15 33 / 52%) 72%, #040d20 97%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-agent__orbit {
+  border-color: rgb(141 196 255 / 38%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-agent__caption {
+  color: var(--paw-stellar-ink);
+  text-shadow: 0 2px 12px rgb(0 0 0 / 92%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-agent__caption strong {
+  color: #ffffff;
+  text-shadow: 0 2px 9px #071326, 0 1px 3px #071326;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-agent__caption span {
+  color: #c5d8f5;
+  background: rgb(10 23 45 / 92%);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-agent__caption i {
+  background: var(--paw-stellar-success);
+  box-shadow: 0 0 0 3px rgb(103 231 183 / 18%), 0 0 12px rgb(103 231 183 / 78%);
+}
+
+/* Focus, selection, and scrollbars are shared by every mounted surface. */
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(button, [role='button'], a, input, textarea, select):focus-visible {
+  outline-color: var(--paw-stellar-accent);
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] ::selection {
+  color: #071326;
+  background: #a6ccff;
+}
+
+:root[data-theme='dark'] .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-agent-recents, .an-recent-list, .an-menu, .paw-room-timeline, .memory-layer-list, .paw-browser-agent-stream > div) {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(141 196 255 / 52%) transparent;
+}
+
+/* Home menus are Radix portals under body, outside the desktop token scope. */
+:root[data-theme='dark'] .paw-agent-next.an-home-menu {
+  --an-paper-bright: var(--color-surface-raised);
+  --an-paper-soft: var(--color-surface-hover);
+  --an-ink: var(--color-text-primary);
+  --an-ink-2: var(--color-text-secondary);
+  --an-ink-3: var(--color-text-tertiary);
+  --an-rule: var(--color-border);
+  --an-rule-strong: var(--color-border-strong);
+  --an-cobalt: var(--color-focus);
+  color-scheme: dark;
+  color: var(--an-ink);
+}

@@ -41,9 +41,9 @@ const relationViews = [
 const EMPTY_GROUPS: readonly MemoryGroupNode[] = [];
 const EMPTY_BOOKS: readonly MemoryBookNode[] = [];
 
-export function MemoryRelations({ enabled }: { enabled: boolean }) {
-  const [view, setView] = useState<RelationView>('tags');
-  const [filter, setFilter] = useState('');
+export function MemoryRelations({ enabled, initialTopic, onOpenBook }: { enabled: boolean; initialTopic?: { id: string; title: string }; onOpenBook?: (bookId: string) => void }) {
+  const [view, setView] = useState<RelationView>(initialTopic ? 'books' : 'tags');
+  const [filter, setFilter] = useState(initialTopic?.title ?? '');
   const [source, setSource] = useState('');
   const [selectedTagId, setSelectedTagId] = useState('');
   const [selectedBipartiteKey, setSelectedBipartiteKey] = useState('');
@@ -102,7 +102,7 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
 
   return (
     <ManagementSection
-      description="查看标签之间，以及分组与标签或长期主题之间已经记录的关系。"
+      description="探索标签共现、分组归属与主题联系；当前认识及其依据请在主题页核对。"
       title="记忆关系"
     >
       <div className="memory-relations">
@@ -193,12 +193,24 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
               availableGroups={filtered.groups}
               enabled={enabled && view === 'books'}
               graph={groupBookGraph}
+              initialBookId={initialTopic?.id}
+              onOpenBook={onOpenBook}
               onSelect={selectBipartite}
               selectedKey={selectedBipartiteKey}
             />
           ) : (
             <EmptyState
-              description={view === 'books' ? '当前筛选没有匹配分组或长期主题。' : '当前筛选没有匹配分组或标签。'}
+              action={initialTopic ? <Button onClick={() => {
+                setFilter('');
+                setSource('');
+                setSelectedTagId('');
+                setSelectedBipartiteKey('');
+                setTagFocusId('');
+                setGroupFocusId('');
+              }} size="small" variant="quiet">查看全部导航关系</Button> : undefined}
+              description={initialTopic
+                ? '当前导航筛选没有可读关系；主题依据仍可在上方核对。'
+                : view === 'books' ? '当前筛选没有匹配分组或长期主题。' : '当前筛选没有匹配分组或标签。'}
               icon={Search}
               title="没有匹配关系"
             />
@@ -431,6 +443,8 @@ function GroupBookNetwork({
   availableGroups,
   enabled,
   graph,
+  initialBookId,
+  onOpenBook,
   onSelect,
   selectedKey,
 }: {
@@ -438,11 +452,14 @@ function GroupBookNetwork({
   availableGroups: readonly MemoryGroupNode[];
   enabled: boolean;
   graph: BookBipartiteGraphLayout;
+  initialBookId?: string;
+  onOpenBook?: (bookId: string) => void;
   onSelect: (key: string) => void;
   selectedKey: string;
 }) {
   const [showUnconnected, setShowUnconnected] = useState(false);
-  const defaultKey = availableGroups[0]
+  const initialBook = availableBooks.find((book) => book.entityId === initialBookId);
+  const defaultKey = initialBook ? bookKey(initialBook.id) : availableGroups[0]
     ? groupKey(availableGroups[0].id)
     : bookKey(availableBooks[0]?.id ?? '');
   const validKeys = new Set([
@@ -517,6 +534,7 @@ function GroupBookNetwork({
           kind={entityKind}
           memberLoadError={entity.memberLoadError as Error | null}
           node={selectedGroup ?? selectedBook!}
+          onOpenBook={selectedBook && onOpenBook ? () => onOpenBook(selectedBook.entityId) : undefined}
           onLoadMoreConnections={() => void entity.fetchNextConnections()}
           onLoadMoreMembers={() => void entity.fetchNextMembers()}
           onSelectTag={(id) => onSelect(tagKey(id))}
@@ -663,7 +681,7 @@ function GraphTruthNotice({
     <div className="memory-graph__truth" data-empty={edgeCount === 0 || undefined}>
       <p>
         {edgeCount > 0
-          ? `当前显示 ${nodeCount} 项记忆与 ${edgeCount} 条有证据关系。`
+          ? `当前显示 ${nodeCount} 项记忆与 ${edgeCount} 条已记录的导航关系。`
           : `${nodeCount} 项记忆目前没有已记录关系。`}
       </p>
       {onToggleUnconnected ? (
@@ -694,7 +712,7 @@ function GraphLegend({ view }: { view: RelationView }) {
       {view === 'tags' ? <span><i data-shape="tag" />标签 · 大小表示记忆量</span> : <span><i data-shape="group" />分组</span>}
       {view === 'groups' ? <span><i data-shape="tag" />标签</span> : null}
       {view === 'books' ? <span><i data-shape="book" />长期主题</span> : null}
-      <span><i data-shape="edge" />明确关系 · 同一事实共现</span>
+      <span><i data-shape="edge" />{view === 'tags' ? '标签共现 · 不代表因果' : '已记录的归属关系'}</span>
     </div>
   );
 }
@@ -711,6 +729,7 @@ function MemoryEntityInspector({
   node,
   onLoadMoreConnections,
   onLoadMoreMembers,
+  onOpenBook,
   onSelectTag,
 }: {
   connectionLoadError: Error | null;
@@ -724,6 +743,7 @@ function MemoryEntityInspector({
   node: MemoryTagNode | MemoryGroupNode | MemoryBookNode | PositionedBipartiteTagNode;
   onLoadMoreConnections: () => void;
   onLoadMoreMembers: () => void;
+  onOpenBook?: () => void;
   onSelectTag: (id: string) => void;
 }) {
   const payload = asRecord(entityData);
@@ -752,6 +772,7 @@ function MemoryEntityInspector({
           {' '}已选{kind === 'group' ? '分组' : kind === 'book' ? '长期主题' : '标签'}
         </span>
         <h3>{node.label}</h3>
+        {kind === 'book' && onOpenBook ? <Button leadingIcon={<BookOpen size={14} />} onClick={onOpenBook} size="small" variant="quiet">阅读主题认识</Button> : null}
         <p>{stringValue(entity.description, 'note' in node ? node.note : node.description) || '暂无说明。'}</p>
         <dl>
           <div><dt>成员</dt><dd>{memberCount}</dd></div>

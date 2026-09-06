@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from scripts import run_enterpriseops_csm_eval as enterpriseops_eval
 from scripts.run_enterpriseops_csm_eval import (
@@ -64,6 +66,56 @@ class FakeSqlClient:
 
 
 class RunEnterpriseOpsCsmEvalTests(unittest.TestCase):
+    def test_candidate_file_reaches_actual_prompt_and_cancellation_cleans_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            prompt_file = Path(temporary) / "candidate.txt"
+            prompt_file.write_text("Verify each requested relationship.\n", encoding="utf-8")
+            client = Mock()
+            client.seed_database.return_value = "disposable-db"
+            client.delete_database.return_value = True
+            client.sql_query.return_value = {"data": [{"count": 1}]}
+            gateway = Mock()
+            gateway.catalog = {"find_account": {"name": "find_account"}, "create_new_case": {"name": "create_new_case"}}
+            gateway.ledger.return_value = []
+            service = Mock()
+            service.create_session.return_value = {"session": {"id": "agent:owned"}}
+            service.ensure_runtime.return_value = {"state": {"model": {"provider": "openai-codex", "id": "gpt-5.6-sol"}}}
+            service.select_thinking_level.return_value = {"thinkingLevel": "max"}
+            service.prompt.return_value = {"turnId": "turn:owned"}
+            service.events.replay.return_value = ([], False)
+            task = {**self._task(), "seedFile": "host-private-seed.sql"}
+            bound_sessions = []
+            report = enterpriseops_eval._run_profile(
+                tasks=[task, task], workflow_profile="baseline-v1", service=service,
+                gateway=gateway, client=client, timeout_seconds=1, thinking_level="max",
+                expected_provider="openai-codex", expected_model="gpt-5.6-sol",
+                candidate_prompt_file=prompt_file, cancelled=lambda: service.prompt.called,
+                on_session=bound_sessions.append,
+            )
+            submitted = service.prompt.call_args.args[1]["message"]
+            self.assertTrue(submitted.startswith(build_agent_prompt(task, workflow_profile="baseline-v1")))
+            self.assertIn(prompt_file.read_text(), submitted)
+            self.assertNotIn("host-private-seed.sql", submitted)
+            self.assertNotIn("SELECT COUNT", submitted)
+            self.assertEqual(["agent:owned"], bound_sessions)
+            self.assertEqual("cancelled", report["status"])
+            self.assertEqual(1, report["taskCount"])
+            self.assertEqual(hashlib.sha256(prompt_file.read_bytes()).hexdigest(), report["candidatePrompt"]["sha256"])
+            service.abort.assert_called_once_with("agent:owned")
+            gateway.unbind_session.assert_called_once_with("agent:owned")
+            client.delete_database.assert_called_once_with("disposable-db")
+
+    def test_candidate_file_rejects_held_out_before_runtime_or_file_access(self) -> None:
+        service = Mock()
+        with self.assertRaisesRegex(ValueError, "Validation|validation"):
+            enterpriseops_eval._run_profile(
+                tasks=[], workflow_profile="baseline-v1", service=service,
+                gateway=Mock(), client=Mock(), timeout_seconds=1, thinking_level="max",
+                expected_provider="openai-codex", expected_model="gpt-5.6-sol",
+                candidate_prompt_file=Path("does-not-exist"), evaluation_split="held-out",
+            )
+        service.create_session.assert_not_called()
+
     def _task(self, task_id: str = "task_1") -> dict[str, object]:
         return {
             "taskId": task_id,

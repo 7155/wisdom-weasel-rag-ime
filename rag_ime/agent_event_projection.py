@@ -256,7 +256,14 @@ class AgentEventProjectionService:
             self._publish_room_delta(event, publication)
         else:
             self._flush_room_deltas(str(participant["roomId"]))
-            self.room_events.publish(**publication)
+            if child_event and event.event_type in {"turn_completed", "turn_failed"}:
+                self.room_events.publish_child_terminal(
+                    runtime_event_id=event.event_id,
+                    dispatch_id=dispatch_id,
+                    **publication,
+                )
+            else:
+                self.room_events.publish(**publication)
         if event.event_type in {
             "turn_completed",
             "turn_failed",

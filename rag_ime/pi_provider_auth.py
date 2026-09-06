@@ -286,20 +286,19 @@ class PiProviderAuthService:
             job = self._oauth_jobs.get(login_id)
             if job is None:
                 raise PiProviderAuthError("登录会话不存在或已经结束。")
-            if job.state in {"completed", "failed", "cancelled"}:
-                return {**_oauth_payload(job), "cancelled": job.state == "cancelled"}
-            job.state = "cancelled"
-            job.updated_at_ms = int(time.time() * 1000)
+            if job.state not in {"completed", "failed", "cancelled"}:
+                job.state = "cancelled"
+                job.updated_at_ms = int(time.time() * 1000)
             process = job.process
         _terminate_process(process)
-        return {**_oauth_payload(job), "cancelled": True}
+        return {**_oauth_payload(job), "cancelled": job.state == "cancelled"}
 
     def close(self) -> None:
         with self._lock:
             processes = [
                 job.process
                 for job in self._oauth_jobs.values()
-                if job.state not in {"completed", "failed", "cancelled"}
+                if job.process.poll() is None
             ]
         for process in processes:
             _terminate_process(process)
@@ -506,11 +505,14 @@ class PiProviderAuthService:
                             job.error = _public_error(event.get("error"))
                             job.user_code = ""
                             job.verification_uri = ""
+                        terminal = job.state in {"completed", "failed", "cancelled"}
                     if browser_url:
                         try:
                             self._oauth_url_opener(browser_url)
                         except (OSError, RuntimeError):
                             pass
+                    if terminal:
+                        break
             return_code = job.process.wait(timeout=2)
             with self._lock:
                 if job.state not in {"completed", "failed", "cancelled"}:
@@ -519,11 +521,12 @@ class PiProviderAuthService:
                     job.updated_at_ms = int(time.time() * 1000)
         except Exception:
             with self._lock:
-                if job.state != "cancelled":
+                if job.state not in {"completed", "failed", "cancelled"}:
                     job.state = "failed"
                     job.error = "登录流程异常结束，请重新连接。"
                     job.updated_at_ms = int(time.time() * 1000)
         finally:
+            _terminate_process(job.process)
             if stdout is not None:
                 stdout.close()
 

@@ -527,9 +527,9 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "plugins",
         "domain": "agents",
         "displayName": "能力市场与制作",
-        "description": "查找、检查或制作原生 Pi Package，并提交受控安装提议；最终应用只需用户在控制中心明确确认",
+        "description": "在 OS 内查找、制作、安装与卸载原生 Pi Package；已授权的更改通过当前 Session 的执行权限直接应用同一份预览",
         "when": ("当前任务缺少可复用的 Skill、扩展、提示词或主题，需要先查找再获取或制作",),
-        "notFor": ("已有工具或 Skill 可以完成的普通任务、直接应用安装状态、写入密钥或绕过产品确认",),
+        "notFor": ("已有工具或 Skill 可以完成的普通任务、写入密钥、未获授权的装卸或绕过来源与版本校验",),
         "input": "市场查询、Pi Package 来源或不可变 Package 草稿",
         "output": "市场结果、Package 草稿、校验结果或待确认安装提议",
         "does": "复用 Pi 的 Package 解析和加载能力；PAW 只负责发现、草稿、回执、版本和产品确认。",
@@ -544,7 +544,9 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "propose_update",
             "propose_rollback",
             "propose_uninstall",
+            "apply",
         ),
+        "operationRisks": {"apply": "R2"},
         "resultPresentation": "tool_result",
     },
     {
@@ -2199,9 +2201,25 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "draftId": {"type": "string", "minLength": 1, "maxLength": 160},
     "pluginId": {"type": "string", "minLength": 1, "maxLength": 240},
     "manifest": {"type": "object"},
+    "packageJson": {
+        "type": "object",
+        "description": "原生 Pi Package 的完整 package.json，包含名称、版本与 pi 资源声明。",
+    },
     "files": {"type": "object"},
     "sourcePath": {"type": "string", "minLength": 1, "maxLength": 1_024},
+    "packageSource": {
+        "type": "string",
+        "minLength": 1,
+        "description": "原生 Pi Package 来源：npm: 包标识、Git 来源或本地 Package 目录。",
+    },
+    "catalogId": {"type": "string", "minLength": 1},
+    "catalogVersion": {
+        "type": "string",
+        "description": "catalogId 对应的版本；省略时使用目录中的默认版本。",
+    },
     "validationToken": {"type": "string", "minLength": 1, "maxLength": 240},
+    "previewToken": {"type": "string", "minLength": 1, "maxLength": 240},
+    "payloadSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "enable": {"type": "boolean"},
     "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
     "resourceRef": {"type": "string", "maxLength": 1_024},
@@ -2273,6 +2291,15 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
 }
 
 _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]] = {
+    ("plugins", "sourcePath"): {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1_024,
+        "description": (
+            "仅用于含 rag-ime-plugin.json 的旧插件目录；"
+            "原生 Pi Package（包括本地目录）使用 packageSource。"
+        ),
+    },
     ("workspace_list", "path"): {
         "type": "string",
         "maxLength": 1_024,
@@ -2378,7 +2405,10 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "session_search": ("query", "limit", "includeArchived"),
     "trace_diagnostics": ("targets",),
     "plugins": (
-        "draftId", "manifest", "files", "sourcePath", "validationToken", "pluginId", "enable"
+        "draftId", "manifest", "packageJson", "files", "sourcePath",
+        "packageSource", "catalogId", "catalogVersion",
+        "validationToken", "pluginId", "enable",
+        "previewToken", "payloadSha256",
     ),
     "sandbox": ("suiteId", "suiteRevision"),
     "browser": (
@@ -2463,6 +2493,7 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("plugins", "propose_update"): ("validationToken",),
     ("plugins", "propose_rollback"): ("pluginId",),
     ("plugins", "propose_uninstall"): ("pluginId",),
+    ("plugins", "apply"): ("previewToken", "payloadSha256"),
     ("browser", "run"): ("script",),
     ("browser", "navigate"): ("url",),
     ("browser", "click"): ("refId",),
@@ -3001,6 +3032,22 @@ class ControlToolGateway:
             "ok": True,
             "sessionId": session_id,
             **result,
+            "requestedPath": str((payload or {}).get("path") or ""),
+            "editability": self.workspace_harness.file_editability(session, str(result["path"])),
+        }
+
+    def workspace_save(
+        self,
+        session_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Explicit local Files edits share workspace authority without starting a model turn."""
+        session = self.sessions.get(session_id)
+        return {
+            "schemaVersion": "rag-ime.agent-workspace-save.v1",
+            "ok": True,
+            "sessionId": session_id,
+            **self.workspace_harness.save_file(session, dict(payload or {})),
         }
 
     def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
@@ -4354,6 +4401,18 @@ class ControlToolGateway:
     ) -> dict[str, object]:
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
+        if (tool, operation) == ("plugins", "apply"):
+            preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+            payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+            digest = _approval_payload_digest(
+                session_id=str(approval.get("sessionId") or ""), tool=tool, operation=operation,
+                action_payload=payload, base_state={},
+            )
+            if digest != approval.get("payloadSha256"):
+                raise ValueError("plugin approval payload no longer matches its preview")
+            if self.extensions is None:
+                raise ValueError("managed plugin lifecycle is unavailable")
+            return dict(self.extensions.apply({**payload, "confirmText": "apply"}))
         if (tool, operation) == ("workspace_job", "start"):
             return self._apply_background_job_start(approval)
         if (tool, operation) == ("workspace_job", "cancel"):
@@ -4499,6 +4558,22 @@ class ControlToolGateway:
         args: Mapping[str, object],
         risk_level: str,
     ) -> dict[str, object]:
+        if (tool, operation) == ("plugins", "apply"):
+            if self.extensions is None:
+                raise ValueError("managed plugin lifecycle is unavailable")
+            payload = {key: str(args.get(key) or "") for key in ("previewToken", "payloadSha256")}
+            summary = self.extensions.inspect_preview(payload)
+            label = {"install": "安装", "update": "更新", "enable": "启用", "disable": "停用", "uninstall": "卸载", "rollback": "回滚"}.get(str(summary.get("action")), "更改")
+            description = f"{label} {summary.get('displayName') or summary.get('pluginId')}"
+            digest = _approval_payload_digest(
+                session_id=session_id, tool=tool, operation=operation, action_payload=payload, base_state={},
+            )
+            approval = self.sessions.create_approval(
+                session_id=session_id, tool_name=tool, operation=operation, payload_sha256=digest,
+                preview={"title": description, "summary": description, "actionPayload": payload, "baseState": {}, "package": summary},
+                risk_level=risk_level, ttl_ms=60_000,
+            )
+            return {"summary": description, "approvalRequired": True, "approvalId": approval["approvalId"], "approval": approval}
         if tool == "memory" and not self._memory_enabled():
             raise ValueError("memory tool is disabled by settings.memory.enabled")
         if (tool, operation) == ("workspace_job", "start"):
@@ -10670,6 +10745,11 @@ def _runtime_tool_parameter_schema(
                         ]
                     },
                 },
+            ]
+        elif tool_id == "plugins" and operation == "validate":
+            branch["oneOf"] = [
+                {"required": [source]}
+                for source in ("sourcePath", "packageSource", "catalogId")
             ]
         elif alternatives:
             branch["anyOf"] = [

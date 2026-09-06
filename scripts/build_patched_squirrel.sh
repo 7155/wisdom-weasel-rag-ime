@@ -362,7 +362,7 @@ require_text() {
   local path="$1"
   local text="$2"
   local description="$3"
-  if ! grep -Fq "$text" "$path"; then
+  if ! grep -Fq -- "$text" "$path"; then
     echo "patched Squirrel workdir is missing $description in $path" >&2
     exit 1
   fi
@@ -448,7 +448,9 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "打开�
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "配置由控制中心管理" "native configuration ownership copy"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "重新启动后台服务" "native backend restart copy"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "诊断与修复..." "native diagnostics copy"
-require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "com.rag-ime.control" "native control center bundle launch"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "Applications/RagImeControl.app" "canonical control center app launch"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "--paw-session=" "exact Electron Session launch"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "--paw-capture" "Electron screen capture launch"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING" "post-commit assistant overlay opt-in guard"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "assistant_overlay_local_placeholder_suppressed" "post-commit local placeholder suppression"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImeForegroundContextResolver.captureFromAccessibility(" "queued foreground Accessibility snapshot request"

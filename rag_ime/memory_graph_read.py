@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from .management_work_contract import canonical_payload_sha256
+from .memory_topic_page import read_memory_topic_page
 from .text_utils import compact_whitespace, truncate_text
 
 
@@ -209,6 +210,7 @@ def read_memory_entity(
         raise ValueError("memory entity kind must be tag, group, or book")
     _validate_entity_id(normalized_kind, normalized_id)
     query = MemoryEntityQuery.parse(payload, default_project=default_project)
+    topic_page = None
 
     if normalized_kind == "tag":
         entity = _load_tag_nodes(conn, [normalized_id], project=query.project).get(normalized_id)
@@ -225,14 +227,23 @@ def read_memory_entity(
         connections = _empty_page(query.connections_limit)
         members = _group_member_page(conn, normalized_id, query)
     else:
-        entity = _load_book_nodes(conn, [normalized_id], project=query.project).get(normalized_id)
-        if entity is None:
-            raise ValueError("memory book was not found in the requested project")
+        # A stale navigation cache must not make the topic unreadable. The
+        # detail body is rebuilt from scoped current Atoms and their lineage;
+        # graph retrieval continues to use the existing current-only filter.
+        topic_page = read_memory_topic_page(conn, normalized_id, project=query.project)
+        row = conn.execute("SELECT * FROM memory_books WHERE book_id = ?", (normalized_id,)).fetchone()
+        group_count = conn.execute("SELECT COUNT(*) FROM memory_semantic_group_members WHERE member_type = 'book' AND member_id = ?",
+                                   (normalized_id,)).fetchone()[0]
+        entity = _node(kind="book", entity_id=normalized_id, label=str(row["title"] or normalized_id),
+            description=str(topic_page["summary"]), color="teal", status=str(row["status"]),
+            source="memory_book", project=str(row["project"] or ""),
+            quality_score=float(row["quality_score"] or 0),
+            member_count=topic_page["coverage"]["memberCount"], edge_count=int(group_count),
+            updated_at_ms=int(row["updated_at_ms"] or 0))
         attributes = _book_attributes(conn, normalized_id)
         connections = _book_group_page(conn, normalized_id, query)
-        # A topic book may reference raw atom identifiers. Keep the read model
-        # summary-only: expose the bounded count on the node, never the ids or
-        # atom text through this endpoint.
+        # Topic content has its own source-linked sections. Graph members keep
+        # their existing pagination and navigation meaning.
         members = _empty_page(query.members_limit)
 
     return {
@@ -241,7 +252,8 @@ def read_memory_entity(
         "kind": normalized_kind,
         "entityId": normalized_id,
         "entityRevision": canonical_payload_sha256(
-            {"entity": entity, "attributes": attributes}
+            {"entity": entity, "attributes": attributes,
+             **({"topicPage": topic_page} if topic_page is not None else {})}
         ),
         "project": query.project,
         "entity": entity,
@@ -249,6 +261,7 @@ def read_memory_entity(
         "connections": connections,
         "members": members,
         "limits": query.limits(),
+        **({"topicPage": topic_page} if topic_page is not None else {}),
     }
 
 

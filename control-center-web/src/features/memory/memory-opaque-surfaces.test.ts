@@ -15,8 +15,9 @@ describe('Memory floating surfaces stay opaque and PAWOS-rounded', () => {
     expect(memoryCss).toMatch(
       /\.memory-relation-canvas__focus\s*\{[^}]*background:\s*var\(--color-surface\);/s,
     );
+    expect(memoryCss).toContain('--memory-surface: var(--paw-panel, var(--color-surface, #fff))');
     expect(memoryCss).toMatch(
-      /> \.mgmt-page__native-actions\s*\{[^}]*background:\s*#fff;/s,
+      /> \.mgmt-page__native-actions\s*\{[^}]*background:\s*var\(--memory-surface\);/s,
     );
   });
 

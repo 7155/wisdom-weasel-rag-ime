@@ -365,7 +365,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("NSColor.separatorColor", card_text)
         self.assertIn("accessibilityDisplayShouldReduceMotion", controller_text)
         self.assertIn("accessibilityDisplayShouldIncreaseContrast", card_text)
-        self.assertIn("Timer(timeInterval: 0.5, repeats: true)", controller_text)
+        self.assertIn("Timer(timeInterval: 1, repeats: true)", controller_text)
         self.assertIn("RunLoop.main.add(timer, forMode: .common)", controller_text)
         self.assertIn("assistant_generating_animation_started", controller_text)
         self.assertIn("assistant_generating_animation_stopped", controller_text)
@@ -726,7 +726,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('uiMode: "post_commit_pending"', patch_text)
         self.assertIn('traceEvent: "assistant_overlay_post_commit_pending"', patch_text)
         self.assertIn('("快速生成", "start_active_rag_from_context"', patch_text)
-        self.assertIn('("看图生成", "start_visual_rag_from_context"', patch_text)
+        self.assertIn('("框选对话", "start_visual_rag_from_context"', patch_text)
         self.assertIn('("深度查找", "start_agent_deep_search_from_context"', patch_text)
         self.assertIn("ragImePendingContinuationCandidate = sourceCandidate", patch_text)
         self.assertIn("guard committedContextHash != ragImePendingContinuationPreviousContextHash || committedContext.contains(committedText) else {", patch_text)
@@ -1694,7 +1694,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('candidate.selectionAction == "start_agent_deep_search_from_context"', patch_text)
         self.assertIn("startRagImeAgentDeepSearchFromContext", patch_text)
         self.assertIn("RagImeAgentDeepSearchRequest", patch_text)
-        self.assertIn("com.rag-ime.control.open-agent", patch_text)
+        self.assertIn('"--paw-session=" + sessionId', patch_text)
+        self.assertIn('"--paw-capture", "--paw-source-app=" + currentApp', patch_text)
+        self.assertNotIn("com.rag-ime.control.open-agent", patch_text)
         self.assertIn('"reason": "transport_or_runtime_error"', patch_text)
         self.assertIn("deepSearchButton", card_text)
         self.assertNotIn("visualGenerateButton", card_text)
@@ -2187,7 +2189,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func compositionAISuppressed() { _ = "composition_ai_suppressed" }; '
             'func traceRimeComposition() { _ = "rime_composition_started"; _ = "rime_composition_candidates_visible" }; '
             'func controlCenterMenu() { _ = "打开澄控制中心..."; _ = "配置由控制中心管理"; '
-            '_ = "重新启动后台服务"; _ = "诊断与修复..."; _ = "com.rag-ime.control" }; '
+            '_ = "重新启动后台服务"; _ = "诊断与修复..."; _ = "Applications/RagImeControl.app"; _ = "--paw-session="; _ = "--paw-capture" }; '
             'func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
             'func queuedForegroundSnapshot() { _ = "ragImeForegroundContextResolver.captureFromAccessibility(" }; '

@@ -601,6 +601,34 @@ class PersonalContextMaintenanceRunnerTests(unittest.TestCase):
             (),
         )
 
+    def test_activity_catch_up_excludes_earlier_month_and_preserves_its_backlog(self) -> None:
+        for value in ("2026-07-31T09:00:00", "2026-08-01T09:00:00", "2026-08-12T09:00:00"):
+            timestamp = int(datetime.fromisoformat(value).replace(tzinfo=ZoneInfo("Asia/Shanghai")).timestamp() * 1_000)
+            LocalSqliteCoreClient(self.db_path).record_event(InputEvent(
+                event_id=None, created_at_ms=timestamp, source="voice_final",
+                committed_text="整理当前日期实际工作", privacy_disposition="allowed", project="project-a",
+            ))
+        organizer = _MaintenanceActivityOrganizer()
+        runner = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=PersonalContextMaintenanceConfig(
+                project="project-a", consolidate_roles=False,
+                build_timelines=True, auto_publish_timelines=True,
+            ),
+            activity_organizer=organizer,
+        )
+
+        report = runner.build_activity_timelines_through("2026-08-12", start_date="2026-08-01")
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["pendingDayCount"], 2)
+        self.assertEqual(report["completedDayCount"], 2)
+        self.assertEqual([item["date"] for item in report["activityTimelines"]], ["2026-08-01", "2026-08-12"])
+        self.assertEqual(organizer.lifecycle, ["begin", "organize", "finish"] * 2)
+        store = DailyActivityTimelineStore(self.db_path, project="project-a")
+        self.assertIsNone(store.latest("2026-07-31"))
+        self.assertEqual(store.dates_requiring_model_organization("2026-08-12"), ("2026-07-31",))
+
     def test_periodic_maintenance_backfills_one_historical_day_per_run(self) -> None:
         for day in (10, 11):
             timestamp = int(

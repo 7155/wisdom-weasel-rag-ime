@@ -13,10 +13,11 @@ describe('Project Workbench stays on one cobalt accent', () => {
     expect(workbenchCss).not.toContain('104 80 217');
   });
 
-  it('keeps the ambient canvas, project mark and ledger divider on the shared cobalt hue', () => {
+  it('keeps reading surfaces on their theme token and confines the cobalt identity to small details', () => {
     expect(workbenchCss).toMatch(
-      /radial-gradient\(1000px 520px at 98% -8%, rgb\(49 94 172 \/ 7%\), transparent 58%\)/,
+      /\.paw-wb-now\s*\{[^}]*background:\s*var\(--paw-wb-surface\);/s,
     );
+    expect(workbenchCss).not.toContain('--paw-wb-gauge-angle');
     expect(workbenchCss).toMatch(
       /\.paw-wb-ledger__mark\s*\{[^}]*background:\s*linear-gradient\(135deg, rgb\(49 94 172 \/ 16%\), rgb\(49 94 172 \/ 11%\)\);/s,
     );

@@ -39,8 +39,13 @@ from .active_rag_service import (
     ActiveRagStartRequest,
     active_rag_sensitive_text_blocked,
 )
-from .activity_timeline import DailyActivityTimelineStore
+from .activity_timeline import DailyActivityTimelineStore, activity_timeline_date_range
 from .agent_extensions import AgentExtensionService
+from .agent_lab_scene_recipes import (
+    AgentLabSceneRecipeConflict,
+    AgentLabSceneRecipeServiceUnavailable,
+    AgentLabSceneRecipeUnavailable,
+)
 from .agent_lifecycle_hooks import AgentLifecycleHookService
 from .agent_runtime_driver import AgentRuntimeError
 from .agent_surface_runtime import AgentSurfaceRuntime, PiSurfaceCompletionProvider
@@ -196,6 +201,7 @@ from .personal_context_maintenance import (
 )
 from .pi_provider_auth import PiProviderAuthError, PiProviderAuthService
 from .pi_runtime import PiRuntimeConfig
+from .pi_runtime_values import PiRuntimeCommandRejected
 from .personal_context_observability import PersonalContextObservability
 from .prediction_anchors import build_prediction_anchors_from_snapshot
 from .predictor import (
@@ -1026,6 +1032,12 @@ class DebugImeService:
         if not timeline_date:
             raise ValueError("date is required")
         through_today = _bool(payload.get("throughToday"), default=False)
+        range_start_date = _string(payload.get("rangeStartDate"))
+        if range_start_date:
+            if not through_today:
+                raise ValueError("rangeStartDate requires throughToday")
+            # Reject an invalid month range before admitting background work.
+            activity_timeline_date_range(timeline_date, start_date=range_start_date)
         job = self.memory_maintenance_jobs.trigger(
             {
                 "project": self.config.project,
@@ -1034,6 +1046,7 @@ class DebugImeService:
                 "timelineOnly": True,
                 "timelineDate": "" if through_today else timeline_date,
                 "timelineThroughDate": timeline_date if through_today else "",
+                **({"timelineStartDate": range_start_date} if range_start_date else {}),
             }
         )
         if job.get("reused") is True:
@@ -2598,7 +2611,14 @@ class DebugImeService:
         privacy_assessment = assess_foreground_write(payload)
         if privacy_assessment["storeAllowed"] is not True:
             return self._active_rag_privacy_blocked_request()
-        selected_text = compact_whitespace(_string(payload.get("selectedText") or payload.get("selected_text")))
+        from .input_task import selection_source, selection_task_policy
+
+        operation = _string(payload.get("operation"))
+        target_language = _string(payload.get("targetLanguage"))
+        if operation:
+            selection_task_policy({"outputContract": {"operation": operation, "targetLanguage": target_language}})
+        selected_text = _string(payload.get("selectedText") or payload.get("selected_text"))
+        selected_text = selection_source(selected_text) if operation else compact_whitespace(selected_text)
         context = _string(payload.get("context") or payload.get("currentContext"))
         surrounding_before = _string(payload.get("surroundingBefore"))
         surrounding_after = _string(payload.get("surroundingAfter"))
@@ -2648,6 +2668,8 @@ class DebugImeService:
             surrounding_before=surrounding_before,
             surrounding_after=surrounding_after,
             intent=_string(payload.get("intent")) or "rewrite",
+            operation=operation,
+            target_language=target_language,
             placement=_string(payload.get("placement")) or "replace_selection",
             context=context,
             context_source=_string(payload.get("contextSource")),
@@ -4292,6 +4314,7 @@ class DebugImeService:
                 timeline_through_date=_string(
                     payload.get("timelineThroughDate")
                 ),
+                timeline_start_date=_string(payload.get("timelineStartDate")),
                 progress=payload.get("_progressCallback"),
             )
         lexicon = (
@@ -4409,6 +4432,7 @@ class DebugImeService:
         max_sources: object,
         timeline_date: str = "",
         timeline_through_date: str = "",
+        timeline_start_date: str = "",
         progress: object | None = None,
     ) -> dict[str, object]:
         if not managed.dreaming_enabled and not managed.automatic_organization_enabled:
@@ -4488,6 +4512,7 @@ class DebugImeService:
             if timeline_through_date:
                 result = runner.build_activity_timelines_through(
                     timeline_through_date,
+                    **({"start_date": timeline_start_date} if timeline_start_date else {}),
                     progress=progress,
                 )
             elif timeline_date:
@@ -7637,6 +7662,9 @@ def _knowledge_route_parts(path: str) -> tuple[str, ...] | None:
 def _agent_session_runtime_error_payload(
     error: AgentRuntimeError,
 ) -> dict[str, object]:
+    cause_code = (
+        error.host_error_code if isinstance(error, PiRuntimeCommandRejected) else ""
+    )
     message = " ".join(str(error).split()).casefold()
     workspace_missing = (
         "workspace does not exist" in message
@@ -7655,13 +7683,130 @@ def _agent_session_runtime_error_payload(
             ),
             "recovery": {"action": "select_workspace"},
         }
+    if cause_code in {
+        "INVALID_PARAMS", "INVALID_REQUEST", "INVALID_PI_PACKAGE",
+        "INVALID_PLUGIN_DRAFT", "INVALID_PLUGIN_MANIFEST", "INVALID_PLUGIN_SOURCE",
+        "INVALID_PLUGIN_STATE", "PLUGIN_NOT_FOUND", "PLUGIN_DRAFT_EXISTS",
+        "PLUGIN_LIMIT_EXCEEDED", "PLUGIN_PATH_BOUNDARY", "PLUGIN_SOURCE_NOT_FOUND",
+        "PLUGIN_DIGEST_MISMATCH", "PLUGIN_STATE_CHANGED", "PLUGIN_PREPARE_REQUIRED",
+        "PLUGIN_PREVIEW_REQUIRED", "PLUGIN_APPROVAL_REQUIRED", "PLUGIN_CONFIRMATION_REQUIRED",
+        "MODEL_NOT_FOUND", "THINKING_LEVEL_UNSUPPORTED", "TOOL_NOT_FOUND",
+        "METHOD_NOT_FOUND", "COMMAND_NOT_FOUND", "WORKSPACE_DENIED",
+    }:
+        # A terminal Host rejection proves the request was received. Preserve
+        # its structured cause without exposing private paths from the message
+        # or suggesting that reconnecting will repair an invalid Package.
+        rejection_messages = {
+            "INVALID_PLUGIN_MANIFEST": (
+                "插件清单校验未通过；原生 Pi Package 请使用 packageSource 指定来源。"
+            ),
+            "INVALID_PI_PACKAGE": "Pi Package 的元数据或资源不符合要求，请检查包内容。",
+            "INVALID_PARAMS": "请求参数不符合要求，请检查后再提交。",
+            "PLUGIN_NOT_FOUND": "所选插件不存在，请选择当前可用的插件。",
+        }
+        return {
+            "schemaVersion": "rag-ime.local-api-error.v1",
+            "ok": False,
+            "errorCode": "runtime_command_rejected",
+            "causeCode": cause_code,
+            "retryable": False,
+            "error": rejection_messages.get(
+                cause_code,
+                "这次操作未被接受，请检查请求参数和所选资源。",
+            ),
+            "recovery": {"action": "review_request"},
+        }
+    if cause_code and cause_code not in {
+        "RUNTIME_NOT_RUNNING", "SESSION_NOT_FOUND", "SESSION_BUSY",
+        "ROOM_SESSION_BUSY", "REQUEST_ALREADY_ACTIVE", "SETTLED_TIMEOUT",
+        "SETTLEMENT_WAITER_LIMIT",
+    }:
+        # INTERNAL_ERROR also covers npm/Git/IO failures. The terminal error
+        # alone cannot prove which effects occurred, so do not blame inputs
+        # or suggest automatically replaying a potentially partial operation.
+        return {
+            "schemaVersion": "rag-ime.local-api-error.v1",
+            "ok": False,
+            "errorCode": "runtime_operation_failed",
+            "causeCode": cause_code,
+            "retryable": False,
+            "error": (
+                "操作过程中发生异常，结果暂未确认。"
+                "请先检查当前状态，再决定是否重试。"
+            ),
+            "recovery": {"action": "inspect_result"},
+        }
     return {
         "schemaVersion": "rag-ime.local-api-error.v1",
         "ok": False,
         "errorCode": "session_runtime_unavailable",
+        **({"causeCode": cause_code} if cause_code else {}),
         "retryable": True,
         "error": "session runtime is temporarily unavailable",
         "recovery": {"action": "retry"},
+    }
+
+
+def _agent_lab_scene_recipe_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
+    if isinstance(exc, (AgentLabSceneRecipeConflict, AgentLabSceneRecipeUnavailable, AgentLabSceneRecipeServiceUnavailable)):
+        return HTTPStatus(exc.http_status), exc.response_payload()
+    if isinstance(exc, (sqlite3.Error, OSError)):
+        unavailable = AgentLabSceneRecipeServiceUnavailable("storage_unavailable")
+        return HTTPStatus.SERVICE_UNAVAILABLE, unavailable.response_payload()
+    if isinstance(exc, ValueError):
+        return HTTPStatus.BAD_REQUEST, {
+            "ok": False, "code": "AGENT_LAB_SCENE_RECIPE_INVALID_REQUEST",
+            "error": "场景操作参数无效，请核对后重试。",
+        }
+    return HTTPStatus.INTERNAL_SERVER_ERROR, {
+        "ok": False, "code": "AGENT_LAB_SCENE_RECIPE_INTERNAL_ERROR",
+        "error": "场景配置服务暂不可用，请刷新查看状态。",
+    }
+
+
+def _agent_lab_trial_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
+    from .agent_lab_trials import AgentLabTrialConflict, AgentLabTrialNotFound, AgentLabTrialServiceUnavailable
+    if isinstance(exc, (AgentLabTrialConflict, AgentLabTrialServiceUnavailable)):
+        return HTTPStatus(exc.http_status), exc.response_payload()
+    if isinstance(exc, AgentLabTrialNotFound):
+        return HTTPStatus.NOT_FOUND, {
+            "ok": False, "code": "AGENT_LAB_TRIAL_NOT_FOUND", "error": "未找到这次场景试验。",
+        }
+    if isinstance(exc, (sqlite3.Error, OSError)):
+        return HTTPStatus.SERVICE_UNAVAILABLE, {
+            "ok": False, "code": "AGENT_LAB_TRIAL_UNAVAILABLE",
+            "error": "场景试验暂时无法读取或保存，请保留原请求后重试。",
+        }
+    if isinstance(exc, (TypeError, ValueError)):
+        return HTTPStatus.UNPROCESSABLE_ENTITY, {
+            "ok": False, "code": "AGENT_LAB_TRIAL_INVALID_REQUEST",
+            "error": "场景试验参数无效，请核对后重试。",
+        }
+    return HTTPStatus.INTERNAL_SERVER_ERROR, {
+        "ok": False, "code": "AGENT_LAB_TRIAL_INTERNAL_ERROR",
+        "error": "场景试验服务暂时不可用；已保存的执行记录仍会保留。",
+    }
+
+
+def _agent_lab_golden_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
+    from .agent_lab_golden import (
+        AgentLabGoldenConflict, AgentLabGoldenServiceUnavailable, AgentLabGoldenValidationError,
+    )
+    if isinstance(exc, (AgentLabGoldenConflict, AgentLabGoldenServiceUnavailable, AgentLabGoldenValidationError)):
+        return HTTPStatus(exc.http_status), exc.response_payload()
+    if isinstance(exc, (sqlite3.Error, OSError)):
+        return HTTPStatus.SERVICE_UNAVAILABLE, {
+            "ok": False, "code": "AGENT_LAB_GOLDEN_UNAVAILABLE",
+            "message": "评测集暂时无法读取或保存，请稍后重试。",
+        }
+    if isinstance(exc, ValueError):
+        return HTTPStatus.UNPROCESSABLE_ENTITY, {
+            "ok": False, "code": "AGENT_LAB_GOLDEN_INVALID_REQUEST",
+            "message": "评测操作参数无效，请核对后重试。",
+        }
+    return HTTPStatus.INTERNAL_SERVER_ERROR, {
+        "ok": False, "code": "AGENT_LAB_GOLDEN_INTERNAL_ERROR",
+        "message": "评测服务暂时不可用；已保存的记录仍会保留。",
     }
 
 
@@ -7679,9 +7824,27 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         descriptor_route = find_route("GET", parsed.path)
         if descriptor_route is not None:
-            self._dispatch_descriptor_route(
-                descriptor_route, query=parse_qs(parsed.query or "")
-            )
+            if descriptor_route.handler == "agent.eval_lab_trials":
+                try:
+                    self._dispatch_descriptor_route(descriptor_route, query=parse_qs(parsed.query or ""))
+                except Exception as exc:
+                    self._write_json(*_agent_lab_trial_error_response(exc))
+            elif descriptor_route.handler == "agent.eval_lab_golden":
+                try:
+                    self._dispatch_descriptor_route(descriptor_route, query=parse_qs(parsed.query or ""))
+                except Exception as exc:
+                    self._write_json(*_agent_lab_golden_error_response(exc))
+            elif descriptor_route.handler == "agent.eval_lab_scene_recipes":
+                try:
+                    self._dispatch_descriptor_route(
+                        descriptor_route, query=parse_qs(parsed.query or "")
+                    )
+                except Exception as exc:
+                    self._write_json(*_agent_lab_scene_recipe_error_response(exc))
+            else:
+                self._dispatch_descriptor_route(
+                    descriptor_route, query=parse_qs(parsed.query or "")
+                )
             return
         if parsed.path == "/api/events/stream":
             self._stream_management_events()
@@ -9571,7 +9734,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             # identical to the chain it replaces.
             descriptor_route = find_route("POST", path)
             if descriptor_route is not None:
-                self._dispatch_descriptor_route(descriptor_route, payload=payload)
+                if descriptor_route.handler in {"agent.eval_lab_trial_start", "agent.eval_lab_trial_cancel"}:
+                    try:
+                        self._dispatch_descriptor_route(descriptor_route, payload=payload)
+                    except Exception as exc:
+                        self._write_json(*_agent_lab_trial_error_response(exc))
+                else:
+                    self._dispatch_descriptor_route(descriptor_route, payload=payload)
                 return
             if knowledge_parts is not None:
                 control = self._knowledge_control()
@@ -9671,6 +9840,24 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.oauth_cancel(payload))
             elif path == "/api/agent/configuration":
                 self._write_json(HTTPStatus.OK, self.service.agent.update_configuration(payload))
+            elif path == "/api/agent/eval-lab/golden/command":
+                try:
+                    response = self.service.agent.eval_lab_golden_command(payload)
+                except Exception as exc:
+                    self._write_json(*_agent_lab_golden_error_response(exc))
+                else:
+                    self._write_json(HTTPStatus.OK, response)
+            elif path in ("/api/agent/eval-lab/scene-recipes/apply", "/api/agent/eval-lab/scene-recipes/rollback"):
+                try:
+                    response = (
+                        self.service.agent.eval_lab_scene_recipe_apply(payload)
+                        if path.endswith("/apply")
+                        else self.service.agent.eval_lab_scene_recipe_rollback(payload)
+                    )
+                except Exception as exc:
+                    self._write_json(*_agent_lab_scene_recipe_error_response(exc))
+                else:
+                    self._write_json(HTTPStatus.OK, response)
             elif path == "/api/agent/extensions/drafts":
                 self._write_json(
                     HTTPStatus.CREATED,
@@ -9888,6 +10075,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.CREATED,
                     self.service.agent.add_room_artifact(agent_room_id, payload),
                 )
+            elif agent_session_id and agent_action == "workspace-file":
+                self._write_json(HTTPStatus.OK, self.service.agent_tools.workspace_save(agent_session_id, payload))
             elif agent_session_id and agent_action == "prompt":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.prompt(agent_session_id, payload))
             elif agent_session_id and agent_action == "rewrite":

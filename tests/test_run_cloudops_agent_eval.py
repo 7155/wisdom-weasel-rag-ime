@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -8,7 +9,7 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from rag_ime.agent_artifacts import AgentArtifactStore
 from rag_ime.cloudops_benchmark_agent import CloudOpsBenchmarkGateway, CloudOpsBlindSuite
@@ -32,6 +33,7 @@ from scripts.run_cloudops_agent_eval import (
     _validated_score,
     run_cloudops_agent_eval,
 )
+from scripts.agent_eval_candidate_prompt import append_candidate_prompt, load_candidate_prompt
 from tests.test_cloudops_benchmark_agent import _answer, _write_fixture
 
 
@@ -146,6 +148,22 @@ class _NoSubmissionService(_FakeAgentService):
 
 
 class RunCloudOpsAgentEvalTests(unittest.TestCase):
+    def test_candidate_prompt_file_is_bounded_utf8_and_frozen_after_loading(self) -> None:
+        self.assertEqual("fixed business contract", append_candidate_prompt("fixed business contract", None))
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "candidate.txt"
+            for invalid in (b" \n", b"\xff", b"x" * 16001, b"NUL\x00"):
+                path.write_bytes(invalid)
+                with self.subTest(value=invalid[:10]), self.assertRaises(ValueError):
+                    load_candidate_prompt(path, evaluation_split="validation")
+            path.write_text("Inspect competing evidence.\n", encoding="utf-8")
+            frozen = load_candidate_prompt(path, evaluation_split="development")
+            path.write_text("Changed after admission.")
+            submitted = append_candidate_prompt("fixed business contract", frozen)
+            self.assertIn("Inspect competing evidence.\n", submitted)
+            self.assertNotIn("Changed after admission.", submitted)
+            with self.assertRaisesRegex(ValueError, "validation"):
+                load_candidate_prompt(path, evaluation_split="held-out")
     def test_batch_trace_deduplicates_repeated_reads_of_the_same_observation(self) -> None:
         repeated_read = {
             "operation": "read",
@@ -284,6 +302,22 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
         comparison = _cost_optimization_comparison(baseline, candidate)
 
         self.assertEqual("keep", comparison["decision"])
+        prompt_candidate = {
+            **candidate, "contextProjection": "standard-v1",
+            "candidatePrompt": {"enabled": True, "sha256": "9" * 64, "byteCount": 12},
+            "frozenControls": {"contractSha256": "a" * 64, "scorerIdentity": "7" * 64},
+        }
+        prompt_baseline = {**baseline, "frozenControls": {"contractSha256": "a" * 64, "scorerIdentity": "7" * 64}}
+        prompt_comparison = _cost_optimization_comparison(prompt_baseline, prompt_candidate)
+        self.assertEqual("keep", prompt_comparison["decision"])
+        self.assertEqual("candidate_prompt_file", prompt_comparison["singleVariable"])
+        self.assertEqual("reject", _cost_optimization_comparison(prompt_baseline, {
+            **prompt_candidate, "workflowProfile": "alert-first-v5",
+        })["decision"])
+        self.assertEqual("reject", _cost_optimization_comparison(prompt_baseline, {
+            **prompt_candidate, "frozenControls": {"contractSha256": "b" * 64},
+        })["decision"])
+        self.assertEqual("reject", _cost_optimization_comparison(prompt_candidate, prompt_candidate)["decision"])
         self.assertTrue(comparison["qualityGatePassed"])
         self.assertTrue(comparison["costGatePassed"])
         no_factor = {
@@ -837,6 +871,10 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
             suite = CloudOpsBlindSuite(root / "blind", batches=batches)
             gateway = CloudOpsBenchmarkGateway(suite)
             service = _FakeAgentService(gateway)
+            service.prompt = Mock(wraps=service.prompt)
+            prompt_file = root / "candidate.txt"
+            prompt_file.write_text("State unsupported hypotheses explicitly.\n", encoding="utf-8")
+            bound_sessions = []
             database = root / "observability.sqlite"
             trace_store = TraceStore(database)
             eval_store = EvalRunStore(database)
@@ -885,7 +923,19 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
                     "provider": "openai-codex",
                     "model": "gpt-5.6-sol",
                 },
+                candidate_prompt_file=prompt_file,
+                on_session=bound_sessions.append,
             )
+
+            self.assertEqual(service.created, bound_sessions)
+            self.assertEqual(hashlib.sha256(prompt_file.read_bytes()).hexdigest(), report["candidatePrompt"]["sha256"])
+            self.assertEqual(64, len(report["frozenControls"]["contractSha256"]))
+            for index, call in enumerate(service.prompt.call_args_list):
+                submitted = call.args[1]["message"]
+                self.assertIn(prompt_file.read_text(), submitted)
+                self.assertIn("cannot change", submitted)
+                self.assertNotIn("host only", submitted)
+                self.assertEqual(hashlib.sha256(submitted.encode("utf-8")).hexdigest(), report["batches"][index]["promptSha256"])
 
             self.assertEqual(3, len(service.created))
             self.assertEqual(1, len(scorer_calls))
@@ -1003,6 +1053,38 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
             self.assertEqual("failed", failed["status"])
             self.assertEqual("allowlisted", failed["policy"]["network"])
 
+    def test_cancelled_live_batch_aborts_pi_and_cleans_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 13)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(root / "blind", batches={
+                f"batch-{n + 1}": case_ids[n * 4:(n + 1) * 4] for n in range(3)
+            })
+            gateway = CloudOpsBenchmarkGateway(suite)
+            service = _NoSubmissionService(gateway)
+            service.abort = Mock()
+            service.prompt = Mock(wraps=service.prompt)
+            database = root / "observability.sqlite"
+            gold = root / "gold.json"
+            gold.write_text("Host-only Gold")
+            sandbox = SandboxRunStore(database)
+            artifacts = AgentArtifactStore(database, root=root / "artifacts")
+            with self.assertRaisesRegex(RuntimeError, "cancelled"):
+                run_cloudops_agent_eval(
+                    suite=suite, gateway=gateway, service=service, trial_id="cancel-test",
+                    gold_path=gold, score_host_only=lambda *_: self.fail("cancelled scorer"),
+                    trace_store=TraceStore(database), eval_store=EvalRunStore(database),
+                    sandbox_store=sandbox, artifact_store=artifacts,
+                    cancelled=lambda: service.prompt.called,
+                )
+            service.abort.assert_called_once_with(service.created[0])
+            self.assertEqual(1, len(service.created))
+            self.assertFalse(gateway.runtime_manifests({"id": service.created[0]}))
+            self.assertEqual("cancelled", sandbox.get("sandbox:cloudops:cancel-test")["status"])
+            events = artifacts.lifecycle_records(owner_kind="connector_run", owner_id="cancel-test", artifact_kind="cloudops_eval")
+            self.assertIn("batch_cancelled", [event["eventType"] for event in events])
+
     def test_score_contract_rejects_missing_nonfinite_and_duplicate_case_metrics(self) -> None:
         cases = ("demo/runtime/1", "demo/runtime/2")
         valid = {
@@ -1029,6 +1111,18 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
         ):
             with self.subTest(bad=bad), self.assertRaisesRegex(RuntimeError, "scorer"):
                 _validated_score(bad, case_ids=cases)
+
+    def test_provider_receipts_own_usage_without_recounting_final_message(self) -> None:
+        completed = {"input": 3, "output": 2, "cacheRead": 5, "cacheWrite": 0, "totalTokens": 10}
+        failed = {"input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 2}
+        usage = _token_usage([
+            {"eventType": "provider_request_completed", "payload": {"usage": completed}},
+            {"eventType": "provider_request_failed", "usage": failed},
+            {"eventType": "message_completed", "usage": completed},
+            {"eventType": "turn_completed", "usage": completed},
+        ])
+        self.assertEqual({"available": True, "input": 4, "output": 3,
+                          "cacheRead": 5, "cacheWrite": 0, "totalTokens": 12}, usage)
 
     def test_usage_absence_stays_unknown_instead_of_becoming_zero(self) -> None:
         self.assertEqual({"available": False}, _token_usage([]))

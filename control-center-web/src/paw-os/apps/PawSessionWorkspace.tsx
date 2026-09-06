@@ -45,6 +45,7 @@ import {
   isAgentSessionIdleFailure,
   isAgentTurnConflict,
   isAmbiguousAgentPromptFailure,
+  isAgentWorkspaceMissingError,
   isUnresolvedAgentCommandPending,
   publicAgentErrorText,
   SESSION_WORKSPACE_MISSING_TEXT,
@@ -52,6 +53,7 @@ import {
 import { hasUndurableAgentAttachments } from '@/features/agent/optimistic-attachments';
 import {
   useAgentLiveSession,
+  type AgentRecoveryState,
   type AgentLiveSnapshotLoader,
 } from '@/features/agent/runtime/use-agent-live-session';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
@@ -106,6 +108,7 @@ import {
   type CapabilityPreference,
 } from '@/features/plugins/capability-policy';
 import '@/features/agent/agent.css';
+import { screenContextForMessage, type ScreenContext } from '@/features/screen-assistant/screen-assistant-model';
 
 type WorkbenchPanel = 'none' | 'files' | 'subagents' | 'status';
 type SessionWorkspaceView = 'conversation' | 'trace' | 'starfield';
@@ -140,12 +143,16 @@ export function PawSessionWorkspace({
   record,
   recordId,
   initialDraft = '',
+  initialAttachments = [],
+  draftRequest,
+  screenContext,
   onNewWork,
   onSessionCreated,
   onSessionActivity,
   onSessionUpdated,
   traceFocusNodeId = '',
   appearance = 'full',
+  showComposerControls = appearance !== 'embedded',
   composerPlaceholder,
 }: {
   active?: boolean;
@@ -153,6 +160,9 @@ export function PawSessionWorkspace({
   record?: SessionSummary;
   recordId: string;
   initialDraft?: string;
+  initialAttachments?: ComposerAttachment[];
+  draftRequest?: { id: number; text: string };
+  screenContext?: ScreenContext;
   /** 反向证据链落点：直接进入轨迹视图并聚焦这个装配节点。 */
   traceFocusNodeId?: string;
   onNewWork: () => void;
@@ -160,6 +170,7 @@ export function PawSessionWorkspace({
   onSessionActivity?: () => void;
   onSessionUpdated: (session: SessionSummary) => void;
   appearance?: 'full' | 'embedded';
+  showComposerControls?: boolean;
   composerPlaceholder?: string;
 }) {
   const transport = useControlTransport();
@@ -184,7 +195,10 @@ export function PawSessionWorkspace({
   const [capabilityCatalogError, setCapabilityCatalogError] = useState('');
   const [capabilityMutation, setCapabilityMutation] = useState<CapabilityMutationOutcome>();
   const [draft, setDraft] = useState(initialDraft);
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(initialAttachments);
+  useEffect(() => {
+    if (draftRequest) setDraft(draftRequest.text);
+  }, [draftRequest]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -194,6 +208,12 @@ export function PawSessionWorkspace({
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<SessionWorkspaceView>(embedded ? 'conversation' : traceFocusNodeId ? 'trace' : 'conversation');
   const [error, setError] = useState('');
+  const [syncError, setSyncError] = useState('');
+  const [syncState, setSyncState] = useState<AgentRecoveryState>('recovering');
+  const [hasSnapshot, setHasSnapshot] = useState(false);
+  useEffect(() => { setSyncError(''); setSyncState('recovering'); setHasSnapshot(false); }, [recordId]);
+  const visibleError = error || (syncError && (!hasSnapshot || syncState === 'failed')
+    ? '连接暂时不可用，系统会继续自动重连。' : '');
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const [thinkingPickerRequest, setThinkingPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
@@ -312,14 +332,21 @@ export function PawSessionWorkspace({
     live: liveActive && !evaluationSnapshot,
     snapshotView: evaluationSnapshot ? 'full' : 'recent',
     onLoadingChange: setLoading,
+    onRecoveryState: setSyncState,
     onSnapshot: (snapshot) => {
+      setHasSnapshot(true);
+      setSyncError('');
       setContextSnapshotState(snapshot.view === 'recent' ? 'partial' : undefined);
       setError('');
       refreshControlCatalog();
     },
     onSnapshotError: (failure) => {
       setContextSnapshotState('partial');
-      setError(errorText(failure.error));
+      if (isAgentWorkspaceMissingError(failure.error)) {
+        setError(errorText(failure.error));
+      } else {
+        setSyncError(errorText(failure.error));
+      }
       if (failure.recoverable) refreshControlCatalog();
     },
     onEvent: (event) => {
@@ -361,8 +388,9 @@ export function PawSessionWorkspace({
     onConnectionError: (_sessionId, reason) => {
       setStopping(false);
       setContextSnapshotState('partial');
-      setError(errorText(reason));
+      setSyncError(errorText(reason));
     },
+    onConnectionRestored: () => { if (hasSnapshot) setSyncError(''); },
   });
   loadAgentSnapshotRef.current = loadAgentSnapshot;
 
@@ -575,6 +603,7 @@ export function PawSessionWorkspace({
     const message = value || '请查看附件。';
     const selectedAttachments = attachments;
     const clientMessageId = `paw-${crypto.randomUUID()}`;
+    const selectedScreenContext = screenContextForMessage(screenContext, selectedAttachments.map((item) => item.id), agentProjection(recordId));
     const effectiveDelivery: AgentMessageDelivery = busy
       ? (delivery === 'followUp' ? 'followUp' : 'steer')
       : 'prompt';
@@ -626,6 +655,7 @@ export function PawSessionWorkspace({
             message,
             attachments: selectedAttachments.map((item) => item.id),
             clientMessageId,
+            ...(selectedScreenContext ? { screenContext: selectedScreenContext } : {}),
             ...(effectiveDelivery === 'prompt' ? {} : { delivery: effectiveDelivery }),
           },
         });
@@ -659,6 +689,7 @@ export function PawSessionWorkspace({
                 message,
                 attachments: selectedAttachments.map((item) => item.id),
                 clientMessageId: retryClientMessageId,
+                ...(selectedScreenContext ? { screenContext: selectedScreenContext } : {}),
               },
             });
             if (isCancelledPromptAdmission(retryResponse)) {
@@ -777,6 +808,7 @@ export function PawSessionWorkspace({
     onAdmissionRolledBack?: () => void,
   ): boolean {
     const current = agentProjection(recordId);
+    const selectedScreenContext = screenContextForMessage(screenContext, userMessage.attachments, current);
     // A durable Runtime message proves the original command was accepted; a
     // later Provider/Tool turn failure is a new execution attempt, not a
     // successor to a failed command receipt. Only the local optimistic row
@@ -830,6 +862,7 @@ export function PawSessionWorkspace({
             message,
             attachments: userMessage.attachments,
             clientMessageId,
+            ...(selectedScreenContext ? { screenContext: selectedScreenContext } : {}),
             ...(retryOfClientMessageId ? { retryOfClientMessageId } : {}),
             ...(replayAmbiguousAdmission && originalDelivery !== 'prompt'
               ? { delivery: originalDelivery }
@@ -1235,6 +1268,8 @@ export function PawSessionWorkspace({
         <div className="paw-session-workspace__runtime">
           <span data-context={contextSnapshotState}><i />{evaluationSnapshot
             ? '只读证据'
+            : syncError && syncState !== 'synced'
+              ? '正在恢复连接'
             : stopping
             ? '正在停止'
             : busy
@@ -1393,22 +1428,22 @@ export function PawSessionWorkspace({
           </div>
 
           <div className="paw-session-workspace__composer" data-read-only={evaluationSnapshot || undefined}>
-            {error ? (
+            {visibleError ? (
               <div className="paw-session-workspace__error" role="alert">
                 <CircleAlert size={14} />
-                <span>{error}</span>
+                <span>{visibleError}</span>
                 {error === SESSION_WORKSPACE_MISSING_TEXT ? (
                   <button onClick={() => void manageWorkspaceRoots()} type="button">选择工作目录</button>
                 ) : (
-                  <button onClick={() => { setError(''); void loadAgentSnapshot(); }} type="button">重新同步</button>
+                  <button onClick={() => { setError(''); setSyncError(''); void loadAgentSnapshot(); }} type="button">{error ? '重新同步' : '立即重连'}</button>
                 )}
                 {!evaluationSnapshot ? <TraceAgentHandoffButton
                   handoff={{
                     kind: 'session',
                     entityId: `session:${recordId}:error`,
                     title: 'Session 操作失败',
-                    summary: error,
-                    error,
+                    summary: visibleError,
+                    error: error || syncError,
                     sessionId: recordId,
                     sourceRoute: `/agent?session=${encodeURIComponent(recordId)}`,
                     refs: { surface: 'session-workspace' },
@@ -1454,7 +1489,7 @@ export function PawSessionWorkspace({
                 toolCatalogStatus={toolCatalogStatus}
                 toolPickerRequest={toolPickerRequest}
                 tools={tools}
-                minimal={embedded}
+                minimal={!showComposerControls}
                 placeholder={composerPlaceholder}
                 onAttachmentsChange={setAttachments}
                 onCapabilityPreferenceChange={(id, preference) => void changeCapabilityPreference(id, preference)}

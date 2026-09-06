@@ -155,7 +155,16 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\tactivePluginDir: string;\n\tskillPaths: string[];",
             "\tactivePluginDir: string;\n"
             "\tskillPaths: string[];\n"
-            "\tskillAllowlist?: string[];",
+            "\tskillAllowlist?: string[];\n"
+            "\tcompactionInstructions?: string;",
+        ),
+        (
+            "\t\tconst settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: true });",
+            "\t\tconst settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: true });\n"
+            "\t\tif (options.compactionInstructions !== undefined) {\n"
+            "\t\t\tconst compaction = { ...settingsManager.getCompactionSettings(), instructions: options.compactionInstructions };\n"
+            "\t\t\tsettingsManager.applyOverrides({ compaction });\n"
+            "\t\t}",
         ),
         (
             "\t\tconst skillPromptFocus = "
@@ -201,6 +210,12 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\t}\n"
             "\treturn value;\n"
             "}\n\n"
+            "function optionalCompactionInstructions(params: Record<string, unknown>): string | undefined {\n"
+            "\tconst value = params.compactionInstructions;\n"
+            "\tif (value === undefined) return undefined;\n"
+            "\tif (typeof value !== \"string\" || [...value].length > 8000 || /[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]/u.test(value)) {\n"
+            "\t\tthrow new RuntimeProtocolError(\"INVALID_PARAMS\", \"compactionInstructions must be bounded text\");\n"
+            "\t}\n\treturn value;\n}\n\n"
             "function optionalSkillAllowlist("
             "params: Record<string, unknown>): string[] | undefined {\n"
             "\tconst value = params.skillAllowlist;\n"
@@ -234,6 +249,7 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\t\t\t\t\t\tsessionSnapshot: true,",
             "\t\t\t\t\t\tsessionControlState: true,\n"
             "\t\t\t\t\t\tsessionSkillAllowlist: true,\n"
+            "\t\t\t\t\t\tsessionPromptSettings: true,\n"
             "\t\t\t\t\t\tsessionSnapshot: true,",
         ),
         (
@@ -243,6 +259,7 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\t\t\t\t\t\tcodexSkillsEnabled: optionalBoolean("
             'params, "codexSkillsEnabled"),\n'
             "\t\t\t\t\t\tskillAllowlist: optionalSkillAllowlist(params),\n"
+            "\t\t\t\t\t\tcompactionInstructions: optionalCompactionInstructions(params),\n"
             "\t\t\t\t\t\tmodelRuntime: this.modelRuntime,",
         ),
     ),
@@ -282,6 +299,60 @@ _OAUTH_RUNTIME_MODULES = {
         "createRadiusOAuth",
     ),
 }
+
+
+# Patch the shared native summary entry, not its trigger, checkpoint, retry or
+# cancellation loop. The exact pinned SDK text must match before we build.
+_SDK_PROMPT_OVERLAYS: dict[str, tuple[tuple[str, str], ...]] = {
+    "dist/core/settings-manager.js": ((
+        "    getCompactionSettings() {\n        return {\n            enabled: this.getCompactionEnabled(),\n            reserveTokens: this.getCompactionReserveTokens(),\n            keepRecentTokens: this.getCompactionKeepRecentTokens(),\n        };\n    }",
+        "    getCompactionSettings() {\n        return {\n            enabled: this.getCompactionEnabled(),\n            reserveTokens: this.getCompactionReserveTokens(),\n            keepRecentTokens: this.getCompactionKeepRecentTokens(),\n            instructions: this.settings.compaction?.instructions,\n        };\n    }",
+    ),),
+    "dist/core/agent-session.js": ((
+        "    async _runDefaultCompaction(preparation, requestModel, apiKey, headers, customInstructions, signal, env, reason) {\n        return compact(preparation, requestModel, apiKey, headers, customInstructions, signal, this.thinkingLevel, this.agent.streamFunction, env, this.settingsManager.getRetrySettings(), this._summarizationRetryCallbacks({ source: \"compaction\", reason }), undefined);\n    }",
+        "    async _runDefaultCompaction(preparation, requestModel, apiKey, headers, customInstructions, signal, env, reason) {\n        const instructions = [this.settingsManager.getCompactionSettings().instructions, customInstructions].filter(value => typeof value === \"string\" && value.trim()).join(\"\\n\\n\") || undefined;\n        return compact(preparation, requestModel, apiKey, headers, instructions, signal, this.thinkingLevel, this.agent.streamFunction, env, this.settingsManager.getRetrySettings(), this._summarizationRetryCallbacks({ source: \"compaction\", reason }), undefined);\n    }",
+    ),),
+    "dist/core/compaction/compaction.js": (
+        (
+            "            sourceContext: cacheFriendly?.turnPrefixSourceContext,\n            requestOptions: cacheFriendly?.requestOptions,\n        });",
+            "            sourceContext: cacheFriendly?.turnPrefixSourceContext,\n            requestOptions: cacheFriendly?.requestOptions,\n        }, customInstructions);",
+        ),
+        (
+            "async function generateTurnPrefixSummary(messages, model, reserveTokens, apiKey, headers, env, signal, thinkingLevel, streamFn, retry, callbacks, cacheFriendly) {",
+            "async function generateTurnPrefixSummary(messages, model, reserveTokens, apiKey, headers, env, signal, thinkingLevel, streamFn, retry, callbacks, cacheFriendly, customInstructions) {\n    const focus = customInstructions ? `\\n\\nAdditional focus: ${customInstructions}` : \"\";",
+        ),
+        (
+            "buildSummarizationContext(SOURCE_CONTEXT_TURN_PREFIX_SUMMARIZATION_PROMPT, sourceContext)",
+            "buildSummarizationContext(SOURCE_CONTEXT_TURN_PREFIX_SUMMARIZATION_PROMPT + focus, sourceContext)",
+        ),
+        (
+            "promptText = SOURCE_CONTEXT_TURN_PREFIX_SUMMARIZATION_PROMPT;",
+            "promptText = SOURCE_CONTEXT_TURN_PREFIX_SUMMARIZATION_PROMPT + focus;",
+        ),
+        (
+            "${TURN_PREFIX_SUMMARIZATION_PROMPT}`;",
+            "${TURN_PREFIX_SUMMARIZATION_PROMPT}${focus}`;",
+        ),
+    ),
+}
+
+
+def _prepare_sdk_prompt_overlay(pi_root: Path, destination: Path) -> Path:
+    """Copy built SDK resources and keep the pinned Pi checkout untouched."""
+    source = pi_root / "packages" / "coding-agent"
+    destination.mkdir(parents=True)
+    shutil.copy2(source / "package.json", destination / "package.json")
+    shutil.copytree(source / "dist", destination / "dist", symlinks=True)
+    (destination / "node_modules").symlink_to(pi_root / "node_modules", target_is_directory=True)
+    for relative_path, replacements in _SDK_PROMPT_OVERLAYS.items():
+        path = destination / relative_path
+        content = path.read_text(encoding="utf-8")
+        for before, after in replacements:
+            if content.count(before) != 1:
+                raise ManagedPiRuntimeError(f"Pi SDK prompt overlay does not match pinned source: {relative_path}")
+            content = content.replace(before, after, 1)
+        path.write_text(content, encoding="utf-8")
+    return destination
 
 
 def _run(command: list[str], *, cwd: Path) -> str:
@@ -1930,6 +2001,10 @@ def main(argv: list[str] | None = None) -> int:
             + SESSION_RUNTIME_CONTRACT.read_bytes()
             + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")
             + product_commit.encode("ascii")
+            # One HEAD can have several explicit development source trees.
+            # Their full verified +dirty.<digest> identity must name new payloads.
+            + b"\0pi-source\0"
+            + source_commit.encode("ascii")
         ).hexdigest()[:10]
         commit_prefix = source_commit.split("+", 1)[0][:12]
         runtime_version = f"pi-{pi_version}-{commit_prefix}-raghost-{packager_digest}"
@@ -1971,6 +2046,9 @@ def main(argv: list[str] | None = None) -> int:
                     Path(overlay_root) / "runtime-host",
                     pi_root=pi_root,
                 )
+                sdk_overlay = _prepare_sdk_prompt_overlay(
+                    pi_root, overlay_package_root / "sdk-prompt-overlay",
+                )
                 _run(
                     [
                         str(esbuild),
@@ -1979,6 +2057,7 @@ def main(argv: list[str] | None = None) -> int:
                         "--platform=node",
                         "--format=esm",
                         "--target=node22",
+                        f"--alias:@earendil-works/pi-coding-agent={sdk_overlay / 'dist' / 'index.js'}",
                         f"--outfile={bundled_entrypoint}",
                         f'--banner:js={_runtime_host_banner(product_skills, routing_catalog["collisionPolicy"])}',
                     ],

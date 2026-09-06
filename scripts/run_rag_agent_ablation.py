@@ -9,6 +9,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rag_ime.agent_configuration import default_agent_configuration  # noqa: E402
+from rag_ime.agent_lab_scene_recipes import validate_scene_recipe_binding  # noqa: E402
 from rag_ime.agent_service import AgentService  # noqa: E402
 from rag_ime.agent_sessions import AgentSessionStore  # noqa: E402
 from rag_ime.agent_tools import ControlToolGateway  # noqa: E402
@@ -70,11 +72,18 @@ from rag_ime.rag_benchmark_sandbox import (  # noqa: E402
     RagBenchmarkSandboxTool,
 )
 from scripts.canary_rag_benchmark_agent import (  # noqa: E402
+    RagEvaluationCancelled,
     _last_assistant_text,
     _public_tool_diagnostics,
     _start_rag_benchmark_gateway,
     _terminal_failure,
     _wait_for_terminal,
+)
+from scripts.agent_eval_candidate_prompt import (  # noqa: E402
+    CandidatePrompt,
+    append_candidate_prompt,
+    candidate_prompt_identity,
+    load_candidate_prompt,
 )
 from scripts.run_rag_retrieval_experiment import (  # noqa: E402
     _file_sha256,
@@ -2014,8 +2023,24 @@ def _finalize_public_report(
     report: Mapping[str, object],
     *,
     checkpoint: Mapping[str, object] | None,
+    scene_recipe: Mapping[str, object] | None = None,
+    candidate_prompt: CandidatePrompt | None = None,
+    judge_model: str | None = None,
 ) -> dict[str, object]:
     candidate = dict(report)
+    if candidate_prompt is not None or judge_model is not None:
+        candidate["conditions"] = {
+            **dict(candidate.get("conditions") or {}),
+            **({"candidatePrompt": candidate_prompt_identity(candidate_prompt)} if candidate_prompt is not None else {}),
+            **({"answerJudgeModel": f"{_EVALUATION_PROVIDER}/{judge_model}"} if judge_model is not None else {}),
+        }
+    if scene_recipe is not None:
+        candidate["conditions"] = {
+            **dict(candidate.get("conditions") or {}),
+            "parentSceneRecipe" if candidate_prompt is not None else "sceneRecipe": validate_scene_recipe_binding(scene_recipe),
+        }
+        if candidate_prompt is not None:
+            candidate["conditions"].pop("sceneRecipe", None)
     candidate.pop("reportSha256", None)
     candidate["checkpoint"] = dict(
         checkpoint
@@ -2143,9 +2168,10 @@ def _evaluation_configuration_defaults(
     Model routing is resolved while the durable Session is created.
     ``update_session`` owns permissions and disclosure, so adding
     ``modelProfile`` there would be a no-op.  Freezing the isolated PAW
-    configuration keeps parent, judge, and delegated reviewer Sessions on the
-    same evaluated model. The bounded no-Tool reviewer uses low reasoning;
-    parent and Judge remain at max.
+    configuration keeps parent and delegated reviewer Sessions on the evaluated
+    model. The independent answer Judge selects its own frozen model at Session
+    creation. The bounded no-Tool reviewer uses low reasoning; parent and Judge
+    remain at max.
     """
 
     configuration = default_agent_configuration(
@@ -3103,6 +3129,10 @@ def _claim_held_out_gate(
 def main(argv: list[str] | None = None) -> int:
     os.umask(0o077)
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--scene-recipe", type=Path,
+        help="Frozen Agent Lab Validation recipe binding JSON; never rereads the live scene Store.",
+    )
     parser.add_argument("--prepared", type=Path, required=True)
     parser.add_argument(
         "--answer-cases",
@@ -3239,7 +3269,7 @@ def main(argv: list[str] | None = None) -> int:
         "--agentic-supplemental-limit",
         type=int,
         choices=(3, 6),
-        default=_AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
+        default=None,
         help=(
             "Frozen global supplemental-search budget for the agentic lane; "
             "3 is the cost candidate and 6 is the incumbent."
@@ -3248,16 +3278,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model-override",
         choices=_EVALUATION_MODELS,
-        default=_EVALUATION_MODEL,
+        default=None,
         help=(
-            "Frozen OpenAI Codex model for every parent, Judge, and delegated "
-            "reviewer route in this run."
+            "Frozen OpenAI Codex model for parent and delegated reviewer routes. "
+            "The answer Judge is fixed independently by --judge-model."
         ),
+    )
+    parser.add_argument(
+        "--judge-model", choices=_EVALUATION_MODELS, default=_EVALUATION_MODEL,
+        help="Frozen answer Judge model; does not follow the candidate model.",
+    )
+    parser.add_argument(
+        "--candidate-prompt-file", type=Path,
+        help="UTF-8 candidate instructions appended to the frozen business prompt; development Validation only.",
     )
     parser.add_argument(
         "--prompt-profile",
         choices=_PROMPT_PROFILES,
-        default=_INCUMBENT_PROMPT_PROFILE,
+        default=None,
         help=(
             "Prompt-only development variable. Post-Validation prompt profiles "
             "are Validation-only and never eligible for an unbiased promotion claim."
@@ -3280,6 +3318,33 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    scene_recipe: dict[str, object] | None = None
+    if args.scene_recipe is not None:
+        try:
+            scene_recipe = validate_scene_recipe_binding(_read_json_object(args.scene_recipe))
+        except (OSError, ValueError, TypeError) as exc:
+            parser.error(f"invalid --scene-recipe: {exc}")
+        recipe = scene_recipe["recipe"]
+        for name, expected in (
+            ("model_override", recipe["model"]),
+            ("prompt_profile", recipe["promptProfile"]),
+            ("agentic_supplemental_limit", recipe["agenticSupplementalLimit"]),
+            ("evaluation_split", recipe["split"]),
+        ):
+            actual = getattr(args, name)
+            if actual is not None and actual != expected:
+                parser.error(f"--{name.replace('_', '-')} conflicts with --scene-recipe")
+            setattr(args, name, expected)
+        if args.calibration_no_metal or args.promotion_receipt is not None or args.heldout_gate is not None:
+            parser.error("--scene-recipe is real-model development Validation only; calibration and promotion flags conflict")
+        args.answer_only = True
+        args.development_only = True
+    if args.model_override is None:
+        args.model_override = _EVALUATION_MODEL
+    if args.prompt_profile is None:
+        args.prompt_profile = _INCUMBENT_PROMPT_PROFILE
+    if args.agentic_supplemental_limit is None:
+        args.agentic_supplemental_limit = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL
     if args.calibration_no_metal and args.development_only:
         parser.error("--calibration-no-metal and --development-only are mutually exclusive")
     evaluation_split = _resolve_evaluation_split(
@@ -3314,6 +3379,11 @@ def main(argv: list[str] | None = None) -> int:
             "exact cost export requires --cost-receipt-output, --pricing-config, "
             "and --pricing-published-date"
         )
+    if cost_requested and args.resume_checkpoint is not None:
+        parser.error(
+            "full-run cost export cannot omit reused lane receipts; resume without cost-export flags "
+            "and reconcile the retained original and resumed Runtime evidence before comparing cost"
+        )
     checkpoint_argument = args.resume_checkpoint or args.checkpoint
     checkpoint_path = (
         checkpoint_argument.expanduser().resolve(strict=False)
@@ -3321,6 +3391,11 @@ def main(argv: list[str] | None = None) -> int:
         else None
     )
     try:
+        if args.candidate_prompt_file is not None and not (
+            args.answer_only and args.development_only and evaluation_split == "validation"
+        ):
+            raise ValueError("candidate Prompt requires answer-only development Validation")
+        candidate_prompt = load_candidate_prompt(args.candidate_prompt_file, evaluation_split=evaluation_split)
         prompt_profile = _validate_prompt_profile(
             args.prompt_profile,
             answer_only=bool(args.answer_only),
@@ -3332,7 +3407,7 @@ def main(argv: list[str] | None = None) -> int:
             checkpoint_path=checkpoint_path,
             resume_checkpoint=args.resume_checkpoint is not None,
         )
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         parser.error(str(exc))
 
     private_root = args.private_root.expanduser().resolve(strict=False)
@@ -3352,8 +3427,14 @@ def main(argv: list[str] | None = None) -> int:
     }:
         parser.error("cost receipt, checkpoint, and final output paths must differ")
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with tempfile.TemporaryDirectory(prefix="run-", dir=private_root) as temporary:
-        run_root = Path(temporary).resolve(strict=True)
+    run_root = Path(tempfile.mkdtemp(prefix="run-", dir=private_root)).resolve(strict=True)
+    try:
+        _write_json(run_root / "recovery.json", {
+            "schemaVersion": "rag-ime.rag-evaluation-recovery-locator.v1",
+            "reportOutput": str(output),
+            "costReceiptOutput": str(cost_receipt_output) if cost_receipt_output else None,
+            "purpose": "Retained only when evaluation or receipt export fails; reuse evidence without rerunning paid turns.",
+        })
         report = _run(
             run_root,
             prepared_path=args.prepared.expanduser().resolve(strict=True),
@@ -3416,6 +3497,9 @@ def main(argv: list[str] | None = None) -> int:
             checkpoint_path=checkpoint_path,
             resume_checkpoint=args.resume_checkpoint is not None,
             evaluation_model=str(args.model_override),
+            judge_model=str(args.judge_model),
+            candidate_prompt=candidate_prompt,
+            scene_recipe=scene_recipe,
         )
         _write_json(output, report)
         if cost_receipt_output is not None:
@@ -3465,8 +3549,7 @@ def main(argv: list[str] | None = None) -> int:
                         str(runtime_db),
                         "--pricing-config",
                         str(args.pricing_config.expanduser().resolve(strict=True)),
-                        "--model",
-                        str(args.model_override),
+                        *(["--model", str(args.model_override)] if args.judge_model == args.model_override else ["--all-models"]),
                         "--run-id",
                         str(args.cost_run_id or output.stem),
                         "--published-date",
@@ -3479,6 +3562,13 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if cost_status != 0:
                     raise RuntimeError("exact Runtime cost receipt export failed")
+    except BaseException:
+        _progress("run_evidence_retained", privateRunRoot=str(run_root), reason="execution_or_receipt_export_failed")
+        raise
+    if report.get("passed") is True:
+        shutil.rmtree(run_root)
+    else:
+        _progress("run_evidence_retained", privateRunRoot=str(run_root), reason="evaluation_not_passed")
     print(
         json.dumps(
             {
@@ -3495,6 +3585,90 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
     return 0 if report.get("passed") is True else 1
+
+
+class _RagControlledEvents:
+    def __init__(self, owner):
+        self.owner = owner
+
+    def __getattr__(self, name):
+        return getattr(self.owner._service.events, name)
+
+    def replay(self, *args, **kwargs):
+        self.owner.check()
+        result = self.owner._service.events.replay(*args, **kwargs)
+        self.owner.check()
+        return result
+
+
+class _RagControlledService:
+    """Forward the existing Pi owner; guard admission and observe exact bindings.
+
+    Every lane, Judge and repair already uses this service boundary. Keeping
+    the guard here covers those paths without creating a second model loop.
+    Cleanup/close and read-only evidence access remain available after Stop.
+    """
+    def __init__(self, service, *, cancelled=None, on_session=None, on_turn=None):
+        self._service = service
+        self._cancelled = cancelled
+        self._on_session = on_session
+        self._on_turn = on_turn
+        self._current_session = ""
+        self._stopped = False
+        self.events = _RagControlledEvents(self)
+
+    def __getattr__(self, name):
+        return getattr(self._service, name)
+
+    def check(self):
+        if self._stopped or (self._cancelled is not None and self._cancelled()):
+            if not self._stopped:
+                self._stopped = True
+                if self._current_session:
+                    try:
+                        self._service.abort(self._current_session)
+                    except Exception as exc:
+                        raise RagEvaluationCancelled("RAG evaluation cancelled; Pi abort failed", interrupted=True) from exc
+            raise RagEvaluationCancelled("RAG evaluation cancelled")
+
+    def create_session(self, *args, **kwargs):
+        self.check()
+        result = self._service.create_session(*args, **kwargs)
+        self._current_session = str(result["session"]["id"])
+        if self._on_session is not None:
+            self._on_session(self._current_session)
+        return result
+
+    def ensure_runtime(self, *args, **kwargs):
+        self.check()
+        return self._service.ensure_runtime(*args, **kwargs)
+
+    def prompt(self, session_id, *args, **kwargs):
+        self._current_session = session_id
+        self.check()
+        result = self._service.prompt(session_id, *args, **kwargs)
+        turn_id = str(result.get("turnId") or "")
+        if turn_id and self._on_turn is not None:
+            self._on_turn(session_id, turn_id)
+        # Return the admission receipt so the existing attempt checkpoint can
+        # bind it before polling observes Stop. Never lose an admitted turn.
+        return result
+
+
+def _execution_service(service, *, cancelled=None, on_session=None, on_turn=None):
+    if isinstance(service, _RagControlledService):
+        service.check()
+        return service
+    if cancelled is None and on_session is None and on_turn is None:
+        return service
+    result = _RagControlledService(service, cancelled=cancelled, on_session=on_session, on_turn=on_turn)
+    result.check()
+    return result
+
+
+def _execution_check(service):
+    if isinstance(service, _RagControlledService):
+        service.check()
 
 
 def _run(
@@ -3529,10 +3703,39 @@ def _run(
     agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
     prompt_profile: str = _INCUMBENT_PROMPT_PROFILE,
     evaluation_model: str = _EVALUATION_MODEL,
+    judge_model: str = _EVALUATION_MODEL,
+    candidate_prompt: CandidatePrompt | None = None,
+    scene_recipe: Mapping[str, object] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+    on_session: Callable[[str], None] | None = None,
+    on_turn: Callable[[str, str], None] | None = None,
 ) -> dict[str, object]:
+    if cancelled is not None and cancelled():
+        raise RagEvaluationCancelled("RAG evaluation cancelled before preparation")
+    if candidate_prompt is not None and not (
+        answer_only and development_only and evaluation_split == "validation"
+    ):
+        raise ValueError("candidate Prompt requires answer-only development Validation")
+    if scene_recipe is not None:
+        scene_recipe = validate_scene_recipe_binding(scene_recipe)
+        recipe = scene_recipe["recipe"]
+        if (
+            evaluation_model != recipe["model"]
+            or prompt_profile != recipe["promptProfile"]
+            or agentic_supplemental_limit != recipe["agenticSupplementalLimit"]
+            or evaluation_split != recipe["split"]
+            or answer_only is not True
+            or development_only is not True
+            or calibration_no_metal
+            or promotion_receipt_path is not None
+            or heldout_gate_path is not None
+        ):
+            raise ValueError("scene recipe conflicts with explicit run controls")
     started_at_ms = int(time.time() * 1_000)
     if evaluation_model not in _EVALUATION_MODELS:
         raise ValueError("RAG Agent evaluation model is unsupported")
+    if judge_model not in _EVALUATION_MODELS:
+        raise ValueError("RAG Agent answer Judge model is unsupported")
     if agentic_supplemental_limit not in {3, _AGENTIC_MAX_SUPPLEMENTAL_TOTAL}:
         raise ValueError("agentic supplemental limit is unsupported")
     prompt_profile = _validate_prompt_profile(
@@ -3610,6 +3813,8 @@ def _run(
             "promptContractVersion": _PROMPT_CONTRACT_VERSION,
             "answerJudgeContractVersion": _ANSWER_JUDGE_CONTRACT_VERSION,
             "model": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
+            "judgeModel": f"{_EVALUATION_PROVIDER}/{judge_model}",
+            **({"candidatePrompt": candidate_prompt_identity(candidate_prompt)} if candidate_prompt is not None else {}),
             "thinking": _EVALUATION_THINKING,
             "modelRoutingSha256": _sha256_json(
                 _evaluation_configuration_defaults(
@@ -3625,6 +3830,7 @@ def _run(
             "laneTimeoutSeconds": float(timeout_seconds),
             "defaultRetrievalConfigSha256": default_config_sha256,
             "tunedRetrievalConfigSha256": tuned_config_sha256,
+            **({"sceneRecipe": scene_recipe} if scene_recipe is not None else {}),
         }
     )
     evaluation_mode = "answer-only" if answer_only else "retrieval-and-answer"
@@ -3712,6 +3918,7 @@ def _run(
                 evaluation_split=evaluation_split,
                 agentic_supplemental_limit=agentic_supplemental_limit,
                 prompt_profile=prompt_profile,
+                candidate_prompt=candidate_prompt,
             ).encode("utf-8")
         ).hexdigest()
         for lane in LANES
@@ -3741,6 +3948,9 @@ def _run(
                 embedding=provider_public,
                 failure=f"{type(exc).__name__}: {exc}",
                 checkpoint=checkpoint_request_projection,
+                scene_recipe=scene_recipe,
+                candidate_prompt=candidate_prompt,
+                judge_model=judge_model,
             )
     try:
         if calibration_no_metal:
@@ -3787,6 +3997,9 @@ def _run(
             embedding=provider_public,
             failure=f"{type(exc).__name__}: {exc}",
             checkpoint=checkpoint_request_projection,
+            scene_recipe=scene_recipe,
+            candidate_prompt=candidate_prompt,
+            judge_model=judge_model,
         )
     source_bytes = sum(len(str(item["text"]).encode("utf-8")) for item in documents)
     maximum_document_bytes = max(
@@ -3842,6 +4055,7 @@ def _run(
     checkpoint_reused_lanes: set[str] = set()
     checkpoint_fresh_lanes: set[str] = set()
     failure = ""
+    execution_settled = True
     try:
         agent_config = run_root / "agent" / "config"
         _copy_openai_codex_agent_config(source_agent_config, agent_config)
@@ -3872,6 +4086,7 @@ def _run(
                 evaluation_model=evaluation_model
             ),
         )
+        service = _execution_service(service, cancelled=cancelled, on_session=on_session, on_turn=on_turn)
         agent_config_identity["modelRouting"] = _evaluation_configuration_identity(
             service,
             evaluation_model=evaluation_model,
@@ -4044,6 +4259,7 @@ def _run(
         )
         service.bind_tool_manifest_provider(gateway.runtime_manifests)
 
+        _execution_check(service)
         run = sandbox.create_run(owner, label=slice_manifest["benchmarkId"])
         run_id = str(run["runId"])
         base = sandbox.create_base(
@@ -4056,6 +4272,7 @@ def _run(
             retrieval_config=_knowledge_base_retrieval_config(default_config),
         )
         for offset in range(0, len(documents), policy.max_documents_per_call):
+            _execution_check(service)
             batch = documents[offset : offset + policy.max_documents_per_call]
             sandbox.import_documents(
                 owner,
@@ -4099,6 +4316,7 @@ def _run(
 
         active_config_sha256 = default_config_sha256
         for lane in LANES:
+            _execution_check(service)
             target_config = tuned_config if lane in {"tuned", "agentic"} else default_config
             target_hash = tuned_config_sha256 if lane in {"tuned", "agentic"} else default_config_sha256
             if active_config_sha256 != target_hash:
@@ -4135,7 +4353,7 @@ def _run(
                     f"checkpoint lane {lane} exhausted its attempt budget"
                 )
 
-            def persist_attempt_started(attempt_number: int) -> None:
+            def persist_attempt_started(attempt_number: int, *, lane=lane) -> None:
                 nonlocal checkpoint_state
                 if checkpoint_path is None or checkpoint_state is None:
                     return
@@ -4149,6 +4367,7 @@ def _run(
             def persist_attempt(
                 attempt_number: int,
                 attempt_record: Mapping[str, object],
+                lane=lane,
             ) -> None:
                 nonlocal checkpoint_state
                 if checkpoint_path is None or checkpoint_state is None:
@@ -4165,6 +4384,7 @@ def _run(
                 attempt_number: int,
                 session_id: str,
                 turn_id: str,
+                lane=lane,
             ) -> None:
                 nonlocal checkpoint_state
                 if checkpoint_path is None or checkpoint_state is None:
@@ -4210,6 +4430,7 @@ def _run(
                 agentic_supplemental_limit=agentic_supplemental_limit,
                 prompt_profile=prompt_profile,
                 evaluation_model=evaluation_model,
+                candidate_prompt=candidate_prompt,
                 attempt_start=prior_attempt_count + 1,
                 attempt_start_observer=(
                     persist_attempt_started if checkpoint_path is not None else None
@@ -4246,7 +4467,7 @@ def _run(
             chunking_config=dict(retrieval_report["chunking"]),
             timeout_seconds=timeout_seconds,
             maximum_attempts=2,
-            evaluation_model=evaluation_model,
+            evaluation_model=judge_model,
         )
         if answer_judge.get("accepted") is not True:
             raise RuntimeError(
@@ -4269,6 +4490,10 @@ def _run(
             accepted=answer_judge.get("accepted"),
             correctnessByLane=answer_judge.get("correctnessByLane"),
         )
+        _execution_check(service)
+    except RagEvaluationCancelled as exc:
+        failure = f"RagEvaluationCancelled: {exc}"
+        execution_settled = not exc.interrupted
     except Exception as exc:
         failure = f"{type(exc).__name__}: {exc}"
     finally:
@@ -4279,12 +4504,19 @@ def _run(
                 cleanup_passed = False
             else:
                 cleanup_passed = cleanup.get("deleted") is True
-        if service is not None:
-            service.close()
-        if server is not None:
-            server.close()
-        sandbox.close()
+        # A failed close cannot skip another owner's cleanup or turn a Stop
+        # into a falsely settled cancellation. Keep an inspectable receipt.
+        for execution_owner in (service, server, sandbox):
+            if execution_owner is not None:
+                try:
+                    execution_owner.close()
+                except Exception as exc:
+                    execution_settled = False
+                    cleanup_passed = False
+                    failure = failure or f"{type(exc).__name__}: execution cleanup failed"
 
+    if cancelled is not None and cancelled() and not failure.startswith("RagEvaluationCancelled:"):
+        failure = "RagEvaluationCancelled: RAG evaluation cancelled"
     completed_at_ms = int(time.time() * 1_000)
     if failure or len(lane_records) != 4:
         completed_lane_evidence = []
@@ -4294,6 +4526,8 @@ def _run(
             completed_lane_evidence.append(projected)
         report = {
             "schemaVersion": SCHEMA_VERSION,
+            "status": "interrupted" if not execution_settled else ("cancelled" if failure.startswith("RagEvaluationCancelled:") else "failed"),
+            "executionSettled": execution_settled,
             "passed": False,
             "scoreEligible": False,
             "formalAcceptanceEligible": False,
@@ -4367,7 +4601,8 @@ def _run(
             fresh_lanes=checkpoint_fresh_lanes,
             checkpoint_requested=checkpoint_path is not None,
         )
-        return _finalize_public_report(report, checkpoint=checkpoint_projection)
+        return _finalize_public_report(report, checkpoint=checkpoint_projection, scene_recipe=scene_recipe,
+                                       candidate_prompt=candidate_prompt, judge_model=judge_model)
 
     case_ids = [str(item["queryId"]) for item in evaluation_cases]
     case_aliases = [str(item["evaluationCaseId"]) for item in evaluation_cases]
@@ -4379,6 +4614,7 @@ def _run(
         "workspaceRoots": [],
     }
     conditions = {
+        **({"sceneRecipe": scene_recipe} if scene_recipe is not None else {}),
         "model": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
         "thinking": _EVALUATION_THINKING,
         "laneTimeoutSeconds": float(timeout_seconds),
@@ -4408,7 +4644,7 @@ def _run(
             else "none"
         ),
         "unbiasedPromotionClaimAllowed": (
-            False if prompt_profile in _POST_VALIDATION_PROMPT_PROFILES else None
+            False if candidate_prompt is not None or prompt_profile in _POST_VALIDATION_PROMPT_PROFILES else None
         ),
         "agenticSupplementalLimit": agentic_supplemental_limit,
         "skillName": "rag-retrieval-optimization",
@@ -4488,7 +4724,7 @@ def _run(
         "answerEvaluationPolicy": {
             "primaryTaskMetric": "answerJudgeCorrectnessRate",
             "rawCharacterMetricsDiagnosticOnly": True,
-            "judgeModel": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
+            "judgeModel": f"{_EVALUATION_PROVIDER}/{judge_model}",
             "judgeThinking": _EVALUATION_THINKING,
             "judgeContractVersion": _ANSWER_JUDGE_CONTRACT_VERSION,
             "anonymousCandidates": True,
@@ -4744,7 +4980,8 @@ def _run(
         fresh_lanes=checkpoint_fresh_lanes,
         checkpoint_requested=checkpoint_path is not None,
     )
-    return _finalize_public_report(report, checkpoint=checkpoint_projection)
+    return _finalize_public_report(report, checkpoint=checkpoint_projection, scene_recipe=scene_recipe,
+                                   candidate_prompt=candidate_prompt, judge_model=judge_model)
 
 
 def _build_candidate_decision(
@@ -4823,6 +5060,9 @@ def _preflight_failure_report(
     embedding: Mapping[str, object],
     failure: str,
     checkpoint: Mapping[str, object] | None = None,
+    scene_recipe: Mapping[str, object] | None = None,
+    candidate_prompt: CandidatePrompt | None = None,
+    judge_model: str | None = None,
 ) -> dict[str, object]:
     """Persist a non-score receipt when semantic setup fails before sandbox allocation."""
 
@@ -4902,7 +5142,8 @@ def _preflight_failure_report(
         },
         "failure": failure[:1_000],
     }
-    return _finalize_public_report(report, checkpoint=checkpoint)
+    return _finalize_public_report(report, checkpoint=checkpoint, scene_recipe=scene_recipe,
+                                   candidate_prompt=candidate_prompt, judge_model=judge_model)
 
 
 def _require_actual_metal_runtime() -> None:
@@ -4950,50 +5191,68 @@ def _run_lane(
     agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
     prompt_profile: str = _INCUMBENT_PROMPT_PROFILE,
     evaluation_model: str = _EVALUATION_MODEL,
+    candidate_prompt: CandidatePrompt | None = None,
     attempt_start: int = 1,
     attempt_start_observer: Callable[[int], None] | None = None,
     attempt_binding_observer: Callable[[int, str, str], None] | None = None,
     attempt_observer: Callable[[int, Mapping[str, object]], None] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+    on_session: Callable[[str], None] | None = None,
+    on_turn: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
+    service = _execution_service(service, cancelled=cancelled, on_session=on_session, on_turn=on_turn)
     attempts: list[dict[str, object]] = []
     result: dict[str, Any] | None = None
     maximum_attempts = max(1, lane_attempts)
     if attempt_start < 1 or attempt_start > maximum_attempts:
         raise ValueError("lane attempt start is outside the configured budget")
     for attempt_number in range(attempt_start, maximum_attempts + 1):
+        _execution_check(service)
         if attempt_start_observer is not None:
             attempt_start_observer(attempt_number)
         transport_cursor = _tool_transport_cursor(tool_transport)
-        result = _run_lane_once(
-            service,
-            gateway=gateway,
-            owner=owner,
-            run_id=run_id,
-            lane=lane,
-            cases=cases,
-            retrieval_config=retrieval_config,
-            retrieval_config_sha256=retrieval_config_sha256,
-            timeout_seconds=timeout_seconds,
-            answer_only=answer_only,
-            evaluation_mode=(
-                str(evaluation_mode)
-                if evaluation_mode is not None
-                else ("answer-only" if answer_only else "retrieval-and-answer")
-            ),
-            evaluation_split=evaluation_split,
-            agentic_supplemental_limit=agentic_supplemental_limit,
-            prompt_profile=prompt_profile,
-            evaluation_model=evaluation_model,
-            attempt_binding_observer=(
-                (
-                    lambda session_id, turn_id: attempt_binding_observer(
-                        attempt_number, session_id, turn_id
+        try:
+            result = _run_lane_once(
+                service,
+                gateway=gateway,
+                owner=owner,
+                run_id=run_id,
+                lane=lane,
+                cases=cases,
+                retrieval_config=retrieval_config,
+                retrieval_config_sha256=retrieval_config_sha256,
+                timeout_seconds=timeout_seconds,
+                answer_only=answer_only,
+                evaluation_mode=(
+                    str(evaluation_mode)
+                    if evaluation_mode is not None
+                    else ("answer-only" if answer_only else "retrieval-and-answer")
+                ),
+                evaluation_split=evaluation_split,
+                agentic_supplemental_limit=agentic_supplemental_limit,
+                prompt_profile=prompt_profile,
+                evaluation_model=evaluation_model,
+                candidate_prompt=candidate_prompt,
+                attempt_binding_observer=(
+                    (
+                        lambda session_id, turn_id, attempt_number=attempt_number: attempt_binding_observer(
+                            attempt_number, session_id, turn_id
+                        )
                     )
-                )
-                if attempt_binding_observer is not None
-                else None
-            ),
-        )
+                    if attempt_binding_observer is not None
+                    else None
+                ),
+            )
+        except RagEvaluationCancelled:
+            # The ordinary result path unbinds after collecting its evidence.
+            # Stop exits early, so release that same lineage without fabricating
+            # a completed attempt; the admitted checkpoint remains recoverable.
+            if isinstance(service, _RagControlledService) and service._current_session:
+                try:
+                    gateway.unbind_lineage(service._current_session)
+                except Exception as exc:
+                    raise RagEvaluationCancelled("RAG evaluation cancelled; Tool binding cleanup failed", interrupted=True) from exc
+            raise
         transport_receipt = _tool_transport_receipt(
             tool_transport,
             since_sequence=transport_cursor,
@@ -5005,6 +5264,7 @@ def _run_lane(
                 result["runtimeFailureCategory"] = "harness_transport_failure"
         if attempt_observer is not None:
             attempt_observer(attempt_number, result)
+        _execution_check(service)
         retryable = result["runtimeFailureCategory"] in {
             "provider_transient_before_tool",
             "provider_transient_after_tool",
@@ -5049,6 +5309,7 @@ def _run_lane_once(
     agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
     prompt_profile: str = _INCUMBENT_PROMPT_PROFILE,
     evaluation_model: str = _EVALUATION_MODEL,
+    candidate_prompt: CandidatePrompt | None = None,
     attempt_binding_observer: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     include_skill = LANE_FEATURES[lane]["skill"]
@@ -5119,6 +5380,7 @@ def _run_lane_once(
         evaluation_split=evaluation_split,
         agentic_supplemental_limit=agentic_supplemental_limit,
         prompt_profile=prompt_profile,
+        candidate_prompt=candidate_prompt,
     )
     try:
         ensure = service.ensure_runtime({"sessionId": session_id})
@@ -5853,12 +6115,17 @@ def _run_answer_judge(
     timeout_seconds: float,
     maximum_attempts: int = 2,
     evaluation_model: str = _EVALUATION_MODEL,
+    cancelled: Callable[[], bool] | None = None,
+    on_session: Callable[[str], None] | None = None,
+    on_turn: Callable[[str, str], None] | None = None,
 ) -> dict[str, object]:
     """Retry only terminal judge infrastructure failure, never a judgment score."""
 
+    service = _execution_service(service, cancelled=cancelled, on_session=on_session, on_turn=on_turn)
     attempts: list[dict[str, object]] = []
     bounded_attempts = max(1, min(2, int(maximum_attempts)))
     for attempt in range(1, bounded_attempts + 1):
+        _execution_check(service)
         try:
             result = _run_answer_judge_once(
                 service,
@@ -5869,6 +6136,7 @@ def _run_answer_judge(
                 timeout_seconds=timeout_seconds,
                 evaluation_model=evaluation_model,
             )
+            _execution_check(service)
         except RuntimeError as exc:
             failure = f"{type(exc).__name__}: {exc}"
             retryable = _answer_judge_failure_is_retryable(failure)
@@ -5942,6 +6210,8 @@ def _run_answer_judge_once(
             "title": "CRUD-RAG anonymous answer correctness judge",
             "mode": "assistant",
             "_modelRoute": "primary",
+            "modelProfile": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
+            "thinkingLevel": _EVALUATION_THINKING,
             "roleId": "companion-firstlight-v1",
             "roleVersion": "1",
             "toolProfileVersion": "subagent-readonly-v1",
@@ -6878,7 +7148,10 @@ def _lane_prompt(
     evaluation_split: str,
     agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
     prompt_profile: str = _INCUMBENT_PROMPT_PROFILE,
+    candidate_prompt: CandidatePrompt | None = None,
 ) -> str:
+    if candidate_prompt is not None and evaluation_split != "validation":
+        raise ValueError("candidate Prompt is limited to Validation")
     if evaluation_mode not in {"answer-only", "retrieval-and-answer"}:
         raise ValueError("lane prompt evaluation mode is invalid")
     if evaluation_split not in {"validation", "held_out"}:
@@ -7010,7 +7283,7 @@ def _lane_prompt(
         if lane == "agentic"
         else "本档不得调用 agents 或启动子 Agent。"
     )
-    return (
+    return append_candidate_prompt((
         f"这是本地、公开数据、只读的 Knowledge RAG {evaluation_split} {evaluation_mode} 评估。"
         "不得调用 memory、workspace、shell、"
         "browser 或任何写入工具，也不得利用模型参数记忆直接跳过检索。\n"
@@ -7050,7 +7323,7 @@ def _lane_prompt(
         '{"cases":[{"caseId":"...","answer":"...","citations":["doc-id"],"abstained":false}]}。\n'
         "Cases="
         + json.dumps(case_payload, ensure_ascii=False, separators=(",", ":"))
-    )
+    ), candidate_prompt)
 
 
 def _assistant_case_payload(text: str) -> dict[str, dict[str, object]]:

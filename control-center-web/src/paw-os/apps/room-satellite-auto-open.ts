@@ -108,18 +108,18 @@ export function roomPartnerSessionWindowRequest(
 }
 
 /**
- * UR-184 协同模式合同：只有用户显式进入协同模式时，Room 名册中的每个
- * active Partner 才以行星 Session 窗展开。Runtime 当前是否执行只负责窗口
- * 的流光和状态，不能决定一颗仍在名册中的行星是否可见。请求保持后台，
- * 主 Room 仍是返回面；稳定 participant target 让 WindowLayer 唤起现有窗口
- * 而非复制。
+ * An explicit collaboration view opens partners admitted to a running public
+ * turn. Membership alone cannot invent activity or an empty observer. These
+ * background requests preserve the main composer and stable participant keys.
  */
 export function roomCollaborationPlanetRequests(
   room: RoomSummary,
+  projection?: RoomProjectionState,
 ): PawOsWindowRequest[] {
   if (room.status !== 'active') return [];
+  const activeIds = roomProjectionRuntimeActiveParticipantIds(projection);
   return room.participants
-    .filter((participant) => participant.status === 'active')
+    .filter((participant) => participant.status === 'active' && activeIds.has(participant.id))
     .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
     .map((participant) => roomPlanetObserverWindowRequest(participant, room.id, true));
 }

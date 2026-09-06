@@ -3,6 +3,8 @@ import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-conte
 import type { EvalLabEvidenceRun, EvalLabExperiment, EvalLabRun } from '../api';
 import { buildOptimizationWorkbenchModel } from './optimization-view-model';
 import { useLinkedTraceReport } from './use-linked-trace-report';
+import { experimentBaselineTraceIds } from '../evidence-identity';
+import { CandidatePatchEvidence } from '../CandidatePatchEvidence';
 import './optimization-workbench.css';
 
 const LAYER_LABELS: Readonly<Record<string, string>> = {
@@ -30,9 +32,7 @@ type OptimizationWorkbenchProps = {
 
 export function LinkedOptimizationWorkbench(props: Omit<OptimizationWorkbenchProps, 'traceLookupState' | 'traceReport'>) {
   const desktop = usePawOsDesktop();
-  const baselineTraceIds = props.evidenceRuns
-    .filter((run) => run.runId === props.experiment.baseline.runId)
-    .flatMap((run) => run.environment.traceIds ?? []);
+  const baselineTraceIds = experimentBaselineTraceIds(props.evidenceRuns, props.experiment);
   const linkedReport = useLinkedTraceReport({
     baselineRunId: props.experiment.baseline.runId,
     baselineTraceIds,
@@ -65,7 +65,7 @@ export function OptimizationWorkbench(props: OptimizationWorkbenchProps) {
             <Row label="终态" value={model.failure.terminal} />
             <Row label="失败门禁" value={model.failure.failedGates.join('；') || '失败已记录，但门禁明细缺失'} />
           </dl> : <p className="optimization-workbench__unknown">尚未找到精确失败 Case；不从标题或相似场景推断。</p>}
-          <IdentityList label="Trace" values={model.identity.traceIds} />
+          <IdentityList label="原运行 Trace" values={model.identity.baselineTraceIds} />
         </section>
 
         <section aria-label="根因归因" role="group">
@@ -97,7 +97,7 @@ export function OptimizationWorkbench(props: OptimizationWorkbenchProps) {
             <span>{change.before} → {change.after}</span>
             <small>{change.reason}</small>
           </li>)}</ul> : <p className="optimization-workbench__unknown">没有候选变化记录。</p>}
-          <p className="optimization-workbench__diff-gap">真实 Diff 未记录</p>
+          <CandidatePatchEvidence experiment={props.experiment} />
           <details><summary>冻结控制（{model.frozenControls.length}）</summary><ul>{model.frozenControls.map((control) => <li key={control.name}>{control.name}：{control.value}（{control.reason}）</li>)}</ul></details>
         </section>
       </div>
@@ -115,7 +115,7 @@ export function OptimizationWorkbench(props: OptimizationWorkbenchProps) {
           <StepHeader index="5" title="Keep / Reject" />
           <strong className={`optimization-workbench__decision optimization-workbench__decision--${model.decision.label.toLowerCase()}`}>{model.decision.label}</strong>
           <p>{model.decision.reason}</p>
-          <small>结论只读取 experiment.comparison.decision，不根据指标变化推断。</small>
+          <small>读取这轮保存的候选结论；保留候选不代表已经应用。</small>
         </section>
       </div>
 

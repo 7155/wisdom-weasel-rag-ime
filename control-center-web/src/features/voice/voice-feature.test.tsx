@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -7,7 +7,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { ControlPathId } from '@/platform/routes';
 import type { VoiceProviderId } from '@/platform/transport';
-import { MockControlTransport } from '@/test/mock-transport';
+import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import { VoiceFeature } from '.';
 
 const hash = 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
@@ -15,6 +15,61 @@ const hash = 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 afterEach(cleanup);
 
 describe('VoiceFeature', () => {
+  it('waits for the actual saved settings before editing and recovers a failed settings read in place', async () => {
+    const user = userEvent.setup();
+    let reject!: (reason: Error) => void;
+    const pendingSettings = new Promise((_, fail) => { reject = fail; });
+    let recovered = false;
+    const transport = renderVoice(false, 'native_streaming', [], false, {
+      settings: () => recovered ? {
+        ok: true, runtimeRevision: 4,
+        settings: { voice: { provider: 'realtime_websocket', hotkey: 'right_option', hotwords: ['项目名称'] } },
+      } : pendingSettings,
+    });
+    const provider = await screen.findByRole('radio', { name: '实时服务' });
+    expect(provider).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: '语音热词' })).toBeDisabled();
+    await act(async () => reject(new Error('saved settings unavailable')));
+    expect(await screen.findByRole('button', { name: '重试语音设置' })).toBeEnabled();
+    recovered = true;
+    await user.click(screen.getByRole('button', { name: '重试语音设置' }));
+    await waitFor(() => expect(provider).toBeEnabled());
+    expect(provider).toBeChecked();
+    expect(screen.getByRole('radio', { name: '右 Option' })).toBeChecked();
+    expect(transport.requests.some(({ request }) => request.pathId === 'configuration.settings.preview')).toBe(false);
+  });
+
+  it('keeps dictation settings available during a slow optional model read and retries that failed read independently', async () => {
+    const user = userEvent.setup();
+    let reject!: (reason: Error) => void;
+    const pendingModels = new Promise((_, fail) => { reject = fail; });
+    let recovered = false;
+    const transport = renderVoice(false, 'native_streaming', ['澄助手'], false, {
+      models: () => recovered ? voiceModelCatalog() : pendingModels,
+    });
+    expect(await screen.findByText('当前：实时听写')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: '听写服务' })).toBeInTheDocument();
+    expect(screen.getByText('正在读取校对模型')).toBeInTheDocument();
+    await act(async () => reject(new Error('model catalog unavailable')));
+    expect(await screen.findByText('校对模型读取失败')).toBeInTheDocument();
+    expect(screen.getByText('当前：实时听写')).toBeInTheDocument();
+    const settingsReads = transport.requests.filter(({ request }) => request.pathId === 'configuration.settings').length;
+    recovered = true;
+    await user.click(screen.getByRole('button', { name: '重试校对模型' }));
+    expect(await screen.findByRole('combobox', { name: '保守校对模型' })).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'configuration.settings')).toHaveLength(settingsReads);
+  });
+
+  it.each(['pending', 'failed'] as const)('does not guess a native start or stop action while runtime status is %s', async (runtimeState) => {
+    renderVoice(false, 'native_streaming', ['澄助手'], runtimeState === 'failed', {
+      native: true,
+      ...(runtimeState === 'pending' ? { runtime: () => new Promise(() => {}) } : {}),
+    });
+    const group = await screen.findByRole('group', { name: '听写服务' });
+    expect(within(group).getByRole('button')).toBeDisabled();
+    expect(within(group).getByRole('button')).toHaveAccessibleName('等待听写状态');
+  });
+
   it('shows provider response evidence and the independent third-pass result', async () => {
     const user = userEvent.setup();
     renderVoiceWithHotwordWrites();
@@ -211,6 +266,7 @@ function renderVoice(
   provider: VoiceProviderId = 'native_streaming',
   savedHotwords: string[] = ['澄助手'],
   runtimeFailure = false,
+  options: { models?: MockRouteHandler; runtime?: MockRouteHandler; settings?: MockRouteHandler; native?: boolean } = {},
 ): MockControlTransport {
   const routeIds = [
     'configuration.settings',
@@ -221,9 +277,12 @@ function renderVoice(
     'agent.role.models',
   ] as ControlPathId[];
   const transport = new MockControlTransport({
-    capabilities: { routeIds },
+    capabilities: {
+      routeIds,
+      ...(options.native ? { native: { pickFiles: false, managedAgentImageImport: false, revealPath: false, approvedExternalActions: false, keychain: false, tcc: true } } : {}),
+    },
     routes: {
-      'configuration.settings': {
+      'configuration.settings': options.settings ?? {
         ok: true,
         runtimeRevision: 4,
         settings: {
@@ -237,7 +296,7 @@ function renderVoice(
         },
       },
       'configuration.schema': { ok: true, sections: [] },
-      'diagnostics.runtime': runtimeFailure
+      'diagnostics.runtime': options.runtime ?? (runtimeFailure
         ? () => { throw new Error('runtime probe unavailable'); }
         : {
             ok: true,
@@ -246,7 +305,7 @@ function renderVoice(
               microphone: { ok: true },
               accessibility: { ok: true },
             },
-          },
+          }),
       'agent.tools.list': {
         ok: true,
         items: toolAvailable ? [{
@@ -262,8 +321,11 @@ function renderVoice(
           ],
         }] : [],
       },
-      'agent.role.models': voiceModelCatalog(),
+      'agent.role.models': options.models ?? voiceModelCatalog(),
     },
+  });
+  if (options.native) Object.defineProperty(transport, 'runVoiceAction', {
+    value: () => { throw new Error('This read-only test must not run a native action'); },
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(

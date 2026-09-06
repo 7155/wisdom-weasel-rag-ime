@@ -73,6 +73,7 @@ export class ControlTransportHttpError extends Error {
 
 export class HttpControlTransport implements ControlTransport {
   readonly kind = 'http' as const;
+  readonly connectionIdentity: string;
 
   private readonly baseUrl: URL;
   private readonly fetchImpl: typeof fetch;
@@ -84,6 +85,7 @@ export class HttpControlTransport implements ControlTransport {
 
   constructor(options: HttpControlTransportOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
+    this.connectionIdentity = `http:${this.baseUrl.href}`;
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.validationRuntimeLoader = options.validationRuntimeLoader ?? loadContractValidationRuntime;
     this.reconnectBaseDelayMs = clamp(options.reconnectBaseDelayMs ?? 250, 0, 30_000);

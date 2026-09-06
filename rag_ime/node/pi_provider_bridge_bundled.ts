@@ -209,6 +209,7 @@ async function oauthLogin(request: RequestPayload): Promise<void> {
 	const auth = AuthStorage.create(join(agentDir, "auth.json"));
 	emit({ event: "state", state: "starting", provider });
 	const credential = await openaiCodexOAuth.login({
+		signal: new AbortController().signal,
 		prompt: async (prompt) => {
 			if (prompt.type === "select" && prompt.options.some((option) => option.id === method)) {
 				return method;

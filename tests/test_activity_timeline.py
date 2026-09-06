@@ -68,6 +68,31 @@ class DailyActivityTimelineTests(unittest.TestCase):
         ):
             store.initialize()
 
+    def test_pending_dates_respect_inclusive_selected_range_and_legacy_history(self) -> None:
+        store = DailyActivityTimelineStore(self.db_path, project=self.project, timezone_name="Asia/Shanghai")
+        for value in ("2026-07-31T23:59:00", "2026-08-01T00:00:00", "2026-08-12T23:59:00", "2026-08-13T00:00:00"):
+            timestamp = int(datetime.fromisoformat(value).replace(tzinfo=self.zone).timestamp() * 1_000)
+            self.core.record_event(InputEvent(
+                event_id=None, created_at_ms=timestamp, source="voice_final",
+                committed_text="验证日记范围", privacy_disposition="allowed", project=self.project,
+            ))
+
+        self.assertEqual(
+            store.dates_requiring_model_organization("2026-08-12", start_date="2026-08-01"),
+            ("2026-08-01", "2026-08-12"),
+        )
+        self.assertEqual(
+            store.dates_requiring_model_organization("2026-08-12"),
+            ("2026-07-31", "2026-08-01", "2026-08-12"),
+        )
+
+    def test_pending_dates_reject_reversed_range_before_reading_sources(self) -> None:
+        store = DailyActivityTimelineStore(self.db_path, project=self.project)
+        with patch.object(store, "initialize") as initialize:
+            with self.assertRaisesRegex(ValueError, "start.*through"):
+                store.dates_requiring_model_organization("2026-08-12", start_date="2026-08-13")
+        initialize.assert_not_called()
+
     def test_calendar_reports_current_and_outdated_daily_coverage(self) -> None:
         store = DailyActivityTimelineStore(
             self.db_path,

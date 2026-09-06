@@ -12,6 +12,11 @@ from unittest.mock import patch
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_runtime_driver import AgentRuntimeError
 from rag_ime.agent_sessions import AgentSessionStore
+from rag_ime.memory_model_executor import (
+    MemoryModelTimeout,
+    MemoryModelUnavailable,
+    build_governed_memory_model_executor,
+)
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 from rag_ime.pi_runtime_public import (
     pi_message_completes_public_turn,
@@ -31,6 +36,7 @@ from rag_ime.pi_runtime_v2 import (
 from rag_ime.pi_runtime_values import (
     PiRuntimeCommandAcceptanceUnknown,
     PiRuntimeCommandRejected,
+    PiRuntimeSettlementLookupTimeout,
 )
 
 
@@ -48,6 +54,8 @@ model = {"provider": "gpt", "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna",
          "api": "responses", "reasoning": True,
          "thinkingLevels": ["off", "medium", "xhigh", "max"],
          "input": ["text", "image"], "contextWindow": 1000000, "maxTokens": 128000}
+if os.environ.get("TEST_MEMORY_SETTLEMENT_FIXTURE") == "1":
+    model["provider"] = "openai-codex"
 
 def write(value):
     print(json.dumps(value, ensure_ascii=False, separators=(",", ":")), flush=True)
@@ -77,6 +85,7 @@ for line in sys.stdin:
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
                          "sessionControlState": True,
                          "sessionSkillAllowlist": True,
+                         "sessionPromptSettings": True,
                          "transientContext": True,
                          "statelessCompletion": True,
                          "conversationFork": True,
@@ -114,13 +123,25 @@ for line in sys.stdin:
     elif method == "session.open":
         session = sessions.setdefault(session_id, {
             "sessionId": session_id, "piSessionId": "pi-" + session_id,
-            "sessionFile": str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
+            "sessionFile": params.get("sessionFile") or str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
             "leafId": "", "messages": [], "thinkingLevel": params.get("thinkingLevel", "medium"),
             "model": model,
             "isIdle": True,
             "messageQueue": {"steering": [], "followUp": [], "steeringMode": "one-at-a-time",
                              "followUpMode": "one-at-a-time"},
         })
+        if os.environ.get("TEST_MEMORY_SETTLEMENT_FIXTURE") == "1":
+            transcript = pathlib.Path(session["sessionFile"])
+            entries = [json.loads(line) for line in transcript.read_text().splitlines()] if transcript.exists() else []
+            session["settlements"] = {
+                entry["data"]["turnId"]: entry["data"] for entry in entries
+                if entry.get("customType") == "rag-ime.pi-turn-settlement"
+            }
+            bindings = [entry["data"] for entry in entries if entry.get("customType") == "rag-ime.pi-turn-binding"]
+            if bindings and bindings[-1]["turnId"] not in session["settlements"]:
+                session["activeTurn"] = bindings[-1]
+                session["activeTurnId"] = bindings[-1]["turnId"]
+                session["activeClientMessageId"] = bindings[-1]["clientMessageId"]
         if os.environ.get("TEST_SESSION_OPEN_MESSAGE_COUNT"):
             session["messageCount"] = int(os.environ["TEST_SESSION_OPEN_MESSAGE_COUNT"])
         recovered_turn_id = os.environ.get("TEST_SESSION_OPEN_RECOVERED_TURN", "").strip()
@@ -173,6 +194,25 @@ for line in sys.stdin:
         })
     elif method == "models.list":
         result(request, {"models": [model]})
+    elif method == "session.model.set":
+        result(request, {**model, "provider": params["provider"], "id": params["modelId"],
+                         "maxTokens": params.get("maxTokens", model["maxTokens"])})
+    elif method in {"session.settlement.get", "session.await_settled"}:
+        if session_id not in sessions:
+            write({"protocolVersion": "2", "id": request["id"], "ok": False,
+                   "error": {"code": "SESSION_NOT_FOUND", "message": "Session is not open: " + session_id}})
+            continue
+        settlement = sessions[session_id].get("settlements", {}).get(params["turnId"])
+        if settlement and settlement["clientMessageId"] != params["clientMessageId"]:
+            write({"protocolVersion": "2", "id": request["id"], "ok": False,
+                   "error": {"code": "SETTLED_RECEIPT_MISMATCH", "message": "settlement client identity mismatch"}})
+        elif method == "session.settlement.get":
+            result(request, {"settlement": settlement})
+        elif settlement:
+            result(request, settlement)
+        else:
+            write({"protocolVersion": "2", "id": request["id"], "ok": False,
+                   "error": {"code": "SETTLED_TIMEOUT", "message": "turn settlement timed out"}})
     elif method == "session.thinking.set":
         sessions[session_id]["thinkingLevel"] = params["level"]
         result(request, {"level": params["level"]})
@@ -231,6 +271,26 @@ for line in sys.stdin:
         transcript = pathlib.Path(sessions[session_id]["sessionFile"])
         transcript.parent.mkdir(parents=True, exist_ok=True)
         transcript.write_text(json.dumps({"type": "session", "id": sessions[session_id]["piSessionId"]}) + "\n")
+        if os.environ.get("TEST_MEMORY_SETTLEMENT_FIXTURE") == "1":
+            runtime_id = sessions[session_id]["piSessionId"]
+            binding = {"schemaVersion": "rag-ime.pi-turn-binding.v1", "turnId": turn_id,
+                       "clientMessageId": client_message_id}
+            settlement = {
+                "schemaVersion": "rag-ime.pi-turn-settlement.v1", "sessionId": session_id,
+                "runtimeSessionId": runtime_id, "turnId": turn_id, "clientMessageId": client_message_id,
+                "receipt": {"schemaVersion": "pi.agent-settled.v2", "receiptId": "pi-settled:" + turn_id,
+                            "sessionId": runtime_id, "runId": turn_id, "scopeId": runtime_id + ":" + turn_id,
+                            "generation": 1, "disposition": "completed", "stopReason": "stop",
+                            "settledAtMs": 200, "aborted": False, "pendingOperations": 0,
+                            "operations": {"pending": 0, "pendingByKind": {}, "registeredByKind": {}},
+                            "operationCounts": {}, "finalMessage": {"role": "assistant",
+                            "content": [{"type": "text", "text": '{"decisions":[]}'}]}}}
+            with transcript.open("a") as handle:
+                handle.write(json.dumps({"type": "custom", "customType": "rag-ime.pi-turn-binding", "data": binding}) + "\n")
+                handle.write(json.dumps({"type": "custom", "customType": "rag-ime.pi-turn-settlement", "data": settlement}) + "\n")
+            sessions[session_id]["settlements"] = {turn_id: settlement}
+            result(request, {"accepted": True, "turnId": turn_id})
+            continue
         result(request, {"accepted": True, "turnId": turn_id})
         event(session_id, turn_id, client_message_id, {"type": "agent_start"})
         if params["message"].startswith("approval:"):
@@ -357,7 +417,11 @@ for line in sys.stdin:
     elif method == "session.debug.context":
         if os.environ.get("TEST_DEBUG_CONTEXT_HANG") == "1":
             time.sleep(2)
-        result(request, {})
+        response_bytes = int(os.environ.get("TEST_DEBUG_CONTEXT_RESPONSE_BYTES", "0"))
+        result(request, {
+            "available": True,
+            "context": {"prompt": "x" * response_bytes},
+        } if response_bytes else {})
     elif method == "session.compact":
         result(request, {
             "summary": "用户要求角色每天整理主题书。",
@@ -758,6 +822,32 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
 
+    def test_stateless_response_reconciles_delayed_deltas_without_replaying_them(self) -> None:
+        client = self.runtime._host()
+        for early in ("", "one-shot "):
+            with self.subTest(early=early):
+                deltas = []
+                captured = []
+
+                def response_before_projection(method, params, *, timeout=None, early=early, captured=captured):
+                    self.assertEqual(method, "completion.once")
+                    sink = self.runtime._completion_sinks[params["requestId"]]
+                    captured.append(sink)
+                    if early:
+                        sink(early)
+                    return {"text": "one-shot reply"}
+
+                with patch.object(client, "send", side_effect=response_before_projection):
+                    self.runtime.complete_once(
+                        request_id="delayed-stream", provider="deepseek",
+                        model_id="deepseek-v4-flash", thinking_level="high",
+                        message="reply", on_text_delta=deltas.append,
+                    )
+                self.assertEqual("".join(deltas), "one-shot reply")
+                before = list(deltas)
+                captured[0]("one-shot reply")
+                self.assertEqual(deltas, before)
+
     def test_model_selection_forwards_a_bounded_output_budget(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.ensure(session_id)
@@ -1069,6 +1159,51 @@ class PiRuntimeV2Tests(unittest.TestCase):
             session_opens[-1]["params"]["skillAllowlist"],
             ["systematic-debugging", "trace-agent-diagnostics"],
         )
+
+    def test_prompt_settings_reach_native_open_and_remain_frozen_after_restart(self) -> None:
+        session_id = str(self.first["id"])
+        settings = {"systemInstructions": "保持这份系统补充。", "compactionInstructions": "保留未落盘变化。"}
+        self.runtime._prompt_settings_provider = lambda _session: dict(settings)
+        original = dict(settings)
+        opened = self.runtime.ensure(session_id)
+        self.assertEqual(opened["resourceSnapshot"]["promptSettings"], original)
+        settings.update(systemInstructions="新的系统补充。", compactionInstructions="新的压缩补充。")
+        self.runtime.stop()
+        reopened = self.runtime.ensure(session_id)
+        self.assertEqual(reopened["resourceSnapshot"]["promptSettings"], original)
+        requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        opens = [request["params"] for request in requests if request["method"] == "session.open"]
+        self.assertEqual(len(opens), 2)
+        for params in opens:
+            self.assertIn(original["systemInstructions"], params["systemPrompt"])
+            self.assertNotIn(settings["systemInstructions"], params["systemPrompt"])
+            self.assertEqual(params["compactionInstructions"], original["compactionInstructions"])
+
+    def test_prompt_settings_require_a_capable_host_and_preserve_empty_override(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime._prompt_settings_provider = lambda _session: {"systemInstructions": "", "compactionInstructions": ""}
+        self.runtime._host()
+        self.runtime._host_capabilities.pop("sessionPromptSettings", None)
+        with self.assertRaisesRegex(PiRuntimeError, "does not support prompt settings"):
+            self.runtime.ensure(session_id)
+        self.runtime._host_capabilities["sessionPromptSettings"] = True
+        self.runtime.ensure(session_id)
+        requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        opens = [request["params"] for request in requests if request["method"] == "session.open"]
+        self.assertEqual(len(opens), 1)
+        self.assertIn("compactionInstructions", opens[0])
+        self.assertEqual(opens[0]["compactionInstructions"], "")
+
+    def test_existing_binding_does_not_adopt_new_prompt_defaults(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        self.runtime._prompt_settings_provider = lambda _session: {"systemInstructions": "不要混入旧会话", "compactionInstructions": "新默认"}
+        self.runtime.stop()
+        self.runtime.ensure(session_id)
+        requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        params = [request["params"] for request in requests if request["method"] == "session.open"][-1]
+        self.assertNotIn("不要混入旧会话", params["systemPrompt"])
+        self.assertNotIn("compactionInstructions", params)
 
     def test_session_skill_allowlist_fails_closed_on_an_old_host(self) -> None:
         session_id = str(self.first["id"])
@@ -5032,6 +5167,55 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
         )
 
+    def test_queue_update_cannot_reopen_an_idle_historical_turn(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime._handle_host_event({
+            "protocolVersion": "2", "event": "agent.event",
+            "sessionId": session_id, "turnId": "historical-failed-turn",
+            "clientMessageId": "historical-client",
+            "payload": {"type": "queue_update", "steering": [], "followUp": []},
+        })
+        self.assertEqual(self.runtime.runtime_status()["activeSessionIds"], [])
+        self.assertNotIn(session_id, self.runtime._states)
+        self.assertIsNone(self.runtime._client)
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        queued = self.events.replay(session_id)[0][-1]
+        self.assertEqual(queued.event_type, "message_queue_updated")
+        self.assertEqual(queued.turn_id, "historical-failed-turn")
+        self.assertEqual(queued.payload, {"steering": [], "followUp": []})
+
+    def test_queue_update_preserves_a_newer_live_turn_and_client_identity(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.reserve_prompt_admission(session_id, client_message_id="new-client")
+        state = self.runtime._states[session_id]
+        with self.runtime._lock:
+            state.turn_id = "new-turn"
+            state.client_message_id = "new-client"
+        self.runtime._handle_host_event({
+            "protocolVersion": "2", "event": "agent.event",
+            "sessionId": session_id, "turnId": "old-turn",
+            "clientMessageId": "old-client",
+            "payload": {"type": "queue_update", "steering": ["queued"], "followUp": []},
+        })
+        self.assertEqual(state.turn_id, "new-turn")
+        self.assertEqual(state.client_message_id, "new-client")
+        self.assertTrue(state.prompt_admission_in_flight)
+        self.assertEqual(self.events.replay(session_id)[0][-1].turn_id, "old-turn")
+
+    def test_queue_update_cannot_acknowledge_a_reserved_prompt_admission(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.reserve_prompt_admission(session_id, client_message_id="reserved-client")
+        state = self.runtime._states[session_id]
+        self.runtime._handle_host_event({
+            "protocolVersion": "2", "event": "agent.event",
+            "sessionId": session_id, "turnId": "queue-correlation",
+            "clientMessageId": "reserved-client",
+            "payload": {"type": "queue_update", "steering": [], "followUp": []},
+        })
+        self.assertEqual(state.turn_id, "")
+        self.assertTrue(state.prompt_admission_in_flight)
+        self.assertEqual(state.admission_client_message_id, "reserved-client")
+
     def test_busy_turn_accepts_native_steer_and_follow_up_messages(self) -> None:
         session_id = str(self.first["id"])
         active = self.runtime.prompt(session_id, "hang-without-settled", client_message_id="initial")
@@ -5247,6 +5431,24 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "reason": "runtime_unresponsive",
             },
         )
+
+    def test_large_debug_context_reply_preserves_content_within_existing_deadline(self) -> None:
+        session_id = str(self.first["id"])
+        response_bytes = 12 * 1024 * 1024
+        self.runtime.config = replace(
+            self.runtime.config,
+            provider_environment={"TEST_DEBUG_CONTEXT_RESPONSE_BYTES": str(response_bytes)},
+        )
+        self.runtime.ensure(session_id)
+
+        response = self.runtime.debug_context(session_id)
+
+        self.assertTrue(response.get("available"), response.get("reason"))
+        self.assertEqual(len(response["context"]["prompt"]), response_bytes)
+        control = self.runtime._require_client().send(
+            "session.control_state", {"sessionId": session_id}, timeout=1.0
+        )
+        self.assertTrue(control["isIdle"])
 
     def test_idle_control_probe_closes_tool_loop_when_agent_settled_is_lost(self) -> None:
         session_id = str(self.first["id"])
@@ -5471,6 +5673,171 @@ class PiRuntimeV2Tests(unittest.TestCase):
             1,
         )
 
+    def _restart_accepted_memory_request(self, *, durable_settlement: bool = True):
+        self.runtime.config = replace(
+            self.runtime.config,
+            provider="openai-codex",
+            provider_environment={"TEST_MEMORY_SETTLEMENT_FIXTURE": "1"},
+        )
+        executor = build_governed_memory_model_executor(
+            self.runtime,
+            "openai-codex/gpt-5.6-luna",
+            "max",
+            timeout_seconds=1.0,
+            db_path=self.root / "rag-ime.sqlite",
+        )
+        run = executor.begin_run("memory_durable_cold_recovery")
+        messages = [{"role": "user", "content": '{"fixture":true}'}]
+        # Pi accepts and persists the result, while the first caller loses all
+        # settlement responses (including the bounded late-result lookup).
+        with patch.object(
+            self.runtime, "await_turn_settled", side_effect=TimeoutError("lost result")
+        ):
+            with self.assertRaises(MemoryModelTimeout):
+                executor.complete(messages=messages)
+        request = executor.run_status(run["runId"])["requests"][0]
+        transcript = Path(self.store.get(run["sessionId"])["sessionFile"])
+        entries = [json.loads(line) for line in transcript.read_text().splitlines()]
+        self.assertTrue(any(entry.get("customType") == "rag-ime.pi-turn-settlement" for entry in entries))
+        if not durable_settlement:
+            transcript.write_text("".join(
+                json.dumps(entry) + "\n" for entry in entries
+                if entry.get("customType") != "rag-ime.pi-turn-settlement"
+            ))
+        config = self.runtime.config
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(config=config, sessions=self.store, events=self.events)
+        recovered = build_governed_memory_model_executor(
+            self.runtime,
+            "openai-codex/gpt-5.6-luna",
+            "max",
+            timeout_seconds=1.0,
+            db_path=self.root / "rag-ime.sqlite",
+        )
+        recovered.begin_run(run["runId"])
+        self.assertNotIn(run["sessionId"], self.runtime._open_sessions)
+        return recovered, run, request, messages
+
+    def _host_request_log(self):
+        return [json.loads(line) for line in (
+            self.root / "agent" / "host-requests.jsonl"
+        ).read_text().splitlines()]
+
+    def test_memory_recovers_nonresident_durable_turn_without_reprompting(self) -> None:
+        executor, run, original, messages = self._restart_accepted_memory_request()
+        recovered = executor.complete(messages=messages)
+        self.assertEqual(recovered["turnId"], original["turnId"])
+        self.assertEqual(recovered["receipt"]["sessionId"], run["sessionId"])
+        self.assertTrue(recovered["receipt"]["recoveredSettlement"])
+        self.assertEqual(recovered["choices"][0]["message"]["content"], '{"decisions":[]}')
+        request = executor.run_status(run["runId"])["requests"][0]
+        self.assertEqual(request["state"], "completed")
+        self.assertEqual(request["attemptCount"], 1)
+        self.assertEqual(executor.complete(messages=messages), recovered)
+        requests = self._host_request_log()
+        self.assertEqual(sum(item["method"] == "session.prompt" for item in requests), 1)
+        opens = [item for item in requests if item["method"] == "session.open"]
+        self.assertEqual(len(opens), 2)
+        self.assertEqual(opens[-1]["params"]["sessionId"], run["sessionId"])
+        self.assertEqual(opens[-1]["params"]["sessionFile"], self.store.get(run["sessionId"])["sessionFile"])
+
+    def test_memory_missing_durable_settlement_remains_unresolved_without_retirement(self) -> None:
+        executor, run, original, messages = self._restart_accepted_memory_request(durable_settlement=False)
+        aborts_before = sum(item["method"] == "session.abort" for item in self._host_request_log())
+        with self.assertRaisesRegex(MemoryModelTimeout, "remains unresolved.*not replayed"):
+            executor.complete(messages=messages)
+        request = executor.run_status(run["runId"])["requests"][0]
+        self.assertEqual(request["state"], "resumable")
+        self.assertEqual(request["turnId"], original["turnId"])
+        self.assertEqual(request["attemptCount"], 1)
+        requests = self._host_request_log()
+        self.assertEqual(sum(item["method"] == "session.prompt" for item in requests), 1)
+        self.assertEqual(sum(item["method"] == "session.abort" for item in requests), aborts_before)
+        self.assertIn(run["sessionId"], self.runtime._open_sessions)
+
+    def test_memory_recovery_does_not_require_or_replace_a_live_product_turn(self) -> None:
+        executor, run, original, messages = self._restart_accepted_memory_request()
+        self.runtime.ensure(run["sessionId"])
+        with self.runtime._lock:
+            state = self.runtime._states[run["sessionId"]]
+            self.assertEqual(state.turn_id, "")
+            state.turn_id = "newer-live-turn"
+            state.client_message_id = "newer-live-request"
+        self.store.set_status(run["sessionId"], "busy")
+        recovered = executor.complete(messages=messages)
+        self.assertEqual(recovered["turnId"], original["turnId"])
+        self.assertEqual(self.store.get(run["sessionId"])["status"], "busy")
+        with self.runtime._lock:
+            self.assertEqual(state.turn_id, "newer-live-turn")
+            self.assertEqual(state.client_message_id, "newer-live-request")
+        self.assertEqual(sum(item["method"] == "session.prompt" for item in self._host_request_log()), 1)
+
+    def test_memory_lookup_timeout_preserves_accepted_turn_without_aborting(self) -> None:
+        executor, run, original, messages = self._restart_accepted_memory_request()
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def lookup_timeout(method, params=None, **kwargs):
+            if method == "session.settlement.get":
+                raise PiRuntimeError("Pi Runtime Host command timed out: session.settlement.get")
+            return original_send(method, params, **kwargs)
+
+        aborts_before = sum(item["method"] == "session.abort" for item in self._host_request_log())
+        with patch.object(client, "send", side_effect=lookup_timeout):
+            with self.assertRaisesRegex(MemoryModelUnavailable, "settlement lookup timed out.*not replayed") as caught:
+                executor.complete(messages=messages)
+        self.assertNotIsInstance(caught.exception, MemoryModelTimeout)
+        request = executor.run_status(run["runId"])["requests"][0]
+        self.assertEqual(request["state"], "resumable")
+        self.assertEqual(request["turnId"], original["turnId"])
+        self.assertEqual(sum(item["method"] == "session.abort" for item in self._host_request_log()), aborts_before)
+        self.assertEqual(sum(item["method"] == "session.prompt" for item in self._host_request_log()), 1)
+
+    def test_memory_cold_recovery_rejects_a_different_request_identity(self) -> None:
+        executor, run, original, messages = self._restart_accepted_memory_request()
+        transcript = Path(self.store.get(run["sessionId"])["sessionFile"])
+        entries = [json.loads(line) for line in transcript.read_text().splitlines()]
+        for entry in entries:
+            if entry.get("customType") == "rag-ime.pi-turn-settlement":
+                entry["data"]["clientMessageId"] = "another-memory-request"
+        transcript.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+        with self.assertRaisesRegex(MemoryModelUnavailable, "not replayed.*identity mismatch"):
+            executor.complete(messages=messages)
+        request = executor.run_status(run["runId"])["requests"][0]
+        self.assertEqual(request["state"], "resumable")
+        self.assertEqual(request["turnId"], original["turnId"])
+        self.assertEqual(request["attemptCount"], 1)
+        self.assertEqual(sum(item["method"] == "session.prompt" for item in self._host_request_log()), 1)
+
+    def test_settlement_transport_timeout_is_distinct_from_confirmed_wait_timeout(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+        identity = {"sessionId": session_id, "turnId": "turn-timeout-kind", "clientMessageId": "request-timeout-kind"}
+        for transport_failure in (True, False):
+            with self.subTest(transport_failure=transport_failure):
+                clock = [0.0]
+                calls = []
+
+                def wait_timeout(method, params=None, calls=calls, clock=clock, transport_failure=transport_failure, **kwargs):
+                    calls.append((method, dict(params)))
+                    if method == "session.settlement.get":
+                        return {"settlement": None}
+                    self.assertEqual(method, "session.await_settled")
+                    clock[0] = 2.0
+                    if transport_failure:
+                        raise PiRuntimeError("Pi Runtime Host command timed out: session.await_settled")
+                    raise PiRuntimeCommandRejected("turn timed out", host_error_code="SETTLED_TIMEOUT")
+
+                with patch("rag_ime.pi_runtime_v2.time.monotonic", side_effect=lambda clock=clock: clock[0]):
+                    with patch.object(client, "send", side_effect=wait_timeout):
+                        with self.assertRaises(TimeoutError) as caught:
+                            self.runtime.await_turn_settled(session_id, identity["turnId"], client_message_id=identity["clientMessageId"], timeout_seconds=2.0)
+                self.assertEqual(isinstance(caught.exception, PiRuntimeSettlementLookupTimeout), transport_failure)
+                self.assertEqual(calls[0], ("session.settlement.get", identity))
+                self.assertEqual({key: calls[1][1][key] for key in identity}, identity)
+                self.assertEqual(len(calls), 2)
+
     def test_settlement_lookup_retries_one_timeout_with_the_same_turn_identity(
         self,
     ) -> None:
@@ -5578,7 +5945,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
         with patch.object(client, "send", side_effect=timed_out_lookup):
             with self.assertRaisesRegex(
-                TimeoutError,
+                PiRuntimeSettlementLookupTimeout,
                 "settlement lookup timed out",
             ):
                 self.runtime.await_turn_settled(

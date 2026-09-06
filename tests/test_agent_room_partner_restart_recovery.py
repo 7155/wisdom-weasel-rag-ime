@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
 from rag_ime.agent_command_receipts import AgentCommandReceiptStore
+from rag_ime.agent_event_projection import AgentEventProjectionService
+from rag_ime.agent_protocol import AgentEventEnvelope
 from rag_ime.agent_room_partner_application import RoomPartnerApplicationService
 from rag_ime.agent_room_partner_dispatch_store import (
     AgentRoomPartnerDispatchStore,
 )
 from rag_ime.agent_room_session_dispatch import RoomSessionDispatchService
+from rag_ime.agent_room_turn_registry import RoomTurnRegistry
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_wake_scheduler import AgentWakeScheduleStore
 from rag_ime.contracts.json_schema import validate_contract
@@ -520,6 +524,135 @@ class AgentRoomPartnerRestartRecoveryTest(unittest.TestCase):
         self.assertEqual(payload["activityKind"], "child")
         self.assertEqual(payload["phase"], "completed")
         self.assertEqual(payload["childDispatchId"], child_dispatch_id)
+
+    def test_reconcile_restores_runtime_terminal_after_work_result_already_settled(self) -> None:
+        child_id = "room-child:submitted-before-terminal"
+        self._register_prepared(child_dispatch_id=child_id)
+        self.dispatches.mark_dispatched(child_id, target_session_turn_id="turn:submitted")
+        settled = self.dispatches.settle(
+            child_id, status="review", result="已交付的真实成果",
+            completion_source="room_post", post_id="post:work-result",
+        )
+        # Publishing a WorkResult ends the review lifecycle before Pi ends its
+        # model turn. A restart may lose only the later Room execution receipt.
+        self.application.reconcile()
+        self.assertEqual(self.events.published, [])
+        self.sessions.terminals[(str(self.target["sessionId"]), "turn:submitted")] = {
+            "eventId": "event:submitted-terminal", "turnId": "turn:submitted",
+            "eventType": "turn_completed", "createdAtMs": 200,
+        }
+        self.application.reconcile()
+        self.application.reconcile()
+        recovered = [event for event in self.events.published
+                     if event.get("event_type") == "participant_activity"]
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0]["payload"]["phase"], "completed")
+        self.assertEqual(recovered[0]["payload"]["dispatchId"], child_id)
+        self.assertEqual(recovered[0]["payload"]["sourceRuntimeEventId"], "event:submitted-terminal")
+        record = self.dispatches.get(child_id)
+        self.assertEqual(record["status"], "review")
+        self.assertEqual(record["result"], "已交付的真实成果")
+        self.assertEqual(record["wake"]["generation"], settled["wake"]["generation"])
+
+    def test_live_and_recovered_child_terminal_publish_once_in_either_order(self) -> None:
+        for live_first in (True, False):
+            with self.subTest(live_first=live_first):
+                child_id = f"room-child:live-recovery:{live_first}"
+                turn_id = f"turn:live-recovery:{live_first}"
+                session_id = str(self.target["sessionId"])
+                self._register_prepared(child_dispatch_id=child_id)
+                self.dispatches.mark_dispatched(child_id, target_session_turn_id=turn_id)
+                settled = self.dispatches.settle(
+                    child_id, status="review", result="已交付的真实成果",
+                    completion_source="room_post", post_id=f"post:{child_id}",
+                )
+                registry = RoomTurnRegistry()
+                registry.begin(session_id, "root-a", "topic-a", dispatch_id=child_id, child=True)
+                registry.accept(session_id, turn_id, "root-a")
+                projector = AgentEventProjectionService(
+                    sessions=self.sessions, rooms=self.application.rooms,
+                    agent_blocks=None,
+                    observations=SimpleNamespace(enqueue_agent_event=lambda *_a, **_kw: None),
+                    room_events=self.events, room_turns=registry,
+                    append_recent_message=lambda *_a: None,
+                    record_assistant_evidence=lambda *_a: {},
+                    notify_intercom=lambda: None,
+                )
+                terminal = AgentEventEnvelope(
+                    event_id=f"event:{turn_id}", session_id=session_id, turn_id=turn_id,
+                    sequence=10, created_at_ms=200, event_type="turn_completed",
+                    payload={"status": "completed", "summary": "真实成果"},
+                    resume_token=f"event:{turn_id}",
+                )
+                self.sessions.terminals[(session_id, turn_id)] = {
+                    "eventId": terminal.event_id, "turnId": turn_id,
+                    "eventType": "turn_completed", "createdAtMs": 200,
+                }
+                if live_first:
+                    projector.mirror_to_room(terminal)
+                self.application.reconcile()
+                if not live_first:
+                    projector.mirror_to_room(terminal)
+                self.application.reconcile()
+                events = [
+                    event for event in self.events.published
+                    if event["payload"].get("sourceEventId") == terminal.event_id
+                    or event["payload"].get("sourceRuntimeEventId") == terminal.event_id
+                ]
+                self.assertEqual(len(events), 1)
+                record = self.dispatches.get(child_id)
+                self.assertEqual(record["status"], "review")
+                self.assertEqual(record["result"], "已交付的真实成果")
+                self.assertEqual(record["wake"]["generation"], settled["wake"]["generation"])
+
+    def test_reconcile_pages_past_settled_history_without_starving_inflight(self) -> None:
+        child_id = "room-child:old-inflight"
+        session_id = str(self.target["sessionId"])
+        self._register_prepared(child_dispatch_id=child_id, now_ms=1)
+        self.dispatches.mark_dispatched(child_id, target_session_turn_id="turn:old-inflight")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE agent_room_partner_dispatches SET updated_at_ms = 1 WHERE child_dispatch_id = ?",
+                (child_id,),
+            )
+            # More submitted results than one recovery page. Some sort before
+            # the in-flight dispatch and some after it, all with newer dates.
+            for index in range(501):
+                prefix = "a" if index < 250 else "z"
+                submitted_id = f"room-child:{prefix}:submitted:{index:03d}"
+                turn_id = f"turn:submitted:{index}"
+                conn.execute(
+                    """
+                    INSERT INTO agent_room_partner_dispatches(
+                        child_dispatch_id, room_id, root_id, parent_dispatch_id,
+                        tool_call_id, source_participant_id, source_session_id,
+                        target_participant_id, target_session_id, target_session_turn_id,
+                        work_item_id, status, result_text, completion_source,
+                        created_at_ms, updated_at_ms
+                    )
+                    SELECT ?, room_id, root_id, parent_dispatch_id, ?,
+                           source_participant_id, source_session_id,
+                           target_participant_id, target_session_id, ?, work_item_id,
+                           'review', '已交付的历史成果', 'room_post', ?, ?
+                    FROM agent_room_partner_dispatches WHERE child_dispatch_id = ?
+                    """,
+                    (submitted_id, f"tool:{submitted_id}", turn_id, index + 10, index + 10, child_id),
+                )
+                self.sessions.terminals[(session_id, turn_id)] = {
+                    "eventId": f"event:{turn_id}", "turnId": turn_id,
+                    "eventType": "turn_completed", "createdAtMs": 200,
+                }
+        self.sessions.terminals[(session_id, "turn:old-inflight")] = {
+            "eventId": "event:old-inflight", "turnId": "turn:old-inflight",
+            "eventType": "turn_completed", "createdAtMs": 200,
+        }
+
+        self.application.reconcile()
+        self.assertEqual(self.dispatches.get(child_id)["status"], "review")
+        self.assertEqual(len(self.events.published), 502)
+        self.assertEqual(len(self.sessions.terminal_queries), 502)
+        self.application.reconcile()
+        self.assertEqual(len(self.events.published), 502)
 
     def test_reconcile_uses_targeted_turn_events_when_store_supports_them(
         self,

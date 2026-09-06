@@ -1314,6 +1314,7 @@ class AgentExtensionService:
             "ok": True,
             "draft": {
                 "draftId": str(result.get("draftId") or draft_id),
+                "sourcePath": str(result.get("sourcePath") or ""),
                 "package": {
                     "name": str(package.get("name") or ""),
                     "version": str(package.get("version") or ""),
@@ -1555,14 +1556,29 @@ class AgentExtensionService:
             "summary": self._summary(operation),
         }
 
+    def inspect_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        preview = self._token(str(payload.get("previewToken") or ""), kind="preview", consume=False)
+        if payload.get("payloadSha256") != preview.get("payloadSha256"):
+            raise ValueError("plugin preview payload digest does not match")
+        operation = preview.get("operation")
+        if not isinstance(operation, Mapping):
+            raise AgentRuntimeError("plugin preview is invalid")
+        return self._summary(operation)
+
     def apply(self, payload: Mapping[str, object]) -> dict[str, object]:
         if str(payload.get("confirmText") or "").strip().lower() != "apply":
             raise ValueError("plugin change requires confirmText=apply")
         preview_token = str(payload.get("previewToken") or "").strip()
-        preview = self._token(preview_token, kind="preview", consume=True)
-        expected_hash = str(preview.get("payloadSha256") or "")
-        if str(payload.get("payloadSha256") or "") != expected_hash:
-            raise ValueError("plugin preview payload digest does not match")
+        with self._lock:
+            preview = self._token(preview_token, kind="preview", consume=False)
+            expected_hash = str(preview.get("payloadSha256") or "")
+            if str(payload.get("payloadSha256") or "") != expected_hash:
+                raise ValueError("plugin preview payload digest does not match")
+            if isinstance(preview.get("result"), Mapping):
+                return json.loads(json.dumps(preview["result"]))
+            # Consume before the Host call. An uncertain outcome must never be
+            # replayed; only a known successful receipt may be returned again.
+            self._token(preview_token, kind="preview", consume=True)
         operation = preview.get("operation")
         if not isinstance(operation, Mapping):
             raise AgentRuntimeError("plugin preview is invalid")
@@ -1634,10 +1650,17 @@ class AgentExtensionService:
         )
         if evidence is not None:
             receipt["extensionApp"] = evidence
-        return {
+        result = {
             "ok": True,
             "receipt": receipt,
         }
+        with self._lock:
+            self._tokens[preview_token] = {
+                **preview,
+                "expiresAtMs": _now_ms() + _PREVIEW_TTL_MS,
+                "result": json.loads(json.dumps(result)),
+            }
+        return result
 
     def _call(self, method: str, *args: object, **kwargs: object) -> object:
         runtime = self._runtime_provider()

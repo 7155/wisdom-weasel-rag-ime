@@ -46,6 +46,7 @@ import {
   supportedPiThinkingLevels,
 } from '@/features/agent/model-catalog-options';
 import { ConfigurationFeature } from '@/features/configuration';
+import { PluginScenes } from '@/features/plugins/PluginScenes';
 import { PawOsAppearanceSettings } from '@/features/configuration/PawOsAppearanceSettings';
 import { ContextDebugFeature } from '@/features/context-debug';
 import { DiagnosticsFeature } from '@/features/diagnostics';
@@ -111,11 +112,13 @@ const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
   'app-center': [
     { id: 'installed', label: '已安装', icon: PackageOpen, route: '/plugins', purpose: '已安装 Package 的启用、更新与移除' },
     { id: 'skills', label: 'Skills', icon: BookOpen, route: '/plugins?view=skills', purpose: '查看 Bundled、项目与 Package Skill 的正文和来源' },
+    { id: 'scenes', label: '场景加载', icon: Settings2, route: '/plugins?view=scenes', purpose: '为普通对话、Room、Trace 和 Lab 选择各自加载的能力' },
+    { id: 'studio', label: '制作', icon: Sparkles, route: '/plugins?view=studio', purpose: '自己编写插件，或让 Agent 制作 App 与插件' },
     { id: 'catalog', label: '目录', icon: LibraryBig, route: '/plugins?view=catalog', purpose: '安装之前先看清来源、权限与版本' },
     { id: 'proposals', label: '建议', icon: Sparkles, route: '/plugins?view=proposals', purpose: 'Agent 提出的安装建议，逐项等你确认' },
   ],
   'system-monitor': [
-    { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时', purpose: 'Runtime 正在发生的事件与调用' },
+    { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时', purpose: '持续接收运行事件，回看发生时的状态' },
     { id: 'evolution-report', label: '优化报告', icon: FlaskConical, route: '/evolution-report', group: '实验', purpose: '在独立网页读懂冻结实验、指标与 Keep / Reject 边界', external: true },
     { id: 'context', label: '上下文', icon: Network, route: '/context-debug', group: '排查', purpose: '逐轮查看模型实际收到的上下文' },
     { id: 'trace-agent', label: 'Trace Agent', icon: Search, route: '/trace-agent', group: '排查', purpose: '选择一段对话，让 Agent 解释失败、浪费与改进方向' },
@@ -271,6 +274,7 @@ function PawSystemSurface({ appId, pageId }: { appId: PawSystemAppId; pageId: st
     return <InputMethodFeature />;
   }
   if (appId === 'app-center') {
+    if (pageId === 'scenes') return <PluginScenes />;
     if (pageId === 'catalog') return <PawPackageCatalog />;
     return <PluginsFeature />;
   }
@@ -521,6 +525,7 @@ function PawPackageCatalog() {
   const [enableAfterInstall, setEnableAfterInstall] = useState(true);
   const [pendingChange, setPendingChange] = useState<Record<string, unknown>>({});
   const [validation, setValidation] = useState<Record<string, unknown>>({});
+  const [completedChange, setCompletedChange] = useState<{ summary: string; receiptId: string }>();
   const [error, setError] = useState('');
   const versionItems = arrayRecords(asRecord(versions.data).items);
   const installedEnvelope = asRecord(installed.data);
@@ -545,9 +550,13 @@ function PawPackageCatalog() {
   const pendingSummary = asRecord(pendingChange.summary);
   const busy = validate.isPending || preview.isPending || apply.isPending;
   const queryError = asError(versions.error ?? installed.error);
+  const hasCatalogSnapshot = versions.data !== undefined && installed.data !== undefined;
+  const refreshCatalog = () => Promise.all([versions.refetch(), installed.refetch()]);
 
   async function previewCatalogAction(item: Record<string, unknown>): Promise<void> {
+    if (busy || queryError) return;
     setError('');
+    setCompletedChange(undefined);
     setValidation({});
     setPendingChange({});
     try {
@@ -568,16 +577,22 @@ function PawPackageCatalog() {
   }
 
   async function applyPendingChange(): Promise<void> {
+    if (busy || queryError) return;
     setError('');
+    const summary = `${packageActionLabel(stringValue(pendingSummary.action))}：${stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}`;
     try {
-      await apply.mutateAsync({
+      const response = asRecord(await apply.mutateAsync({
         previewToken: stringValue(pendingChange.previewToken),
         payloadSha256: stringValue(pendingChange.payloadSha256),
         confirmText: 'apply',
+      }));
+      setCompletedChange({
+        summary,
+        receiptId: stringValue(asRecord(response.receipt).receiptId, stringValue(response.receiptId)),
       });
       setPendingChange({});
       setValidation({});
-      await Promise.all([versions.refetch(), installed.refetch()]);
+      await refreshCatalog();
     } catch (catalogError) {
       setError(publicErrorText(catalogError, 'Package 更改没有完成。'));
     }
@@ -585,12 +600,24 @@ function PawPackageCatalog() {
 
   return (
     <ManagementPage
-      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={versions.isFetching || installed.isFetching} onClick={() => void Promise.all([versions.refetch(), installed.refetch()])} size="small">刷新</Button>}
+      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={versions.isFetching || installed.isFetching} onClick={() => void refreshCatalog()} size="small">刷新</Button>}
       description="查看 Runtime 报告的 Package 来源、权限和版本；安装或更新前必须先预览。"
       routeId="plugins-catalog"
       title="Package 目录"
     >
-      <QueryState error={queryError} isPending={versions.isPending || installed.isPending} onRetry={() => void Promise.all([versions.refetch(), installed.refetch()])}>
+      <QueryState error={hasCatalogSnapshot ? null : queryError} isPending={!hasCatalogSnapshot && (versions.isPending || installed.isPending)} onRetry={() => void refreshCatalog()}>
+        {completedChange ? (
+          <InlineNotice title="Package 更改已完成" tone="success">
+            <p>{completedChange.summary}</p>
+            {completedChange.receiptId ? <p>回执 {completedChange.receiptId}</p> : null}
+          </InlineNotice>
+        ) : null}
+        {hasCatalogSnapshot && queryError ? (
+          <InlineNotice title="目录未能刷新，已保留上次结果" tone="warning">
+            <p>重新读取目录后，可以继续检查安装状态与版本。已完成的更改不会重复执行。</p>
+            <Button loading={versions.isFetching || installed.isFetching} onClick={() => void refreshCatalog()} size="small">重试读取目录</Button>
+          </InlineNotice>
+        ) : null}
         <ManagementSection
           description="目录只展示真实注册项；没有可用条目时保持空状态。"
           title="目录"
@@ -622,7 +649,7 @@ function PawPackageCatalog() {
             <InlineNotice title="等待你的确认" tone="warning">
               <div className="paw-system-package-approval">
                 <span><strong>{packageActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}</strong><small>{stringArray(pendingSummary.permissions).length ? `需要的权限：${stringArray(pendingSummary.permissions).join('、')}` : '无额外权限'}</small></span>
-                <div><Button disabled={busy} onClick={() => { setPendingChange({}); setValidation({}); }} size="small" variant="quiet">取消</Button><Button disabled={busy} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button></div>
+                <div><Button disabled={busy} onClick={() => { setPendingChange({}); setValidation({}); }} size="small" variant="quiet">取消</Button><Button disabled={busy || Boolean(queryError)} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">确认更改</Button></div>
               </div>
             </InlineNotice>
           ) : null}
@@ -652,7 +679,7 @@ function PawPackageCatalog() {
                     <footer>
                       <span>{arrayRecords(item.versions).length} 个版本</span>
                       <Button
-                        disabled={!runtimeAvailable || !actionable || upToDate || busy}
+                        disabled={!runtimeAvailable || !actionable || upToDate || busy || Boolean(queryError)}
                         leadingIcon={<PackageCheck size={14} />}
                         loading={(validate.isPending || preview.isPending) && stringValue(validate.variables?.catalogId) === id}
                         onClick={() => void previewCatalogAction(item)}

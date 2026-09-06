@@ -65,7 +65,7 @@ describe('PawWorkbenchMigrated', () => {
 
     const band = screen.getByLabelText('当前最需要处理的工作');
     expect(within(band).getByRole('heading', { level: 2, name: '修复发布门禁' })).toBeInTheDocument();
-    const pulse = within(screen.getByLabelText('未完成工作脉搏'));
+    const pulse = within(screen.getByLabelText('当前计划状态'));
     expect(pulse.getByText('受阻').nextElementSibling).toHaveTextContent('1');
     expect(pulse.getByText('待验收').nextElementSibling).toHaveTextContent('1');
     expect(pulse.getByText('进行中').nextElementSibling).toHaveTextContent('1');
@@ -81,7 +81,7 @@ describe('PawWorkbenchMigrated', () => {
     expect(screen.queryByLabelText('当前最需要处理的工作')).not.toBeInTheDocument();
   });
 
-  it('shows one honest completion ring derived from real tasks and hides it without tasks', () => {
+  it('keeps completion facts readable beside the plan states and omits them without tasks', () => {
     const { rerender } = renderWorkbench({
       pageId: 'overview',
       planning: { tasks: [
@@ -92,14 +92,12 @@ describe('PawWorkbenchMigrated', () => {
       ] },
     });
 
-    const gauge = screen.getByRole('img', { name: '整体完成 50%：2 / 4 项任务已完成' });
-    expect(gauge).toHaveTextContent('50%');
-    expect(gauge).toHaveTextContent('2 / 4 已完成');
-    expect(gauge.style.getPropertyValue('--paw-wb-gauge-angle')).toBe('180deg');
+    const status = screen.getByLabelText('当前计划状态');
+    expect(within(status).getByText('已完成').nextElementSibling).toHaveTextContent('2 / 4 项 · 50%');
 
     rerender(<PawWorkbenchMigrated {...baseProps({ pageId: 'overview', planning: { tasks: [] } })} />);
     expect(screen.getByLabelText('当前最需要处理的工作')).toHaveAttribute('data-state', 'empty');
-    expect(screen.queryByRole('img', { name: /整体完成/ })).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText('当前计划状态')).queryByText('已完成')).not.toBeInTheDocument();
   });
 
   it('keeps repository facts secondary behind an explicit disclosure', () => {
@@ -336,6 +334,24 @@ describe('PawWorkbenchMigrated', () => {
     expect(onCloseDocument).toHaveBeenCalledOnce();
   });
 
+  it('shows the registered current path for archived documents in the list and reader', () => {
+    const document = { ...workDocument(), state: 'archived', path: '/work/paw/docs/archive/paw-os.md' };
+    const { rerender } = renderWorkbench({ pageId: 'documents', documentScope: 'history', documents: [document], selectedDocument: document });
+    const reader = screen.getByRole('region', { name: '工作文档阅读器' });
+
+    expect.soft(screen.getByRole('button', { name: /PAWOS 交互重建/ }))
+      .toHaveAttribute('title', 'PAWOS 交互重建 · /work/paw/docs/archive/paw-os.md');
+    expect.soft(within(reader).getByText('当前路径').nextElementSibling)
+      .toHaveTextContent('/work/paw/docs/archive/paw-os.md');
+
+    const legacy = { ...workDocument(), path: '' };
+    rerender(<PawWorkbenchMigrated {...baseProps({ pageId: 'documents', documents: [legacy], selectedDocument: legacy })} />);
+    expect(screen.getByRole('button', { name: /PAWOS 交互重建/ }))
+      .toHaveAttribute('title', 'PAWOS 交互重建 · /work/paw/docs/active/paw-os.md');
+    expect(within(reader).getByText('当前路径').nextElementSibling)
+      .toHaveTextContent('/work/paw/docs/active/paw-os.md');
+  });
+
   it('filters loaded current documents locally and reports a filter-empty state honestly', async () => {
     const documents = Array.from({ length: 6 }, (_, index) => ({ ...workDocument(), documentId: `doc-${index}`, title: `工作记录 ${index + 1}` }));
     renderWorkbench({ pageId: 'documents', documents });
@@ -349,6 +365,63 @@ describe('PawWorkbenchMigrated', () => {
     await userEvent.type(filter, '不存在的文档');
     expect(screen.getByText('没有匹配的文档')).toBeInTheDocument();
     expect(screen.queryByText('暂无工作文档')).not.toBeInTheDocument();
+  });
+
+  it('keeps a current-document filter reachable after a refresh shrinks the catalog', async () => {
+    const documents = Array.from({ length: 6 }, (_, index) => ({ ...workDocument(), documentId: `doc-${index}`, title: `工作记录 ${index + 1}` }));
+    const { rerender } = renderWorkbench({ pageId: 'documents', documents });
+    await userEvent.type(screen.getByRole('searchbox', { name: '筛选当前文档' }), '工作记录 6');
+    rerender(<PawWorkbenchMigrated {...baseProps({ pageId: 'documents', documents: documents.slice(0, 1) })} />);
+
+    expect(screen.getByRole('searchbox', { name: '筛选当前文档' })).toHaveValue('工作记录 6');
+    await userEvent.click(screen.getByRole('button', { name: '清除文档筛选' }));
+    expect(screen.getByRole('button', { name: /工作记录 1/ })).toBeInTheDocument();
+  });
+
+  it('keeps a task filter reachable after a new plan contains fewer tasks', async () => {
+    const tasks = Array.from({ length: 6 }, (_, index) => ({ id: `task-${index}`, title: `当天任务 ${index + 1}` }));
+    const { rerender } = renderWorkbench({ pageId: 'planning', planning: { tasks } });
+    await userEvent.type(screen.getByRole('searchbox', { name: '筛选任务' }), '当天任务 6');
+    rerender(<PawWorkbenchMigrated {...baseProps({ pageId: 'planning', planning: { tasks: tasks.slice(0, 1) } })} />);
+
+    expect(screen.getByRole('searchbox', { name: '筛选任务' })).toHaveValue('当天任务 6');
+    await userEvent.click(screen.getByRole('button', { name: '清除任务筛选' }));
+    expect(screen.getByRole('button', { name: '在任务列表中选择：当天任务 1' })).toBeInTheDocument();
+  });
+
+  it('binds the planning tools to the actual selected task', async () => {
+    const tasks = [{ id: 'first', title: '首项任务' }, { id: 'selected', title: '被选择的任务' }];
+    const onBreakdown = vi.fn();
+    renderWorkbench({
+      pageId: 'planning', planning: { tasks },
+      planningTools: (task) => <button onClick={() => onBreakdown(task)} type="button">拆解选择</button>,
+    });
+    await userEvent.click(screen.getByRole('button', { name: '在任务列表中选择：被选择的任务' }));
+    await userEvent.click(screen.getByRole('button', { name: '拆解选择' }));
+    expect(onBreakdown).toHaveBeenCalledWith(tasks[1]);
+  });
+
+  it('withholds all pane counts until their matching resource is available', () => {
+    const { container, rerender } = renderWorkbench({ resourceStates: { planning: { loading: true }, documents: { error: '未能读取。' } } });
+    expect(container.querySelector('[data-pane="tasks"] .paw-wb-pane__scope')).toHaveTextContent('数量待读取');
+    expect(container.querySelector('[data-pane="documents"] .paw-wb-pane__scope')).toHaveTextContent('数量暂不可用');
+    rerender(<PawWorkbenchMigrated {...baseProps({ pageId: 'planning', resourceStates: { planning: { loading: true } } })} />);
+    expect(screen.queryByText('0 节点 · 0 条真实依赖')).not.toBeInTheDocument();
+    expect(container.querySelector('.paw-wb-outline__project')).toHaveTextContent('数量待读取');
+  });
+
+  it('shows recoverable detail loading and errors without asking to choose the same document again', async () => {
+    const onCloseDocument = vi.fn();
+    const onRefresh = vi.fn();
+    const { rerender } = renderWorkbench({ pageId: 'documents', onCloseDocument, onRefresh, resourceStates: { documentDetail: { loading: true } } });
+    const reader = screen.getByRole('region', { name: '工作文档阅读器' });
+    expect(within(reader).getByRole('status')).toHaveTextContent('正在读取文档详情');
+    expect(within(reader).queryByText('选择一份工作文档')).not.toBeInTheDocument();
+    rerender(<PawWorkbenchMigrated {...baseProps({ pageId: 'documents', onCloseDocument, onRefresh, resourceStates: { documentDetail: { error: '文档读取失败。' } } })} />);
+    await userEvent.click(within(reader).getByRole('button', { name: '重试' }));
+    expect(onRefresh).toHaveBeenCalledWith('documentDetail');
+    await userEvent.click(within(reader).getByRole('button', { name: '返回文档列表' }));
+    expect(onCloseDocument).toHaveBeenCalledOnce();
   });
 
   it('moves identity facts into the reader and retires the static truth rail', () => {

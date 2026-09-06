@@ -18,7 +18,10 @@ from rag_ime.memory_model_executor import (
     memory_curation_model_status,
     reconcile_stale_memory_runtime_sessions,
 )
-from rag_ime.pi_runtime_values import PiRuntimeTurnConflict
+from rag_ime.pi_runtime_values import (
+    PiRuntimeSettlementLookupTimeout,
+    PiRuntimeTurnConflict,
+)
 
 
 class FakeMemoryRuntime:
@@ -944,6 +947,34 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         self.assertEqual(status["requests"][0]["state"], "resumable")
         self.assertEqual(self.sessions.get(str(run["sessionId"]))["status"], "idle")
         self.assertEqual(runtime.closed, [])
+
+    def test_settlement_read_timeout_keeps_the_accepted_turn_live_and_resumable(self) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        run = executor.begin_run("memory_settlement_read_timeout")
+        messages = [{"role": "user", "content": '{"fixture":true}'}]
+        original_await = runtime.await_turn_settled
+
+        def unavailable_settlement(*args, **kwargs):
+            raise PiRuntimeSettlementLookupTimeout("Pi Session settlement lookup timed out")
+
+        runtime.await_turn_settled = unavailable_settlement
+        with self.assertRaisesRegex(MemoryModelUnavailable, "settlement lookup timed out.*not replayed") as caught:
+            executor.complete(messages=messages)
+        self.assertNotIsInstance(caught.exception, MemoryModelTimeout)
+        self.assertEqual(executor.fail_run(caught.exception)["state"], "resumable")
+        self.assertEqual(runtime.aborted, [])
+        self.assertEqual(runtime.closed, [])
+        request = executor.run_status(run["runId"])["requests"][0]
+        self.assertEqual(request["state"], "resumable")
+        self.assertEqual(request["lastError"], "memory_settlement_lookup_timeout")
+        self.assertEqual(request["turnId"], "turn-1")
+        self.assertEqual(request["attemptCount"], 1)
+
+        runtime.await_turn_settled = original_await
+        recovered = executor.complete(messages=messages)
+        self.assertEqual(recovered["turnId"], "turn-1")
+        self.assertEqual(len(runtime.prompts), 1)
 
     def test_timeout_cancels_only_the_memory_session(self) -> None:
         ordinary = self.sessions.create(

@@ -1452,7 +1452,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 @container paw-window (max-width: 375px) {
   .paw-window-titlebar { padding-inline: 8px; column-gap: 6px; }
-  .paw-traffic-lights { gap: 5px; }
+  .paw-traffic-lights { gap: 0; }
   /* Labels hide before icons: the caption text goes, the identity mark and
      every window verb stay at full size. */
   .paw-window-title > strong { display: none; }
@@ -2119,6 +2119,8 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   flex: none;
 }
 .paw-wayfinder-work__project-content-actions > button {
+  flex-shrink: 0;
+  white-space: nowrap;
   width: 28px;
   height: 28px;
   display: grid;
@@ -2126,6 +2128,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   border-radius: 8px;
   color: var(--paw-muted);
   cursor: pointer;
+}
+.paw-wayfinder-work__project-content-actions > .paw-wayfinder-work__project-content-galaxy {
+  display: inline-flex;
+  width: auto;
+  gap: 6px;
+  padding: 0 8px;
 }
 .paw-wayfinder-work__project-content-actions > button:hover,
 .paw-wayfinder-work__project-content-actions > button:focus-visible {

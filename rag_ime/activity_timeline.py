@@ -322,10 +322,12 @@ class DailyActivityTimelineStore:
     def dates_requiring_model_organization(
         self,
         through_date: str,
+        *,
+        start_date: str = "",
     ) -> tuple[str, ...]:
         """List source days whose current projection lacks verified semantics."""
 
-        through = _validated_date(through_date)
+        start, through = activity_timeline_date_range(through_date, start_date=start_date)
         self.initialize()
         with self._connect() as conn:
             rows = conn.execute(
@@ -363,6 +365,8 @@ class DailyActivityTimelineStore:
         )
         pending: list[str] = []
         for day in source_dates:
+            if start is not None and day < start:
+                continue
             if day > through:
                 break
             latest = self.latest(day.isoformat())
@@ -2136,6 +2140,20 @@ def _day_bounds_ms(day: date, timezone: tzinfo) -> tuple[int, int]:
     start = datetime.combine(day, time.min, tzinfo=timezone)
     next_day = datetime.combine(day + timedelta(days=1), time.min, tzinfo=timezone)
     return int(start.timestamp() * 1_000), int(next_day.timestamp() * 1_000)
+
+
+def activity_timeline_date_range(
+    through_date: str,
+    *,
+    start_date: str = "",
+) -> tuple[date | None, date]:
+    """Validate inclusive source-day bounds without reading or changing state."""
+
+    through = _validated_date(through_date)
+    start = _validated_date(start_date) if start_date else None
+    if start is not None and start > through:
+        raise ValueError("timeline start date must not exceed through date")
+    return start, through
 
 
 def _validated_date(value: str) -> date:

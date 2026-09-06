@@ -13,7 +13,7 @@ import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -381,33 +381,10 @@ def _isolated_runtime_config(
             expected_pi_version=expected_pi_version,
         )
     )
-    overrides = {
-        "RAG_IME_APP_SUPPORT_DIR": str(run_root / "runtime-support"),
-        "RAG_IME_PI_EXECUTABLE": str(installation.executable),
-        "RAG_IME_PI_EXTENSION": str(installation.extension_path),
-        "RAG_IME_PI_NODE": installation.node_executable,
-        "RAG_IME_PI_VERSION": installation.pi_version,
-        "RAG_IME_PI_PROTOCOL_VERSION": installation.protocol_version,
-        "RAG_IME_PI_TOOLS": ",".join(installation.tools),
-    }
-    missing = object()
-    previous: dict[str, str | object] = {
-        name: os.environ.get(name, missing) for name in overrides
-    }
-    try:
-        os.environ.update(overrides)
-        discovered = PiRuntimeConfig.from_environment(enabled_default=True)
-    finally:
-        for name, value in previous.items():
-            if value is missing:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = str(value)
-    if discovered.executable is None or discovered.extension_path is None:
-        raise RuntimeError(
-            "managed Pi v2 runtime is unavailable: "
-            + str(discovered.installation_error or "missing executable/extension")
-        )
+    # Read user connection defaults without temporarily publishing one trial's
+    # Runtime paths to every other Session in the host process. The verified
+    # explicit installation below owns all Runtime identity fields.
+    discovered = PiRuntimeConfig.from_environment(enabled_default=True)
     provider_environment = dict(discovered.provider_environment)
     spool_dir = run_root / "agent" / "tool-spool"
     spool_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -427,6 +404,11 @@ def _isolated_runtime_config(
         discovered,
         enabled=True,
         executable=ROOT / "scripts" / "rag_agent_spool_runtime_wrapper.mjs",
+        extension_path=installation.extension_path,
+        node_executable=installation.node_executable,
+        tools=installation.tools,
+        pi_version=installation.pi_version,
+        installation_error="",
         agent_dir=agent_config,
         session_dir=run_root / "agent" / "sessions",
         logs_dir=run_root / "agent" / "logs",
@@ -526,15 +508,30 @@ def _validation_has_retrieval_signal(value: object) -> bool:
     )
 
 
+class RagEvaluationCancelled(BaseException):
+    """Cooperative stop, intentionally outside infrastructure/format retries."""
+
+    def __init__(self, message: str, *, interrupted: bool = False):
+        super().__init__(message)
+        self.interrupted = interrupted
+
+
 def _wait_for_terminal(
     service: AgentService,
     *,
     session_id: str,
     turn_id: str,
     timeout_seconds: float,
+    cancelled: Callable[[], bool] | None = None,
 ) -> tuple[list[dict[str, object]], str]:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
+        if cancelled is not None and cancelled():
+            try:
+                service.abort(session_id)
+            except Exception as exc:
+                raise RagEvaluationCancelled("RAG evaluation cancelled; Pi abort failed", interrupted=True) from exc
+            raise RagEvaluationCancelled("RAG evaluation cancelled")
         events, gap = service.events.replay(session_id)
         if gap:
             raise RuntimeError("Agent event replay developed a gap")

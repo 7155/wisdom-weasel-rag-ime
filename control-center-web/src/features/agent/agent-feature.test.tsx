@@ -4312,7 +4312,8 @@ describe('Agent experience', () => {
     const modelPicker = await screen.findByRole('button', {
       name: '模型与推理：DeepSeek V4 · DeepSeek · 不启用推理',
     });
-    expect(modelPicker).toHaveTextContent('DeepSeek V4 · DeepSeek');
+    expect(modelPicker).toHaveTextContent('DeepSeek V4');
+    expect(modelPicker).toHaveAccessibleName('模型与推理：DeepSeek V4 · DeepSeek · 不启用推理');
     // Documents still attach on a text-only model; only images are the problem.
     expect(screen.getByRole('button', { name: '添加附件（当前模型不识别图片）' })).toBeEnabled();
 
@@ -4738,10 +4739,10 @@ describe('Agent experience', () => {
     await screen.findByRole('button', { name: /模型与推理：GPT-5.6 Luna/ }, { timeout: 15_000 });
     await user.click(screen.getByRole('button', { name: /模型与推理：GPT-5.6 Luna/ }));
     const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
-    for (const level of ['不启用推理', '最小', '低', '中', '高', '极高', 'Max']) {
+    for (const level of ['不启用推理', '轻量', '低', '中', '高', '极高', '最高']) {
       expect(within(picker).getByRole('radio', { name: level })).toBeInTheDocument();
     }
-    const max = within(picker).getByRole('radio', { name: 'Max' });
+    const max = within(picker).getByRole('radio', { name: '最高' });
     await user.click(max);
 
     await waitFor(() => expect(transport.requests.some((call) => (
@@ -4765,6 +4766,8 @@ describe('Agent experience', () => {
     ));
     const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
 
+    expect(within(picker).queryByRole('listbox')).not.toBeInTheDocument();
+    await user.click(within(picker).getByRole('button', { name: /更换模型/ }));
     expect(within(picker).getByRole('searchbox', { name: '搜索模型' })).toBeInTheDocument();
     expect(within(picker).getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
     expect(within(picker).getByRole('group', { name: 'DeepSeek' })).toBeInTheDocument();
@@ -4796,8 +4799,14 @@ describe('Agent experience', () => {
     );
     await user.click(trigger);
     let picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
-    await waitFor(() => expect(within(picker).getByRole('searchbox', { name: '搜索模型' }))
-      .toHaveFocus());
+    await waitFor(() => expect(within(picker).getByRole('radio', { name: '中' })).toHaveFocus());
+    expect(within(picker).queryByRole('searchbox', { name: '搜索模型' })).not.toBeInTheDocument();
+    await user.click(within(picker).getByRole('button', { name: /更换模型/ }));
+    const search = within(picker).getByRole('searchbox', { name: '搜索模型' });
+    await waitFor(() => expect(search).toHaveFocus());
+    await user.type(search, 'codex');
+    expect(within(picker).getByRole('option', { name: '选择模型 Codex Mini' })).toBeInTheDocument();
+    expect(within(picker).queryByRole('option', { name: '选择模型 GPT-5.6 Luna' })).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(picker).not.toBeInTheDocument());
     expect(trigger).toHaveFocus();
@@ -4852,6 +4861,8 @@ describe('Agent experience', () => {
       { name: /模型与推理：GPT-5.6 Luna/ },
       { timeout: 15_000 },
     ));
+    await user.click(within(screen.getByRole('dialog', { name: '选择模型与推理强度' }))
+      .getByRole('button', { name: /更换模型/ }));
     await user.click(screen.getByLabelText('选择模型 Codex Mini'));
 
     expect(transport.requests.map((call) => call.request.pathId)).toContain(
@@ -4901,7 +4912,8 @@ describe('Agent experience', () => {
     await screen.findByRole('button', { name: /模型与推理：GPT-5.6 Luna/ }, { timeout: 15_000 });
     await user.click(screen.getByRole('button', { name: /模型与推理：GPT-5.6 Luna/ }));
     const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
-    expect(within(picker).queryByRole('radio', { name: 'Max' })).not.toBeInTheDocument();
+    expect(within(picker).getAllByRole('radio')).toHaveLength(5);
+    expect(within(picker).queryByRole('radio', { name: '最高' })).not.toBeInTheDocument();
   });
 
   it('uses the real model and thinking selection routes then reloads Pi state', async () => {
@@ -4914,6 +4926,8 @@ describe('Agent experience', () => {
       { name: /模型与推理：GPT-5.6 Luna/ },
       { timeout: 15_000 },
     ));
+    await user.click(within(screen.getByRole('dialog', { name: '选择模型与推理强度' }))
+      .getByRole('button', { name: /更换模型/ }));
     await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
     await waitFor(() => expect(transport.requests).toEqual(expect.arrayContaining([
@@ -4967,6 +4981,8 @@ describe('Agent experience', () => {
       { name: /模型与推理：GPT-5.6 Luna/ },
       { timeout: 15_000 },
     ));
+    await user.click(within(screen.getByRole('dialog', { name: '选择模型与推理强度' }))
+      .getByRole('button', { name: /更换模型/ }));
     await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
     expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' })).not.toBeInTheDocument();
@@ -5028,9 +5044,13 @@ describe('Agent experience', () => {
       { name: /模型与推理：GPT-5.6 Luna/ },
       { timeout: 15_000 },
     ));
+    await user.click(within(screen.getByRole('dialog', { name: '选择模型与推理强度' }))
+      .getByRole('button', { name: /更换模型/ }));
     await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
     await user.click(screen.getByRole('button', { name: '模型与推理：Codex Mini · GPT · 中' }));
+    await user.click(within(screen.getByRole('dialog', { name: '选择模型与推理强度' }))
+      .getByRole('button', { name: /更换模型/ }));
     await user.click(screen.getByRole('option', { name: '选择模型 GPT-5.6 Luna' }));
     await user.click(screen.getByRole('button', { name: '模型与推理：GPT-5.6 Luna · GPT · 中' }));
     const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });

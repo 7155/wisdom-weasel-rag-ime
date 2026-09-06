@@ -1386,7 +1386,7 @@ function traceUnavailableState(reason: string): TraceUnavailable {
   }
   if (reason === 'runtime_unresponsive') {
     return {
-      message: 'Runtime 未及时返回轨迹快照；对话不受影响。请稍后重新读取。',
+      message: '轨迹快照读取超时，请重新读取。',
       retryable: true,
     };
   }

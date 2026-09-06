@@ -10992,6 +10992,390 @@
         "latency is diagnostic only and was not remeasured by offline r6 rescoring",
         "r6 Standard correction must not be attributed to model capability"
       ]
+    },
+    {
+      "id": "memory.maintenance-pi-model-only-20260905-r3.v1",
+      "title": "Memory Maintenance · Pi current-runtime synthetic validation · Sol → Luna",
+      "vertical": "memory-maintenance",
+      "evaluationKind": "model_cost",
+      "status": "kept",
+      "claimStatus": "supporting",
+      "projectionState": "current",
+      "effectStatus": "improved",
+      "candidateType": "single_factor",
+      "businessProblem": "Verify that the current Pi Memory Trial path completes the same synthetic lifecycle with a lower-cost model under frozen controls.",
+      "whyAgent": "Two real Pi model requests perform Memory curation; deterministic retrieval and recovery checks establish the lifecycle gates before comparing cost.",
+      "factors": [
+        {
+          "name": "model",
+          "before": "openai-codex / gpt-5.6-sol / max",
+          "after": "openai-codex / gpt-5.6-luna / max",
+          "reason": "The business fixture, full-json-v1 context, standard-v1 Prompt, Pi transport, embedding and lifecycle implementation stay fixed."
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "business_fixture",
+          "value": "5 public synthetic cases (4 durable + 1 non-memory); Trial canonical SHA-256 c0cfdaf2429d6e1ac82847ed9efc8dc04fc33611082e8d03e4de7fbb77282fff",
+          "reason": "Both runs use the same business fixture; this is not personal production memory or Held-out."
+        },
+        {
+          "name": "context_and_prompt",
+          "value": "full-json-v1 context; standard-v1 Prompt",
+          "reason": "Frozen within this Pi pair. The old CLI pair used concise-json-v1 and is a separate experiment."
+        },
+        {
+          "name": "runtime_and_workflow",
+          "value": "openai-codex; Pi Session transport; max; local-hashing embeddings; identical five source code hashes in retained receipt",
+          "reason": "Only the model changes; curation, retrieval, rollback and replay use the same source-controlled pipeline."
+        },
+        {
+          "name": "cost_authority",
+          "value": "runtime_cost_reconciled_estimate; 4 requests (2 per model), 0 failures; per-request transcript costs and Runtime DB usage matched",
+          "reason": "Exact retained usage and frozen catalog rates are reconciled; no Provider bill was supplied."
+        }
+      ],
+      "star": {
+        "situation": "Current Memory Trial uses Pi Session execution; prior CLI evidence cannot establish this runtime path.",
+        "task": "Run a new controlled five-fixture Sol/Luna pair and retain quality, recovery, usage and per-request cost evidence.",
+        "action": "Execute each model once with full-json-v1, standard-v1 and max; reconcile four requests against Runtime DB and retained transcript usage, then export aggregate evidence.",
+        "result": "New Pi synthetic validation: both models pass curation, retrieval, rollback and replay; 2 requests each, 0 failures. Runtime-reconciled cost estimate $0.163425 → $0.0071846 (95.60373260% lower); total tokens 14450 → 15078."
+      },
+      "dataset": {
+        "id": "memory-pi-synthetic-fixture-20260905-r3",
+        "split": "synthetic_validation",
+        "caseCount": 5,
+        "unit": "4 durable synthetic cases + 1 non-memory control",
+        "manifestSha256": "c0cfdaf2429d6e1ac82847ed9efc8dc04fc33611082e8d03e4de7fbb77282fff",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "Synthetic Memory lifecycle gates before Runtime-reconciled model cost",
+        "hardGates": [
+          "Curation returns five model decisions and a passing aggregate result",
+          "Retrieval passes over five fixture cases, including four durable cases",
+          "Six current atoms have governance and legal lineage; retrieval projection is fresh",
+          "Rollback restores the baseline; replay passes and reuses model requests",
+          "Both Pi Trials complete; four actual requests, zero failures",
+          "Synthetic fixture only; production mutation and Held-out are not evaluated"
+        ],
+        "evaluatorAuthority": "Memory deterministic lifecycle verifier plus retained Pi Trial results and Runtime/transcript cost reconciliation",
+        "goldHiddenFromAgent": false
+      },
+      "optimizationContract": {
+        "objective": "Validate the lower-cost model in the current Pi synthetic Memory pipeline while preserving all measured lifecycle gates.",
+        "candidateSearchSpace": [
+          {
+            "axis": "model",
+            "candidatesEvaluated": 1,
+            "values": [
+              "gpt-5.6-luna / max"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "five synthetic fixtures",
+          "full-json-v1 context",
+          "standard-v1 Prompt",
+          "max thinking",
+          "Pi Session transport",
+          "local-hashing embeddings",
+          "curation/retrieval/recovery implementation"
+        ],
+        "selectionRule": "Keep for this synthetic validation only when both sides pass every measured lifecycle gate and reconciled estimated cost decreases.",
+        "stopRule": "Stop after the paired validation; do not tune Prompt against these observed fixture results.",
+        "heldOutRule": "No Held-out was consumed; no generalization or production quality claim is allowed."
+      },
+      "bestKnown": {
+        "configId": "memory-pi-current-pair-20260905-r3-candidate",
+        "configSha256": "c6b682763a9470f0059a5838b51fb89563e0a5c2329bddc901f8fd537a649636",
+        "decision": "keep"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "5 curation decisions per model",
+            "retrieval aggregate gate passed over 5 cases (4 durable)"
+          ],
+          "reason": "Both retained public Trial results report pass; per-case answer bodies are not exported."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": [
+            "6 current atoms",
+            "6 governed atoms",
+            "6 atoms with legal lineage"
+          ],
+          "reason": "Both runs report the same governed and lineage counts with a fresh retrieval projection."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "2 actual requests per model",
+            "4 completed requests total",
+            "0 failed requests"
+          ],
+          "reason": "Trial completion and Runtime/transcript usage reconciliation agree."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "Runtime-reconciled estimate $0.163425 → $0.0071846",
+            "total tokens 14450 → 15078"
+          ],
+          "reason": "Cost decreases under frozen catalog rates; token count increases and elapsed time is only diagnostic."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "rollback passed and restored baseline",
+            "replay passed and reused model requests"
+          ],
+          "reason": "Both models pass recovery; no production database mutation was performed."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json",
+          "change": "Append a new public aggregate receipt for the Pi synthetic pair, retaining six source-file hashes, code hashes, counts and Runtime cost receipts."
+        },
+        {
+          "kind": "workflow",
+          "ref": "scripts/export_memory_pi_trial_pair.py",
+          "change": "Verify and project the retained pair without reading databases/transcripts or calling a Provider."
+        }
+      ],
+      "baseline": {
+        "runId": "memory-pi-current-pair-20260905-r3-baseline",
+        "metrics": {
+          "curationCases": 5,
+          "modelDecisionCount": 5,
+          "curationOk": 1,
+          "currentAtomCount": 6,
+          "governedCurrentAtomCount": 6,
+          "legalLineageCurrentAtomCount": 6,
+          "retrievalCases": 5,
+          "durableCaseCount": 4,
+          "retrievalPassed": 1,
+          "projectionFresh": 1,
+          "rollbackPassed": 1,
+          "rollbackRestoredBaseline": 1,
+          "replayAttempted": 1,
+          "replayPassed": 1,
+          "replayReusedModelRequests": 1,
+          "requestCount": 2,
+          "failedRequestCount": 0,
+          "uncachedInputTokens": 10803,
+          "cachedInputTokens": 0,
+          "outputTokens": 3647,
+          "totalTokens": 14450,
+          "apiCostUsd": 0.163425,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "trialElapsedMs": 165559
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "5 public synthetic fixtures; full-json-v1 context; standard-v1 Prompt; Pi Session; max thinking",
+            "output": "gpt-5.6-sol: 5 curation decisions, 6 governed atoms, retrieval gate passed over 5 cases (4 durable); rollback and replay passed; 2 requests, 0 failures."
+          }
+        ]
+      },
+      "candidate": {
+        "runId": "memory-pi-current-pair-20260905-r3-candidate",
+        "metrics": {
+          "curationCases": 5,
+          "modelDecisionCount": 5,
+          "curationOk": 1,
+          "currentAtomCount": 6,
+          "governedCurrentAtomCount": 6,
+          "legalLineageCurrentAtomCount": 6,
+          "retrievalCases": 5,
+          "durableCaseCount": 4,
+          "retrievalPassed": 1,
+          "projectionFresh": 1,
+          "rollbackPassed": 1,
+          "rollbackRestoredBaseline": 1,
+          "replayAttempted": 1,
+          "replayPassed": 1,
+          "replayReusedModelRequests": 1,
+          "requestCount": 2,
+          "failedRequestCount": 0,
+          "uncachedInputTokens": 10909,
+          "cachedInputTokens": 0,
+          "outputTokens": 4169,
+          "totalTokens": 15078,
+          "apiCostUsd": 0.0071846,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "trialElapsedMs": 82277
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "5 public synthetic fixtures; full-json-v1 context; standard-v1 Prompt; Pi Session; max thinking",
+            "output": "gpt-5.6-luna: 5 curation decisions, 6 governed atoms, retrieval gate passed over 5 cases (4 durable); rollback and replay passed; 2 requests, 0 failures."
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "retain-pi-memory-model-only-validation",
+          "targetLayer": "workflow",
+          "observation": "Both current Pi Memory Trials pass the same aggregate lifecycle gates; Luna has a lower reconciled estimate.",
+          "hypothesis": "The lower-cost model can remain a candidate for this synthetic Memory workflow with unchanged Prompt.",
+          "proposedChange": "Retain this pair as current-runtime synthetic validation; preserve the separate old CLI experiment and require new evidence for production or held-out claims.",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json"
+          ],
+          "attribution": {
+            "detectedBy": "Memory lifecycle verifier and Runtime cost reconciler",
+            "proposedBy": "PAW integration Agent",
+            "authorizedBy": "Current user-authorized Memory paired validation",
+            "implementedBy": "PAW integration Agent using Pi Session Trial adapters",
+            "verifiedBy": "Retained Trial reports and Runtime DB/transcript cost reconciliation"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "considered_no_change",
+          "reason": "standard-v1 remains fixed within this new pair."
+        },
+        {
+          "layer": "tool",
+          "status": "considered_no_change",
+          "reason": "No Tool contract changes between the models."
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "The same Pi curation/retrieval/recovery implementation is frozen for both runs."
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "No Skill content changes between the models."
+        }
+      ],
+      "comparison": {
+        "decision": "keep",
+        "decisionReason": "New Pi synthetic validation: both models pass curation, retrieval, rollback and replay; 2 requests each, 0 failures. Runtime-reconciled cost estimate $0.163425 → $0.0071846 (95.60373260% lower); total tokens 14450 → 15078. Keep applies only to this synthetic validation.",
+        "promptAdaptationNeeded": false,
+        "costAuthority": "runtime_cost_reconciled_estimate",
+        "costDecreasePercent": 95.60373259905155,
+        "latencyIsKeepGate": false,
+        "validationBoundary": {
+          "syntheticFixture": true,
+          "currentRuntimeValidation": true,
+          "heldOutOpened": false,
+          "personalMemoryQualityMeasured": false,
+          "installedAcceptanceEvaluated": false,
+          "productionMutationPerformed": false,
+          "oldCliPairReproduced": false,
+          "latencyIsKeepGate": false
+        },
+        "metricDeltas": [
+          {
+            "metric": "apiCostUsd",
+            "before": 0.163425,
+            "after": 0.0071846,
+            "delta": -0.1562404
+          },
+          {
+            "metric": "totalTokens",
+            "before": 14450,
+            "after": 15078,
+            "delta": 628.0
+          },
+          {
+            "metric": "requestCount",
+            "before": 2,
+            "after": 2,
+            "delta": 0.0
+          },
+          {
+            "metric": "failedRequestCount",
+            "before": 0,
+            "after": 0,
+            "delta": 0.0
+          },
+          {
+            "metric": "currentAtomCount",
+            "before": 6,
+            "after": 6,
+            "delta": 0.0
+          },
+          {
+            "metric": "governedCurrentAtomCount",
+            "before": 6,
+            "after": 6,
+            "delta": 0.0
+          },
+          {
+            "metric": "legalLineageCurrentAtomCount",
+            "before": 6,
+            "after": 6,
+            "delta": 0.0
+          },
+          {
+            "metric": "retrievalPassed",
+            "before": 1,
+            "after": 1,
+            "delta": 0.0
+          },
+          {
+            "metric": "rollbackPassed",
+            "before": 1,
+            "after": 1,
+            "delta": 0.0
+          },
+          {
+            "metric": "replayPassed",
+            "before": 1,
+            "after": 1,
+            "delta": 0.0
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "gpt-5.6-sol: 5 curation decisions, 6 governed atoms, retrieval gate passed over 5 cases (4 durable); rollback and replay passed; 2 requests, 0 failures.",
+            "after": "gpt-5.6-luna: 5 curation decisions, 6 governed atoms, retrieval gate passed over 5 cases (4 durable); rollback and replay passed; 2 requests, 0 failures."
+          }
+        ],
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json"
+        ]
+      },
+      "claim": {
+        "resumeBullet": "New Pi synthetic validation: both models pass curation, retrieval, rollback and replay; 2 requests each, 0 failures. Runtime-reconciled cost estimate $0.163425 → $0.0071846 (95.60373260% lower); total tokens 14450 → 15078. This is one current-runtime Pi synthetic pair, not production personal-memory quality.",
+        "allowed": "State the new Pi synthetic validation, frozen controls, actual counts, lifecycle gates and Runtime-reconciled estimate decrease. Keep this evidence separate from the old CLI pair.",
+        "forbidden": "Do not claim Provider billing, real personal-memory quality, production improvement, Held-out generalization, installation/foreground acceptance, old CLI Prompt reproduction, lower token count or multi-Agent benefit."
+      },
+      "openGaps": [
+        "One Pi Trial per model, using five public synthetic fixtures; no repeated-run confidence interval.",
+        "No production personal memory, Held-out, installed frontend acceptance or multi-Agent benefit was evaluated.",
+        "This standard-v1 Pi validation is separate from the retained concise-json-v1 CLI pair; it does not reproduce or replace that experiment.",
+        "Cost is a Runtime-reconciled estimate using the frozen Pi catalog, not a Provider bill; elapsed time is diagnostic.",
+        "Public Trial results expose aggregate gates and counts, not per-case answer bodies or per-case durable/abstention pass counts."
+      ]
     }
   ]
 }

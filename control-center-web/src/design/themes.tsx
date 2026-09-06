@@ -25,10 +25,13 @@ function getSystemTheme(): ResolvedTheme {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+function parseThemePreference(value: string | null): ThemePreference {
+  return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
+}
+
 function getStoredPreference(): ThemePreference {
   if (typeof window === 'undefined') return 'system';
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
+  return parseThemePreference(window.localStorage.getItem(STORAGE_KEY));
 }
 
 export function ThemeProvider({ children, forcedTheme }: { children: ReactNode; forcedTheme?: ResolvedTheme }) {
@@ -43,6 +46,16 @@ export function ThemeProvider({ children, forcedTheme }: { children: ReactNode; 
     update();
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if ((event.key !== STORAGE_KEY && event.key !== null) || event.storageArea !== window.localStorage) return;
+      setPreferenceState(parseThemePreference(event.newValue));
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
   useEffect(() => {

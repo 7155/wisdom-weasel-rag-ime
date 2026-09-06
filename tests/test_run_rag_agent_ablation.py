@@ -179,6 +179,211 @@ def _resign_test_qrels_v2(value: dict[str, object]) -> None:
 
 
 class RunRagAgentAblationTests(unittest.TestCase):
+    def _cancel_during_import(self, *, close_failure=False):
+        from contextlib import ExitStack
+        from unittest.mock import Mock, patch
+        from scripts import run_rag_agent_ablation as runner
+
+        stopped = False
+        sandbox, service, server = Mock(), Mock(), Mock()
+        if close_failure:
+            service.close.side_effect = RuntimeError("fixture close failed")
+        sandbox.create_run.return_value = {"runId": "owned-run"}
+        sandbox.create_base.return_value = {"configRevision": 1}
+        sandbox.cleanup.return_value = {"deleted": True}
+
+        def stop_after_import(*_args, **_kwargs):
+            nonlocal stopped
+            stopped = True
+
+        sandbox.import_documents.side_effect = stop_after_import
+        config = {}
+        config_hash = _sha256_json(config)
+        fixtures = {
+            "_load_prepared": {},
+            "_read_json_object": {"validationSelection": {"winner": {"config": config}, "frozenConfigSha256": config_hash}, "chunking": {}},
+            "_reconstruct_frozen_slice": ([], [{"documentId": "fixture", "text": "synthetic"}], {"benchmarkId": "fixture", "sourceSha256": "source"}),
+            "_development_exclusion": {"caseIds": []},
+            "select_agent_held_out_cases": [{"queryId": "q1", "query": "synthetic question"}],
+            "_production_baseline_record": {"config": config, "configSha256": config_hash},
+            "_embedding_environment_from_report": {"RAG_IME_KNOWLEDGE_DENSE_BACKEND": "fixture"},
+            "_copy_openai_codex_agent_config": None,
+            "_pin_evaluation_agent_config": {},
+            "_isolated_runtime_config": Mock(),
+            "_public_pi_runtime_identity": {},
+            "_evaluation_configuration_identity": {},
+            "_require_semantic_dense_runtime": {"accepted": False},
+            "RagBenchmarkSandbox": sandbox,
+            "RagBenchmarkAgentGateway": Mock(),
+            "ControlToolGateway": Mock(),
+            "_start_rag_benchmark_gateway": server,
+            "AgentService": service,
+        }
+        with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+            path = Path(temporary) / "synthetic.json"
+            path.write_text("{}", encoding="utf-8")
+            for name, value in fixtures.items():
+                stack.enter_context(patch.object(runner, name, return_value=value))
+            lane = stack.enter_context(patch.object(runner, "_run_lane"))
+            judge = stack.enter_context(patch.object(runner, "_run_answer_judge"))
+            report = runner._run(Path(temporary), prepared_path=path, answer_cases_path=None, answer_evidence_qrels_path=None, retrieval_report_path=path, source_agent_config=path,
+                slice_seed="fixture", agent_seed="fixture", slice_cases_per_split=1, agent_case_limit=1, distractor_limit=0, timeout_seconds=30, lane_attempts=2,
+                reranker_model=None, reranker_revision="", reranker_cache=None, rerank_instruction="", development_report_paths=[], calibration_no_metal=True,
+                evaluation_split="held_out", cancelled=lambda: stopped)
+        return report, sandbox, service, server, lane, judge
+
+    def test_run_cancel_during_import_closes_owners_and_returns_non_score_receipt(self) -> None:
+        report, sandbox, service, server, lane, judge = self._cancel_during_import()
+        self.assertEqual("cancelled", report["status"])
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["scoreEligible"])
+        self.assertFalse(report["formalAcceptanceEligible"])
+        self.assertTrue(report["cleanupPassed"])
+        self.assertTrue(report["reportSha256"])
+        sandbox.cleanup.assert_called_once()
+        sandbox.close.assert_called_once()
+        service.close.assert_called_once()
+        server.close.assert_called_once()
+        lane.assert_not_called()
+        judge.assert_not_called()
+
+    def test_run_close_failure_still_closes_other_owners_and_marks_settlement_uncertain(self) -> None:
+        report, sandbox, service, server, lane, judge = self._cancel_during_import(close_failure=True)
+        self.assertEqual("interrupted", report["status"])
+        self.assertFalse(report["executionSettled"])
+        self.assertFalse(report["scoreEligible"])
+        self.assertFalse(report["cleanupPassed"])
+        service.close.assert_called_once()
+        server.close.assert_called_once()
+        sandbox.close.assert_called_once()
+        lane.assert_not_called()
+        judge.assert_not_called()
+
+    def test_cancelled_lane_keeps_admitted_checkpoint_and_cleans_tool_binding(self) -> None:
+        from unittest.mock import Mock
+        from scripts import run_rag_agent_ablation as runner
+
+        service, gateway = Mock(), Mock()
+        service.create_session.return_value = {"session": {"id": "agent:baseline"}}
+        service.ensure_runtime.return_value = {"state": {"model": {"provider": "openai-codex", "id": "gpt-5.6-sol"}, "thinkingLevel": "max"}}
+        service.prompt.return_value = {"turnId": "turn:baseline"}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "checkpoint.json"
+            checkpoint = _open_lane_checkpoint(path, fingerprint=self._checkpoint_fingerprint(), resume=False)
+
+            def started(attempt):
+                nonlocal checkpoint
+                checkpoint = _append_lane_checkpoint_attempt_started(path, checkpoint=checkpoint, lane="baseline", attempt=attempt)
+
+            def bound(attempt, session_id, turn_id):
+                nonlocal checkpoint
+                checkpoint = _append_lane_checkpoint_attempt_binding(path, checkpoint=checkpoint, lane="baseline", attempt=attempt, session_id=session_id, turn_id=turn_id)
+
+            with self.assertRaises(runner.RagEvaluationCancelled):
+                runner._run_lane(service, gateway=gateway, owner="owner", run_id="run", lane="baseline", cases=[], retrieval_config={}, retrieval_config_sha256="config", timeout_seconds=30, lane_attempts=2,
+                    cancelled=lambda: service.prompt.called, attempt_start_observer=started, attempt_binding_observer=bound)
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            history = _lane_checkpoint_attempt_history(persisted, "baseline")
+            self.assertEqual(1, len(history))
+            self.assertEqual(hashlib.sha256(b"turn:baseline").hexdigest(), history[0]["turnSha256"])
+            self.assertEqual({}, _lane_checkpoint_reusable_records(persisted))
+        service.abort.assert_called_once_with("agent:baseline")
+        gateway.unbind_lineage.assert_called_once_with("agent:baseline")
+        service.prompt.assert_called_once()
+
+    def test_cancel_prevents_lane_retry_and_judge_admission(self) -> None:
+        from unittest.mock import Mock, patch
+        from scripts import run_rag_agent_ablation as runner
+        stopped = False
+        failed = self._checkpoint_lane_record("tuned", terminal="turn_failed", runtime_failure_category="provider_transient_after_tool")
+        def settle(*_args, **_kwargs):
+            nonlocal stopped
+            stopped = True
+            return failed
+        with patch.object(runner, "_run_lane_once", side_effect=settle) as once:
+            with self.assertRaises(BaseException) as raised:
+                runner._run_lane(Mock(), gateway=Mock(), owner="owner", run_id="run", lane="tuned", cases=[], retrieval_config={}, retrieval_config_sha256="config", timeout_seconds=30, lane_attempts=2, cancelled=lambda: stopped)
+            self.assertEqual("RagEvaluationCancelled", type(raised.exception).__name__)
+            once.assert_called_once()
+        with patch.object(runner, "_run_answer_judge_once") as judge:
+            with self.assertRaises(BaseException) as raised:
+                runner._run_answer_judge(Mock(), cases=[], documents=[], lane_records=[], chunking_config={}, timeout_seconds=30, cancelled=lambda: True)
+            self.assertEqual("RagEvaluationCancelled", type(raised.exception).__name__)
+            judge.assert_not_called()
+
+    def test_cancellation_after_turn_admission_reports_binding_and_aborts_before_repair(self) -> None:
+        from unittest.mock import Mock
+        from scripts import run_rag_agent_ablation as runner
+        service = Mock()
+        service.create_session.return_value = {"session": {"id": "owned"}}
+        service.prompt.return_value = {"turnId": "turn-owned"}
+        bindings = []
+        controlled = runner._RagControlledService(service, cancelled=lambda: service.prompt.called,
+            on_session=lambda sid: bindings.append((sid,"")), on_turn=lambda sid,tid: bindings.append((sid,tid)))
+        controlled.create_session({})
+        receipt = controlled.prompt("owned", {"message":"bounded task"})
+        self.assertEqual("turn-owned", receipt["turnId"])
+        with self.assertRaises(BaseException) as raised:
+            controlled.events.replay("owned")
+        self.assertEqual("RagEvaluationCancelled", type(raised.exception).__name__)
+        self.assertEqual([("owned",""),("owned","turn-owned")], bindings)
+        service.abort.assert_called_once_with("owned")
+        with self.assertRaises(BaseException):
+            controlled.prompt("owned", {"message":"repair must not run"})
+        self.assertEqual(1, service.prompt.call_count)
+
+    def test_cancel_during_actual_judge_wait_aborts_and_never_retries_or_repairs(self) -> None:
+        from unittest.mock import Mock, patch
+        from scripts import run_rag_agent_ablation as runner
+        service = Mock()
+        service.create_session.return_value = {"session": {"id": "judge-owned"}}
+        service.ensure_runtime.return_value = {"state": {"model": {"provider": "openai-codex", "id": "gpt-5.6-sol"}, "thinkingLevel": "max"}}
+        service.prompt.return_value = {"turnId": "judge-turn"}
+        service.events.replay.return_value = ([], False)
+        bindings = []
+        with patch.object(runner, "_answer_judge_case_payloads", return_value=([],[],{},[])):
+            with self.assertRaises(BaseException) as raised:
+                runner._run_answer_judge(service, cases=[], documents=[], lane_records=[], chunking_config={}, timeout_seconds=30,
+                    cancelled=lambda: service.prompt.called, on_turn=lambda sid,tid: bindings.append((sid,tid)))
+        self.assertEqual("RagEvaluationCancelled", type(raised.exception).__name__)
+        self.assertEqual([("judge-owned","judge-turn")], bindings)
+        service.abort.assert_called_once_with("judge-owned")
+        service.create_session.assert_called_once()
+        service.prompt.assert_called_once()
+
+    def test_abort_error_still_propagates_cancellation_without_retry(self) -> None:
+        from unittest.mock import Mock
+        from scripts import run_rag_agent_ablation as runner
+
+        service = Mock()
+        service.create_session.return_value = {"session": {"id": "owned"}}
+        service.abort.side_effect = RuntimeError("runtime already closed")
+        controlled = runner._RagControlledService(
+            service, cancelled=lambda: service.create_session.called
+        )
+        controlled.create_session({})
+        with self.assertRaises(runner.RagEvaluationCancelled) as raised:
+            controlled.prompt("owned", {"message": "must not be admitted"})
+        self.assertTrue(raised.exception.interrupted)
+        service.abort.assert_called_once_with("owned")
+        service.prompt.assert_not_called()
+
+    def test_cancelled_lane_binding_cleanup_failure_preserves_interrupted_stop(self) -> None:
+        from unittest.mock import Mock
+        from scripts import run_rag_agent_ablation as runner
+        service, gateway = Mock(), Mock()
+        service.create_session.return_value = {"session": {"id": "owned"}}
+        service.ensure_runtime.return_value = {"state": {"model": {"provider": "openai-codex", "id": "gpt-5.6-sol"}, "thinkingLevel": "max"}}
+        service.prompt.return_value = {"turnId": "turn-owned"}
+        service.abort.side_effect = RuntimeError("fixture abort failed")
+        gateway.unbind_lineage.side_effect = RuntimeError("fixture unbind failed")
+        with self.assertRaises(runner.RagEvaluationCancelled) as raised:
+            runner._run_lane(service, gateway=gateway, owner="owner", run_id="run", lane="baseline", cases=[], retrieval_config={},
+                retrieval_config_sha256="config", timeout_seconds=30, lane_attempts=2, cancelled=lambda: service.prompt.called)
+        self.assertTrue(raised.exception.interrupted)
+        service.prompt.assert_called_once()
+        service.abort.assert_called_once()
+
     def test_public_answer_evidence_standard_v2_is_hash_only_and_fail_closed(self) -> None:
         standard_path = (
             Path(__file__).resolve().parents[1]

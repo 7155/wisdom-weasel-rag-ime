@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -20,6 +20,58 @@ const hash = 'sha256:ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 afterEach(cleanup);
 
 describe('History WorkContract UI', () => {
+  it('keeps the search input and focus through a slow search and ignores IME confirmation Enter', async () => {
+    const user = userEvent.setup();
+    const transport = renderHistory(new HistoryTransport((request) => request.query?.query
+      ? new Promise(() => {}) : historyPage()));
+    const input = await screen.findByRole('textbox', { name: '搜索' });
+    await user.type(input, '项目');
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    expect(transport.requests.filter(({ pathId }) => pathId === 'history.page')).toHaveLength(1);
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(transport.requests.some((request) => request.query?.query === '项目')).toBe(true));
+    expect(screen.getByRole('textbox', { name: '搜索' })).toBe(input);
+    expect(input).toHaveFocus();
+    await user.clear(input);
+    await user.keyboard('{Enter}');
+    expect(await screen.findByText('完成了...')).toBeInTheDocument();
+    expect(input).toHaveFocus();
+  });
+
+  it('retains loaded history when the next page fails and retries the same cursor', async () => {
+    const user = userEvent.setup();
+    let recovered = false;
+    const transport = renderHistory(new HistoryTransport((request) => {
+      if (!request.query?.cursor) return { ...historyPage(), nextCursor: 'page-two' };
+      if (!recovered) throw new Error('next page unavailable');
+      return { ...historyPage(), items: [{ ...historyPage().items[0], id: 82, textPreview: '第二页记录' }] };
+    }));
+    await user.click(await screen.findByRole('button', { name: '加载下一页' }));
+    expect(await screen.findByText('后续记录未能加载')).toBeInTheDocument();
+    expect(screen.getByText('完成了...')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '搜索' })).toBeInTheDocument();
+    recovered = true;
+    await user.click(screen.getByRole('button', { name: '重试加载更多' }));
+    expect(await screen.findByText('第二页记录')).toBeInTheDocument();
+    expect(screen.getByText('完成了...')).toBeInTheDocument();
+    expect(transport.requests.filter(({ pathId }) => pathId === 'history.page').map((request) => request.query?.cursor)).toEqual(['', 'page-two', 'page-two']);
+  });
+
+  it('clears a mutation selection when a search replaces the visible records', async () => {
+    const user = userEvent.setup();
+    const transport = renderHistory(new HistoryTransport((request) => request.query?.query
+      ? { ...historyPage(), items: [{ ...historyPage().items[0], id: 82, textPreview: '另一条记录' }] }
+      : historyPage()));
+    await user.click(await screen.findByRole('combobox', { name: '选择记录' }));
+    await user.click(await screen.findByRole('option', { name: /完成了/ }));
+    await user.type(screen.getByRole('textbox', { name: '搜索' }), '另一条{Enter}');
+    await screen.findByText('另一条记录');
+    expect(screen.queryByRole('button', { name: '不再用于记忆' })).not.toBeInTheDocument();
+    expect(screen.getByText('先从已加载记录中选择一项。')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: '选择记录' })).toHaveTextContent('请选择一条记录');
+    expect(findRequest(transport, 'history.tombstone.preview')).toBeUndefined();
+  });
+
   it('renders the history filters as one responsive search toolbar', async () => {
     renderHistory();
 
@@ -119,6 +171,8 @@ class HistoryTransport implements ControlTransport {
   readonly kind = 'mock' as const;
   readonly requests: ControlRequest[] = [];
 
+  constructor(private readonly pageResponse: (request: ControlRequest) => unknown = historyPage) {}
+
   async capabilities(): Promise<FrontendCapabilities> {
     return {
       schemaVersion: 'rag-ime.control-frontend-capabilities.v1',
@@ -137,7 +191,7 @@ class HistoryTransport implements ControlTransport {
 
   async request<Response = unknown>(request: ControlRequest): Promise<Response> {
     this.requests.push(request);
-    if (request.pathId === 'history.page') return historyPage() as Response;
+    if (request.pathId === 'history.page') return await this.pageResponse(request) as Response;
     if (request.pathId === 'history.detail') return historyDetail() as Response;
     if (request.pathId === 'history.tombstone.preview') return {
       schemaVersion: 'rag-ime.management-work-preview.v1',
@@ -174,8 +228,7 @@ class HistoryTransport implements ControlTransport {
   }
 }
 
-function renderHistory(): HistoryTransport {
-  const transport = new HistoryTransport();
+function renderHistory(transport = new HistoryTransport()): HistoryTransport {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(
     <MemoryRouter>

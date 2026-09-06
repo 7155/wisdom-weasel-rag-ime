@@ -126,7 +126,8 @@ mv "$MACOS/Electron" "$MACOS/$EXECUTABLE"
 # Electron's stock atom icon/version must never leak into the PAW product.
 # Rebuild the branded resource for every host build and expose the same
 # semantic version in Finder, the native host and the PAWOS shell.
-"$ROOT/scripts/support/build_app_icon.sh" "$RESOURCES/RagImeIcon.icns"
+RAG_IME_ICON_SOURCE="${RAG_IME_ICON_SOURCE:-$ROOT/control-center-web/public/app-icon-512.png}" \
+  "$ROOT/scripts/support/build_app_icon.sh" "$RESOURCES/RagImeIcon.icns"
 # Electron's atom.icns is an implementation detail, not a PAW identity. Keep
 # only the resource named by CFBundleIconFile so Finder cannot cache or expose
 # the stock Electron artwork after a reinstall.

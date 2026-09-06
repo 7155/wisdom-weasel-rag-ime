@@ -645,6 +645,31 @@ class AgentRoomPartnerDispatchStore:
             ).fetchall()
         return [_payload(row) for row in rows]
 
+    def runtime_recovery_candidates(
+        self,
+        *,
+        after_child_dispatch_id: str = "",
+        limit: int = 500,
+    ) -> list[dict[str, object]]:
+        """Page all execution receipts on an immutable dispatch identity.
+
+        Submitted results remain eligible after review. A newest-first limit
+        would let that history permanently hide older in-flight dispatches;
+        updated_at_ms is also unsafe as a cursor because recovery changes it.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_room_partner_dispatches
+                WHERE child_dispatch_id > ?
+                  AND (status IN ('prepared', 'dispatched')
+                       OR (completion_source = 'room_post' AND target_session_turn_id <> ''))
+                ORDER BY child_dispatch_id ASC LIMIT ?
+                """,
+                (str(after_child_dispatch_id), max(1, min(int(limit), 1_000))),
+            ).fetchall()
+        return [_payload(row) for row in rows]
+
     def cancel_root(
         self,
         *,

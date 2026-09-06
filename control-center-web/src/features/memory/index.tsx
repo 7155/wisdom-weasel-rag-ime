@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Search,
   Tags,
+  X,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
@@ -24,6 +25,7 @@ import {
   Disclosure,
   EmptyState,
   Field,
+  IconButton,
   Input,
   Select,
   Switch,
@@ -49,9 +51,10 @@ import {
   type MemoryKind,
 } from './api';
 import { MemoryRelations } from './MemoryRelations';
+import { MemoryTopicPage } from './MemoryTopicPage';
 import { MemoryCurationWorkbench } from './MemoryCurationWorkbench';
 import { ActivityTimeline } from './ActivityTimeline';
-import { MemoryPipeline } from './MemoryPipeline';
+import { MemoryLibraryNavigation, memoryLibraryCounts } from './MemoryLibraryNavigation';
 import { MemoryPreferences } from './MemoryPreferences';
 import { RoleBookLayer } from './RoleBookLayer';
 import {
@@ -113,8 +116,11 @@ export function MemoryFeature() {
   const [status, setStatus] = useState(defaultMemoryStatus(kind));
   const [ownerKey, setOwnerKey] = useState('');
   const [selectedId, setSelectedId] = useState(routeSelection.id);
+  const [catalogDetailCollapsed, setCatalogDetailCollapsed] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const detailRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const routeLayerRef = useRef(routeSelection.layer);
   const [reference, setReference] = useState<MemoryReferenceSelection | null>(
     routeSelection.reference,
   );
@@ -144,7 +150,8 @@ export function MemoryFeature() {
   const rows = useMemo(() =>
     (pages.data?.pages ?? []).flatMap((page) => arrayRecords(asRecord(page).items)).map(normalizeMemoryRow),
   [pages.data]);
-  const selected = rows.find((row) => stringValue(row.id) === selectedId);
+  const selected = rows.find((row) => stringValue(row.id) === selectedId)
+    ?? (kind === 'books' && selectedId ? { id: selectedId } as Record<string, unknown> : undefined);
   const selectedStatus = stringValue(selected?.status);
   const selectedType = stringValue(selected?.type);
   const archiveDraft = {
@@ -157,10 +164,11 @@ export function MemoryFeature() {
   // 空目录有两种事实：筛选没命中，或这一层还没有沉淀过内容。前者提示调整
   // 筛选；后者不是错误，要讲清内容沿哪条链路沉淀进来。
   const catalogFiltered = Boolean(query) || Boolean(ownerKey) || status !== defaultMemoryStatus(kind);
-  // Only the catalog needs the shared summary and page data. The other views
-  // own their queries, so a failed or slow summary must not block them.
-  const error = view === 'catalog' ? ((pages.error ?? summary.error) as Error | null) : null;
-  const pending = view === 'catalog' && (summary.isPending || pages.isPending);
+  // Summary counts and catalog content have independent read boundaries.
+  // A slow search must leave its input mounted; a failed summary must not
+  // hide records or a topic that was read through its own entity request.
+  const error = pages.error as Error | null;
+  const pending = view === 'catalog' && pages.isPending;
   const summaryState = summary.error ? 'error' : summary.isPending ? 'pending' : 'ready';
   const refresh = () => queryClient.refetchQueries({
     queryKey: memoryQueryKeys.root,
@@ -172,8 +180,10 @@ export function MemoryFeature() {
     setView(next.view);
     if (next.view === 'catalog') {
       setLayer(next.layer);
-      setStatus(defaultMemoryStatus(next.layer));
+      if (next.layer !== routeLayerRef.current) setStatus(defaultMemoryStatus(next.layer));
+      routeLayerRef.current = next.layer;
       setSelectedId(next.id);
+      setCatalogDetailCollapsed(false);
       setEditOpen(false);
     }
     setReference(next.reference);
@@ -198,42 +208,23 @@ export function MemoryFeature() {
     <ManagementPage
       actions={<>
         <span className="memory-second-brain__mode" data-view={view}>
-          <i aria-hidden="true" />
           <span><strong>{memoryViewLabel(view)}</strong><small>{memoryViewStatus(view, rows.length, summaryPayload, summaryState)}</small></span>
         </span>
         <Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>
       </>}
       description="查看已整理的记忆、它们的来源和主题；需要时可以回到原始记录核对。"
-      eyebrow="关于我"
       routeId="memory"
       title="我的记忆"
     >
-      <div className="memory-second-brain" data-layer={layer} data-view={view}>
-        {/* The pipeline is the persistent spine: it stays mounted while a
-            layer's page query loads so navigation never disappears mid-switch. */}
-        <MemoryPipeline
-          activeLayer={view === 'catalog' ? layer : ''}
+      <div className="memory-second-brain" data-layer={layer} data-topic-open={kind === 'books' && selected && !catalogDetailCollapsed ? true : undefined} data-view={view}>
+        {view === 'catalog' ? <MemoryLibraryNavigation
+          activeLayer={layer}
           onOpenLayer={openCatalogLayer}
           onOpenOrganize={() => openView('organize')}
           onRetry={refresh}
-          organizeActive={view === 'organize'}
           summary={summaryPayload}
           summaryState={summaryState}
-        />
-        {/* Narrow windows collapse both the PAWOS App rail and the view tab
-            strip. Memory then owns a labelled page selector of its own so the
-            six pages never degrade into an unlabelled icon strip. */}
-        <div className="memory-app-nav">
-          <span className="memory-app-nav__label">页面</span>
-          <Select
-            aria-label="记忆页面"
-            className="memory-app-nav__select"
-            onValueChange={(next) => openView(normalizeMemoryView(next))}
-            options={memoryViewOptions()}
-            value={view}
-          />
-        </div>
-        <QueryState error={error} isPending={pending} onRetry={refresh}>
+        /> : null}
         <ViewTabs
           className="memory-view-tabs"
           onValueChange={(next) => openView(normalizeMemoryView(next))}
@@ -250,46 +241,51 @@ export function MemoryFeature() {
             </TabsList>
           ) : null}
           <TabsContent value="catalog">
-            <ManagementSection
-              title={`${kindLabel(kind)} 目录`}
-              description={memoryLayerDescription(kind)}
-            >
-              <div className="mgmt-filter-row memory-catalog-filters">
-                <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
-                  <span className="memory-catalog-filters__query-box">
-                    <Search aria-hidden="true" size={14} />
-                    <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="标题、正文或标签，输入即筛选" value={draftQuery} />
-                  </span>
-                </Field>
-                <Field className="memory-catalog-filters__status" htmlFor="memory-status-filter" label="状态">
-                  <Select
-                    id="memory-status-filter"
-                    onValueChange={(value) => {
-                      setStatus(value);
-                      setSelectedId('');
-                      setEditOpen(false);
-                    }}
-                    options={memoryStatusOptions(kind)}
-                    value={status}
-                  />
-                </Field>
-                {ownerAwareKind(kind) ? (
-                  <Field className="memory-catalog-filters__owner" htmlFor="memory-owner-filter" label="归属">
-                    <Select
-                      id="memory-owner-filter"
-                      onValueChange={(value) => {
-                        setOwnerKey(value);
-                        setSelectedId('');
-                        setEditOpen(false);
-                      }}
-                      options={ownerOptions}
-                      value={ownerKey}
-                    />
-                  </Field>
-                ) : null}
-              </div>
-              <div className="memory-layer-workspace" data-detail-open={selected ? true : undefined}>
+            <section className="mgmt-section memory-catalog-section">
+              <div className="memory-layer-workspace" data-detail-open={selected && !catalogDetailCollapsed ? true : undefined}>
                 <aside className="memory-layer-list" aria-label={`${kindLabel(kind)}目录`}>
+                  <div className="memory-layer-list__controls">
+                    <header className="memory-layer-list__heading">
+                      <h2>{kindLabel(kind)} 目录</h2>
+                      {kind !== 'books' ? <p>{memoryLayerDescription(kind)}</p> : null}
+                    </header>
+                    <div className="mgmt-filter-row memory-catalog-filters">
+                      <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
+                        <span className="memory-catalog-filters__query-box">
+                          <Search aria-hidden="true" size={14} />
+                          <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) setQuery(draftQuery.trim()); }} placeholder="标题、正文或标签，输入即筛选" ref={searchRef} value={draftQuery} />
+                          {draftQuery ? <IconButton className="memory-catalog-filters__clear" icon={<X size={14} />} label="清除搜索" onClick={() => { setDraftQuery(''); setQuery(''); searchRef.current?.focus(); }} size="small" /> : null}
+                        </span>
+                      </Field>
+                      <Field className="memory-catalog-filters__status" htmlFor="memory-status-filter" label="状态">
+                        <Select
+                          id="memory-status-filter"
+                          onValueChange={(value) => {
+                            setStatus(value);
+                            setSelectedId('');
+                            setEditOpen(false);
+                          }}
+                          options={memoryStatusOptions(kind)}
+                          value={status}
+                        />
+                      </Field>
+                      {ownerAwareKind(kind) ? (
+                        <Field className="memory-catalog-filters__owner" htmlFor="memory-owner-filter" label="归属">
+                          <Select
+                            id="memory-owner-filter"
+                            onValueChange={(value) => {
+                              setOwnerKey(value);
+                              setSelectedId('');
+                              setEditOpen(false);
+                            }}
+                            options={ownerOptions}
+                            value={ownerKey}
+                          />
+                        </Field>
+                      ) : null}
+                    </div>
+                  </div>
+                  <QueryState error={error} isPending={pending} onRetry={() => void pages.refetch()}>
                   {rows.length ? (
                     <>
                       <OperationalList items={rows.map((row) => {
@@ -302,6 +298,7 @@ export function MemoryFeature() {
                           meta: catalogRowMeta(kind, row, identity.assistantName),
                           status: <StatusBadge label={catalogStatusLabel(kind, rowStatus)} tone={catalogStatusTone(kind, rowStatus)} />,
                           onClick: () => {
+                            if (kind === 'books') { openBook(id); return; }
                             setSelectedId(id);
                             setEditOpen(false);
                           },
@@ -312,6 +309,7 @@ export function MemoryFeature() {
                     </>
                   ) : catalogFiltered ? (
                     <EmptyState
+                      action={<Button onClick={clearCatalogFilters} size="small" variant="quiet">清除筛选</Button>}
                       description={`当前筛选没有 ${kindLabel(kind)} 记录；切换状态可查看保留的历史版本。`}
                       icon={Search}
                       title="没有匹配结果"
@@ -322,21 +320,33 @@ export function MemoryFeature() {
                       onStartWork={desktop ? () => openPawOsRoute(desktop, '/agent') : undefined}
                     />
                   )}
+                  </QueryState>
                 </aside>
                 <div className="memory-layer-detail" ref={detailRef}>
                   {selected ? (
                     <>
                       <button aria-label="返回记忆目录" className="memory-layer-detail__back" onClick={() => {
+                        if (kind === 'books') { setCatalogDetailCollapsed(true); setEditOpen(false); return; }
                         setSelectedId('');
                         setEditOpen(false);
                       }} type="button"><ArrowLeft aria-hidden size={15} />返回目录</button>
-                      <MemoryCatalogDetail
+                      {kind === 'books' ? <MemoryTopicPage
+                        bookId={selectedId}
+                        fallbackSummary={selected.sensitive === true ? undefined : stringValue(selected.summary, stringValue(selected.detail))}
+                        fallbackReferences={selected.sensitive === true ? [] : catalogReferences(selected, 'books')}
+                        key={selectedId}
+                        onOpenBook={openBook}
+                        onOpenReference={setReference}
+                        ownerLabel={ownerLabel(stringValue(selected.ownerKind), stringValue(selected.ownerId), memoryOwnerName(selected))}
+                        redacted={selected.sensitive === true}
+                        title={stringValue(selected.title)}
+                      /> : <MemoryCatalogDetail
                         assistantName={identity.assistantName}
                         key={selectedId}
                         kind={kind}
                         onOpenReference={(next) => setReference(next)}
                         row={selected}
-                      />
+                      />}
                       <div className="memory-layer-actions">
                         {kind === 'evidence' ? (
                           selected.canForget === true ? (
@@ -413,11 +423,11 @@ export function MemoryFeature() {
                       </div>
                     </>
                   ) : (
-                    <EmptyState description="从左侧选择一项，查看正文、状态、证据来源，以及它最近被哪些 Session 装配。" icon={BookOpen} title="选择一条记录" />
+                    <EmptyState description={kind === 'books' ? '选择一个主题，先读当前认识、最近变化和待确认问题，再按来源核对。' : '从左侧选择一项，查看正文、状态、证据来源，以及它最近被哪些 Session 装配。'} icon={BookOpen} title={kind === 'books' ? '选择一个主题' : '选择一条记录'} />
                   )}
                 </div>
               </div>
-            </ManagementSection>
+            </section>
           </TabsContent>
           <TabsContent value="roleBooks">
             <RoleBookLayer
@@ -427,10 +437,16 @@ export function MemoryFeature() {
             />
           </TabsContent>
           <TabsContent value="relations">
-            <MemoryRelations enabled={view === 'relations'} />
+            <MemoryRelations enabled={view === 'relations'} onOpenBook={openBook} />
           </TabsContent>
           <TabsContent value="timeline">
-            {view === 'timeline' ? <ActivityTimeline initialDate={routeSelection.date} /> : null}
+            {view === 'timeline' ? <ActivityTimeline
+              initialDate={routeSelection.date}
+              library={summaryState === 'ready' ? memoryLibraryCounts(summaryPayload) : undefined}
+              latestTimelineDate={stringValue(asRecord(summaryPayload.latestActivityTimeline).date)}
+              onBrowseMemories={() => openCatalogLayer('atoms')}
+              onOpenOrganize={() => openView('organize')}
+            /> : null}
           </TabsContent>
           <TabsContent value="organize">
             <MemoryCurationWorkbench
@@ -455,16 +471,23 @@ export function MemoryFeature() {
             onOpenChange={(open) => {
               if (open) return;
               setReference(null);
-              if (routeSelection.id) {
+              if (routeSelection.id && routeSelection.routeLayer !== 'books') {
                 navigate({ pathname: location.pathname, search: `?layer=${routeSelection.routeLayer}` }, { replace: true });
               }
             }}
           />
         ) : null}
-        </QueryState>
       </div>
     </ManagementPage>
   );
+
+  function clearCatalogFilters() {
+    setDraftQuery('');
+    setQuery('');
+    setStatus(defaultMemoryStatus(kind));
+    setOwnerKey('');
+    searchRef.current?.focus();
+  }
 
   function openCatalogLayer(next: MemoryLayer) {
     setView('catalog');
@@ -472,9 +495,21 @@ export function MemoryFeature() {
     setStatus(defaultMemoryStatus(next));
     setOwnerKey('');
     setSelectedId('');
+    setCatalogDetailCollapsed(false);
     setEditOpen(false);
     setReference(null);
     navigate({ pathname: location.pathname, search: `?layer=${next}` }, { replace: true });
+  }
+
+  function openBook(bookId: string) {
+    setView('catalog');
+    setLayer('books');
+    if (layer !== 'books') setStatus(defaultMemoryStatus('books'));
+    setSelectedId(bookId);
+    setCatalogDetailCollapsed(false);
+    setEditOpen(false);
+    setReference(null);
+    navigate({ pathname: location.pathname, search: `?layer=books&id=${encodeURIComponent(bookId)}` }, { replace: true });
   }
 
   function openView(next: MemoryView) {
@@ -550,8 +585,8 @@ interface MemoryRouteSelection {
 
 function memoryRouteSelection(search: string): MemoryRouteSelection {
   const params = new URLSearchParams(search);
-  const rawLayer = params.get('layer') ?? 'atoms';
-  const routeLayer: MemoryRouteLayer = isMemoryRouteLayer(rawLayer) ? rawLayer : 'atoms';
+  const rawLayer = params.get('layer') ?? 'books';
+  const routeLayer: MemoryRouteLayer = isMemoryRouteLayer(rawLayer) ? rawLayer : 'books';
   const id = (params.get('id') ?? '').trim().slice(0, 500);
   const requestedDate = (params.get('date') ?? '').trim();
   const requestedView = normalizeMemoryView(params.get('view') ?? '');
@@ -569,7 +604,7 @@ function memoryRouteSelection(search: string): MemoryRouteSelection {
     date: /^\d{4}-\d{2}-\d{2}$/u.test(requestedDate) ? requestedDate : '',
     id,
     layer,
-    reference: id ? {
+    reference: id && routeLayer !== 'books' ? {
       kind: referenceKindForRoute(routeLayer, id),
       referenceId: id,
     } : null,
@@ -598,15 +633,6 @@ function normalizeMemoryView(value: string): MemoryView {
     : 'catalog';
 }
 
-const memoryViewOrder: readonly MemoryView[] = [
-  'catalog',
-  'roleBooks',
-  'timeline',
-  'relations',
-  'organize',
-  'preferences',
-];
-
 function memoryViewLabel(view: MemoryView): string {
   return ({
     catalog: '记忆库',
@@ -616,10 +642,6 @@ function memoryViewLabel(view: MemoryView): string {
     organize: '记忆整理',
     preferences: '记忆偏好',
   } as const)[view];
-}
-
-function memoryViewOptions(): { value: MemoryView; label: string }[] {
-  return memoryViewOrder.map((view) => ({ value: view, label: memoryViewLabel(view) }));
 }
 
 function memoryViewStatus(

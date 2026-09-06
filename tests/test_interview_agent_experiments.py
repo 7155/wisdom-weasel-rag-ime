@@ -551,6 +551,7 @@ class InterviewAgentExperimentContractTests(unittest.TestCase):
             "enterpriseops-csm.luna-model-only-r5.v1": ("rejected", "reject", ("model",)),
             "enterpriseops-csm.luna-prompt-adaptation-r7.v1": ("kept", "keep", ("model", "prompt")),
             "memory.maintenance-luna-model-only-r1.v1": ("kept", "keep", ("model",)),
+            "memory.maintenance-pi-model-only-20260905-r3.v1": ("kept", "keep", ("model",)),
             "cloudops.alert-first-luna-model-only-r1.v1": ("rejected", "reject", ("model",)),
             "cloudops.luna-owner-mechanism-prompt-r5.v1": ("kept", "keep", ("model", "prompt")),
             "enterprise-rag.sol-max-standard-r6.v1": ("rejected", "reject", ("guardrail",)),

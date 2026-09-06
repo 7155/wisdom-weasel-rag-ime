@@ -1,19 +1,138 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
-import { ActivitySummary, FxActivityStack, PublicActivityFeed, ReasoningActivitySummary, resetActivityDisclosureOverrides } from './ActivitySummary';
+import { ActivitySummary, FxActivityStack, ReasoningActivitySummary, resetActivityDisclosureOverrides } from './ActivitySummary';
 import { inspectableRawResultText, publicToolResultView } from './public-tool-result';
 import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 
 afterEach(() => {
   cleanup();
   resetActivityDisclosureOverrides();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
 });
 
 describe('Agent tool activity details', () => {
+  it('keeps an already visible stack open as real tool calls arrive', () => {
+    const activities = Array.from({ length: 6 }, (_, index) => toolActivity('tool_finished', 'completed', {
+      toolCallId: `stream-growth-${index}`,
+      toolName: 'workspace_read',
+      args: { path: `src/file-${index}.ts` },
+    }));
+    const { rerender } = render(<FxActivityStack activities={activities.slice(0, 4)} sessionId="growth" />);
+    const toggle = screen.getByRole('button', { name: /全部收起工具与思考步骤/u });
+
+    rerender(<FxActivityStack activities={activities} sessionId="growth" />);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getAllByRole('treeitem')).toHaveLength(6);
+  });
+
+  it('scopes a disclosure choice to the Session and restores it after a virtualized remount', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'same-runtime-id', toolName: 'workspace_read', args: { path: 'src/app.ts' },
+    });
+    const view = render(<FxActivityStack activities={[activity]} sessionId="first-session" />);
+    const row = () => view.container.querySelector('.paw-activity')!;
+    fireEvent.click(row());
+    expect(row()).toHaveAttribute('aria-expanded', 'true');
+
+    view.rerender(<FxActivityStack activities={[activity]} sessionId="second-session" />);
+    expect(row()).toHaveAttribute('aria-expanded', 'false');
+    view.unmount();
+    const restored = render(<FxActivityStack activities={[activity]} sessionId="first-session" />);
+    expect(restored.container.querySelector('.paw-activity')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('summarizes the public action and target without printing command output in the row', () => {
+    const activities = [
+      toolActivity('tool_finished', 'completed', {
+        toolCallId: 'concise-read', toolName: 'workspace_read', args: { path: 'src/app.ts' },
+      }),
+      toolActivity('tool_progress', 'running', {
+        toolCallId: 'concise-shell', toolName: 'workspace_shell', args: { command: 'pnpm test' },
+        publicResult: { outputPreview: 'large log that belongs inside the disclosure' },
+      }),
+      toolActivity('tool_finished', 'failed', {
+        toolCallId: 'concise-search', toolName: 'workspace_search',
+        args: { path: 'src', query: 'loading' }, isError: true,
+        result: { details: { error: '搜索范围不可用' } },
+      }),
+    ];
+    const { container } = render(<FxActivityStack activities={activities} />);
+    const rows = [...container.querySelectorAll('.paw-activity__row')];
+    expect(rows[0]!.querySelector('.paw-activity__label')).toHaveTextContent('已读取');
+    expect(rows[0]!.querySelector('.paw-activity__hint')).toHaveTextContent('src/app.ts');
+    expect(rows[1]!.querySelector('.paw-activity__label')).toHaveTextContent('正在运行');
+    expect(rows[1]!.querySelector('.paw-activity__hint')).toHaveTextContent('pnpm test');
+    expect(rows[1]).not.toHaveTextContent('large log');
+    expect(rows[2]!.querySelector('.paw-activity__label')).toHaveTextContent('搜索失败');
+    expect(rows[2]!.querySelector('.paw-activity__hint')).toHaveTextContent('搜索范围不可用');
+  });
+
+  it('pauses the live indicator and clock while hidden, then resumes with real elapsed time', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    let hidden = false;
+    const visibility = vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden);
+    const activity = {
+      ...toolActivity('tool_progress', 'running', {
+        toolCallId: 'visibility-clock', toolName: 'workspace_shell', args: { command: 'pnpm test' },
+      }),
+      createdAtMs: 1_000, updatedAtMs: 1_000,
+    };
+    const view = render(<FxActivityStack activities={[activity]} />);
+    const stack = view.container.querySelector('.paw-activity-stack')!;
+    const signal = view.container.querySelector('.paw-activity__signal')!;
+    expect(stack).toHaveAttribute('data-motion', 'active');
+    expect(signal).toHaveAttribute('data-state', 'running');
+    act(() => vi.advanceTimersByTime(2_000));
+    const beforeHide = view.container.querySelector('.fx-meta')!.textContent;
+    hidden = true;
+    fireEvent(document, new Event('visibilitychange'));
+    expect(stack).toHaveAttribute('data-motion', 'paused');
+    act(() => vi.advanceTimersByTime(8_000));
+    expect(view.container.querySelector('.fx-meta')).toHaveTextContent(beforeHide!);
+    hidden = false;
+    fireEvent(document, new Event('visibilitychange'));
+    expect(stack).toHaveAttribute('data-motion', 'active');
+    expect(view.container.querySelector('.fx-meta')).toHaveTextContent('10 秒');
+    view.rerender(<FxActivityStack activities={[{ ...activity, status: 'completed', updatedAtMs: 11_000 }]} />);
+    expect(view.container.querySelector('.paw-activity__signal')).toBe(signal);
+    expect(signal).toHaveAttribute('data-state', 'completed');
+    expect(stack).toHaveAttribute('data-motion', 'paused');
+    visibility.mockRestore();
+  });
+
+  it('suspends motion outside the visible window without changing the Tool state', () => {
+    let onIntersection: IntersectionObserverCallback = () => undefined;
+    const disconnect = vi.fn();
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback) { onIntersection = callback; }
+      observe() {}
+      disconnect = disconnect;
+    });
+    const activity = toolActivity('tool_progress', 'running', {
+      toolCallId: 'offscreen-tool', toolName: 'workspace_read', args: { path: 'src/app.ts' },
+    });
+    const view = render(<FxActivityStack activities={[activity]} />);
+    const stack = view.container.querySelector('.paw-activity-stack')!;
+    const notifyIntersection = (isIntersecting: boolean) => act(() => {
+      onIntersection([{ isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver);
+    });
+    notifyIntersection(false);
+    expect(stack).toHaveAttribute('data-motion', 'paused');
+    expect(view.container.querySelector('.paw-activity')).toHaveAttribute('data-state', 'running');
+    notifyIntersection(true);
+    expect(stack).toHaveAttribute('data-motion', 'active');
+    view.unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
   it('estimates public reasoning but never invents Tool usage from visible result text', () => {
     const reasoning: AgentActivityProjection = {
       id: 'reasoning-receipt-estimate',
@@ -661,7 +780,7 @@ describe('Agent tool activity details', () => {
     expect(within(row).getByLabelText('完整工具返回')).toBeInTheDocument();
   });
 
-  it('puts a planet on every live conversation state and leaves settled rows still', () => {
+  it('keeps conversation planets and uses one fixed signal slot for compact Tool rows', () => {
     const running = toolActivity('tool_progress', 'running', {
       toolCallId: 'call-planet-running',
       toolName: 'workspace_search',
@@ -694,13 +813,16 @@ describe('Agent tool activity details', () => {
     cleanup();
 
     const tree = render(<FxActivityStack activities={[running, settled]} />);
-    const pills = [...tree.container.querySelectorAll('.fx-pill')];
-    expect(pills[0]!.querySelector('.paw-conv-planet[data-state="running"][data-size="sm"] .paw-conv-planet__orbit')).toBeInTheDocument();
-    expect(pills[1]!.querySelector('.paw-conv-planet[data-state="done"]')).toBeInTheDocument();
-    expect(pills[1]!.querySelector('.paw-conv-planet__orbit')).toBeInTheDocument();
+    const signals = [...tree.container.querySelectorAll('.paw-activity__signal')];
+    expect(signals[0]).toHaveAttribute('data-state', 'running');
+    expect(signals[1]).toHaveAttribute('data-state', 'completed');
+    expect(signals[0]!.querySelector('.paw-conv-planet[data-state="running"]')).toBeInTheDocument();
+    expect(signals[1]!.querySelector('.paw-conv-planet')).not.toBeInTheDocument();
+    expect(signals[1]!.querySelector('.paw-activity__glyph')).toBeInTheDocument();
+    expect(tree.container.querySelector('.fx-pill .paw-conv-planet')).not.toBeInTheDocument();
   });
 
-  it('turns the public feed slower for a live thought than for a live Tool call', () => {
+  it('shows the thinking planet while the public reasoning summary is running', () => {
     const reasoning: AgentActivityProjection = {
       id: 'reasoning-planet-feed',
       turnId: 'turn-planet-feed',
@@ -711,24 +833,15 @@ describe('Agent tool activity details', () => {
       createdAtMs: 1,
       updatedAtMs: 2,
     };
-    const waitingTool = toolActivity('tool_progress', 'waiting', {
-      toolCallId: 'call-planet-waiting',
-      toolName: 'shell',
-      summary: '等待你确认命令',
-    });
-
-    const { container } = render(<PublicActivityFeed activities={[reasoning, waitingTool]} />);
-
-    const rows = [...container.querySelectorAll('.agent-public-activity__feed > article')];
-    expect(rows).toHaveLength(2);
-    expect(rows[0]!.querySelector('.paw-conv-planet[data-state="thinking"]')).toBeInTheDocument();
-    expect(rows[1]!.querySelector('.paw-conv-planet[data-state="waiting"]')).toBeInTheDocument();
-
-    cleanup();
     render(<ReasoningActivitySummary activities={[reasoning]} />);
     expect(
       screen.getByRole('button', { name: /查看 Agent 思考摘要/u }).querySelector('.paw-conv-planet[data-state="thinking"]'),
     ).toBeInTheDocument();
+    cleanup();
+    const tree = render(<FxActivityStack activities={[reasoning]} />);
+    expect(tree.container.querySelector('.paw-activity__signal .paw-conv-planet[data-state="thinking"]')).toBeInTheDocument();
+    tree.rerender(<FxActivityStack activities={[{ ...reasoning, status: 'completed' }]} />);
+    expect(tree.container.querySelector('.paw-activity__signal .paw-conv-planet')).not.toBeInTheDocument();
   });
 
   it('marks a settled background subagent receipt with the violet completion tone', () => {
@@ -1818,41 +1931,6 @@ describe('Agent tool activity details', () => {
     expect(row).toHaveTextContent('已参考 4 条同一 Session 审批历史');
     expect(screen.queryByRole('button', { name: '批准' })).not.toBeInTheDocument();
   });
-
-  it('keeps the live preview to one latest thought and one latest Tool update', () => {
-    const reasoning: AgentActivityProjection = {
-      id: 'reasoning-public-feed',
-      turnId: 'turn-public-feed',
-      kind: 'reasoning_summary',
-      status: 'running',
-      summary: '正在核对事件顺序',
-      payload: {
-        source: 'provider_reasoning_summary',
-        items: ['先检查旧路径', '正在核对事件顺序'],
-      },
-      createdAtMs: 1,
-      updatedAtMs: 2,
-    };
-    const activity = (toolCallId: string, summary: string) => toolActivity('tool_progress', 'running', {
-      toolCallId,
-      toolName: 'workspace_search',
-      summary,
-    });
-    const { container } = render(<PublicActivityFeed activities={[
-      activity('call-public-feed-old', '旧的检索结果'),
-      reasoning,
-      activity('call-public-feed-latest', '正在核对第二批结果'),
-    ]} />);
-
-    expect(screen.getByRole('status', { name: '本轮最新进展' })).toBeInTheDocument();
-    expect(container.querySelectorAll('.agent-public-activity__feed > article')).toHaveLength(2);
-    expect(screen.getByText('正在核对事件顺序')).toBeInTheDocument();
-    expect(screen.getByText('正在核对第二批结果')).toBeInTheDocument();
-    expect(screen.queryByText('先检查旧路径')).not.toBeInTheDocument();
-    expect(screen.queryByText('旧的检索结果')).not.toBeInTheDocument();
-    expect(screen.queryByRole('log', { name: '最新公开思考与工具活动' })).not.toBeInTheDocument();
-  });
-
 
 });
 

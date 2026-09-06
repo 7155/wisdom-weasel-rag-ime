@@ -310,6 +310,24 @@ export function reduceRoomEvent(
     case 'route_decision':
     case 'participant_status':
     case 'participant_activity':
+      // The cancellation owner emits this whole-Root receipt only after all
+      // execution surfaces terminate. Individual dispatch terminals may be
+      // absent (for example an earlier moderator dispatch before a wake).
+      // Consume the same authority in live delivery and snapshot recovery.
+      if (
+        event.eventType === 'participant_status'
+        && text(payload.status) === 'cancellation_applied'
+        && event.turnId
+        && text(payload.rootId) === event.turnId
+        && text(payload.cancellationReceiptId)
+        && Array.isArray(payload.pendingTargets)
+        && payload.pendingTargets.length === 0
+        && !event.participantId
+        && !event.sourceSessionId
+      ) {
+        completeTurn(next, event.turnId, 'aborted', event.createdAtMs);
+        break;
+      }
       // A temporary subagent also publishes detached lifecycle receipts so
       // its own projection can refresh. The rooted `agents` Tool activity is
       // already present in the Partner lane; turning this duplicate receipt

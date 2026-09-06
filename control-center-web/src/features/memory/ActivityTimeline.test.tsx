@@ -271,13 +271,15 @@ describe('ActivityTimeline activity projection', () => {
     const user = userEvent.setup();
     renderTimeline(semanticTimeline());
 
-    const calendarHeading = await screen.findByText('月度整理轨迹');
-    expect(calendarHeading.closest('.activity-timeline__rail')).not.toBeNull();
+    const calendarControl = await screen.findByRole('button', { name: '上个月' });
+    expect(calendarControl.closest('.activity-timeline__rail')).not.toBeNull();
     const journal = screen.getByRole('heading', { name: /的每日日记$/ }).closest('.daily-journal');
     expect(journal?.parentElement).toHaveClass('activity-timeline__main');
     expect(journal?.parentElement?.firstElementChild).toBe(journal);
     expect(await screen.findByText('上午完成账号切换与连续开发，下午验证记忆召回。')).toBeInTheDocument();
-    expect(screen.getByText('今日足迹')).toBeInTheDocument();
+    expect(screen.getByText('当天应用')).not.toBeVisible();
+    await user.click(screen.getByText('日记摘要与应用来源'));
+    expect(screen.getByText('当天应用')).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: '查看日记条目：验证三条记忆消费路径' }));
     expect(await screen.findByRole('dialog', { name: '验证三条记忆消费路径' })).toBeInTheDocument();
@@ -287,7 +289,7 @@ describe('ActivityTimeline activity projection', () => {
     const user = userEvent.setup();
     renderTimeline(semanticTimeline());
 
-    const calendar = (await screen.findByText('月度整理轨迹')).closest('.activity-calendar');
+    const calendar = (await screen.findByRole('button', { name: '上个月' })).closest('.activity-calendar');
     expect(calendar).not.toBeNull();
     await waitFor(() => {
       expect(calendar).toHaveTextContent('2 天有活动');
@@ -408,7 +410,7 @@ describe('ActivityTimeline activity projection', () => {
     expect(story).toHaveTextContent(fullStory);
   });
 
-  it('puts evidence-bounded memory insights before the journal and secondary steward', async () => {
+  it('shows source-bound insights after the journal and opens conversation on request', async () => {
     const user = userEvent.setup();
     const timeline = semanticTimeline();
     const tasks = timeline.semanticTasks as Array<Record<string, unknown>>;
@@ -417,16 +419,19 @@ describe('ActivityTimeline activity projection', () => {
     tasks[0]!.evidenceCount = 8;
     renderTimeline(timeline);
 
-    const canvas = await screen.findByRole('region', { name: '记忆画布' });
+    const canvas = await screen.findByRole('region', { name: '当天的记忆线索' });
     const journal = screen.getByRole('region', { name: /每日日记/u });
+    expect(screen.getByRole('region', { name: 'Memory 管家' })).not.toBeVisible();
+    await user.click(screen.getByText('与记忆管家聊这一天'));
     const steward = screen.getByRole('region', { name: 'Memory 管家' });
+    expect(steward).toBeVisible();
 
-    expect(canvas).toHaveTextContent('今天值得回看的内容');
+    expect(canvas).toHaveTextContent('值得回看的线索');
     expect(await within(canvas).findByText('未完成')).toBeVisible();
     expect(within(canvas).getByText('继续完成记忆召回方案')).toBeVisible();
-    expect(within(canvas).getAllByText(/8 条来源/u)).toHaveLength(2);
-    expect(within(canvas).getByText(/不是对情绪或计划的推断/u)).toBeVisible();
-    expect(canvas.compareDocumentPosition(journal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(canvas).getByRole('button', { name: '查看未完成线索：继续完成记忆召回方案' })).toHaveTextContent('8 条来源');
+    expect(within(canvas).getByText('线索来自当天已整理活动，点击可核对原文。')).toBeVisible();
+    expect(journal.compareDocumentPosition(canvas) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(journal.compareDocumentPosition(steward) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     await user.click(within(canvas).getByRole('button', { name: /查看未完成线索：继续完成记忆召回方案/u }));
@@ -436,10 +441,38 @@ describe('ActivityTimeline activity projection', () => {
   it('does not invent a memory insight when organized activities have no explicit signal', async () => {
     renderTimeline(semanticTimeline());
 
-    const canvas = await screen.findByRole('region', { name: '记忆画布' });
-    expect(await within(canvas).findByText(/今天没有可确认的 idea/u)).toBeVisible();
-    expect(within(canvas).queryByRole('button', { name: /查看.+线索/u })).not.toBeInTheDocument();
-    expect(within(canvas).getByText(/没有足够文字证据支持进一步归类/u)).toBeVisible();
+    expect(await screen.findByText('上午完成账号切换与连续开发，下午验证记忆召回。')).toBeVisible();
+    expect(screen.queryByRole('region', { name: '当天的记忆线索' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '记忆画布' })).not.toBeInTheDocument();
+  });
+
+  it('distinguishes an empty day from a populated library and offers browsing without starting organization', async () => {
+    const user = userEvent.setup();
+    const requests: ControlRequest[] = [];
+    const onBrowseMemories = vi.fn();
+    const onOpenOrganize = vi.fn();
+    const recentDate = `${shiftMonthForTest(localDateForTest().slice(0, 7), -1)}-14`;
+    renderTimeline({}, {
+      requests,
+      library: { memories: 259, topics: 76, pendingSources: 882 },
+      latestTimelineDate: recentDate,
+      onBrowseMemories,
+      onOpenOrganize,
+    });
+
+    expect(await screen.findByText('这一天还没有日记')).toBeVisible();
+    expect(screen.getByText('记忆库中已有 259 条记忆、76 个主题，可以继续查找。')).toBeVisible();
+    expect(screen.getByText('882 条来源等待整理')).toBeVisible();
+    expect(screen.queryByRole('region', { name: '记忆画布' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '浏览全部记忆' }));
+    expect(onBrowseMemories).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole('button', { name: '查看整理与审核' }));
+    expect(onOpenOrganize).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole('button', { name: `回看 ${recentDate.slice(5)}` }));
+    await waitFor(() => expect(requests).toContainEqual(expect.objectContaining({
+      pathId: 'memory.activityTimeline.get', query: { date: recentDate },
+    })));
+    expect(requests.some((request) => request.pathId === 'memory.activityTimeline.build')).toBe(false);
   });
 
   it('keeps nested timeline details mounted through their closing transition', async () => {
@@ -569,7 +602,13 @@ function renderTimeline(
       <TooltipProvider delayDuration={0}>
         <ControlTransportProvider transport={timelineTransport(timeline, options)}>
           <QueryClientProvider client={client}>
-            <ActivityTimeline initialDate={options.initialDate} />
+            <ActivityTimeline
+              initialDate={options.initialDate}
+              library={options.library}
+              latestTimelineDate={options.latestTimelineDate}
+              onBrowseMemories={options.onBrowseMemories}
+              onOpenOrganize={options.onOpenOrganize}
+            />
           </QueryClientProvider>
         </ControlTransportProvider>
       </TooltipProvider>
@@ -676,6 +715,10 @@ function timelineTransport(
 }
 
 interface TimelineTransportOptions {
+  library?: { memories: number; topics: number; pendingSources: number };
+  latestTimelineDate?: string;
+  onBrowseMemories?: () => void;
+  onOpenOrganize?: () => void;
   initialDate?: string;
   organized?: boolean;
   calendarAutomation?: Record<string, unknown>;

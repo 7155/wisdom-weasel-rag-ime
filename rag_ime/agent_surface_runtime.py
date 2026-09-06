@@ -18,6 +18,7 @@ from .deepseek_completion import (
     resolved_active_rag_current_request,
 )
 from .text_utils import compact_whitespace
+from .input_task import preserve_document_layout, selection_source, selection_task_instruction, selection_task_policy
 
 
 VOICE_REFINEMENT_TOOL_PROFILE = "voice-refinement-v1"
@@ -61,6 +62,8 @@ class PiSurfaceCompletionProvider:
         *,
         on_text_delta: Callable[[str], None] | None = None,
     ) -> Iterator[CompletionCandidateDelta]:
+        task_policy = selection_task_policy(request.context_packet)
+        normalize_text = preserve_document_layout if task_policy else normalize_active_rag_completion_text
         payload = {
             "schemaVersion": "rag-ime.agent-surface-completion-request.v1",
             "requestId": request.surface_request_id,
@@ -80,7 +83,7 @@ class PiSurfaceCompletionProvider:
         def publish_delta(delta: str) -> None:
             nonlocal published_text, streamed_text
             streamed_text += str(delta or "")
-            visible_text = normalize_active_rag_completion_text(streamed_text)
+            visible_text = normalize_text(streamed_text)
             if (
                 on_text_delta is not None
                 and visible_text
@@ -101,8 +104,10 @@ class PiSurfaceCompletionProvider:
             )
         except Exception as exc:
             raise DeepSeekCompletionError(f"Pi surface completion failed: {exc}") from exc
-        raw_text = str(response.get("text") or "").strip()
-        text = normalize_active_rag_completion_text(raw_text)
+        raw_text = str(response.get("text") or "")
+        if not task_policy:
+            raw_text = raw_text.strip()
+        text = normalize_text(raw_text)
         if not text:
             raise DeepSeekCompletionError("Pi surface completion returned no text")
         if on_text_delta is not None and text != published_text:
@@ -123,6 +128,7 @@ class PiSurfaceCompletionProvider:
                 "statelessCompletion": True,
                 "semanticContextUsed": bool(response.get("semanticContextUsed")),
                 "outputNormalized": text != raw_text,
+                "inputTaskOperation": selection_task_policy(request.context_packet).get("operation", ""),
             },
         )
 
@@ -202,7 +208,8 @@ class AgentSurfaceRuntime:
         request_id = _bounded_text(payload.get("requestId"), maximum=200)
         if not request_id:
             raise ValueError("surface completion requestId is required")
-        current_request = str(payload.get("currentRequest") or payload.get("message") or "").strip()[:4_000]
+        policy = selection_task_policy(payload.get("contextPacket") if isinstance(payload.get("contextPacket"), Mapping) else {})
+        current_request = (selection_source(payload.get("selectedText")) if policy else str(payload.get("currentRequest") or payload.get("message") or "").strip()[:4_000])
         if not current_request:
             raise ValueError("surface completion currentRequest is required")
         if payload.get("visualContext"):
@@ -710,6 +717,16 @@ def _one_shot_surface_message(
         if isinstance(payload.get("contextPacket"), Mapping)
         else {}
     )
+    policy = selection_task_policy(context_packet)
+    if policy:
+        request_data = {
+            "taskPolicy": policy,
+            "selectedText": selection_source(payload.get("selectedText")),
+            "currentRequest": selection_source(payload.get("selectedText")),
+            "currentContext": str(payload.get("currentContext") or "")[-2000:],
+            "placement": str(context_packet.get("outputContract", {}).get("placement") or "show_only"),
+        }
+        return selection_task_instruction(policy) + "\n" + json.dumps(request_data, ensure_ascii=False), True
     window_context = (
         dict(context_packet.get("windowContext") or {})
         if isinstance(context_packet.get("windowContext"), Mapping)

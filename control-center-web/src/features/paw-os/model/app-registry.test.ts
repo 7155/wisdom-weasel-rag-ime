@@ -51,11 +51,11 @@ describe('pawOsAppRegistry', () => {
 
   it('keeps system utilities out of the focused work Dock', () => {
     expect(primaryDockAppIds).toEqual([
-      'project-workbench',
       'agent',
+      'eval-lab',
+      'project-workbench',
       'memory',
       'knowledge',
-      'input-studio',
       'files',
       'browser',
       'terminal',

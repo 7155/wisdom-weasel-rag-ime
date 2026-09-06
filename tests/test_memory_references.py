@@ -349,6 +349,56 @@ class MemoryReferenceTests(unittest.TestCase):
         self.assertEqual(evidence["ref"]["kind"], "evidence")
         self.assertEqual(after, before)
 
+    def test_topic_page_links_each_statement_to_resolvable_admitted_original_evidence(self) -> None:
+        book = self.service.management.memory_entity("book", self.book_id, {"project": self.project})
+        validate_contract(book, "memory-entity.v1.json")
+        page = book["topicPage"]
+        entry = page["sections"]["current"][0]
+        self.assertEqual(entry["id"], self.atom_id)
+        self.assertEqual(entry["sourceStatus"], "available")
+        self.assertIsNone(entry["reason"])
+        reference = next(ref for ref in entry["references"] if ref["kind"] == "evidence")
+        evidence = self.service.management.memory_reference(reference["kind"], reference["id"])
+        self.assertEqual(evidence["item"]["text"], "我长期使用 CAS 管理 Codex 账号切换。")
+        source = evidence["evidenceRefs"][0]
+        original = self.service.management.memory_reference(source["kind"], source["id"])
+        self.assertEqual(original["item"]["text"], evidence["item"]["text"])
+        self.assertEqual(page["sources"], [reference])
+
+    def test_topic_page_does_not_republish_an_atom_when_its_evidence_is_forgotten(self) -> None:
+        before = self.service.management.memory_entity("book", self.book_id, {})
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            transition_evidence_admission(conn, self.evidence_id, new_state="forgotten",
+                reason_code="user_forget", actor_kind="user", created_at_ms=1_784_250_500_000)
+        after = self.service.management.memory_entity("book", self.book_id, {})
+        page = after["topicPage"]
+        self.assertEqual(page["sections"]["current"], [])
+        self.assertEqual(page["sources"], [])
+        self.assertNotIn("CAS 用于", json.dumps(page, ensure_ascii=False))
+        self.assertNotEqual(before["entityRevision"], after["entityRevision"])
+
+    def test_topic_page_retains_correcting_evidence_as_the_new_claim_source(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE memory_atom_evidence_links SET relation='corrects' WHERE memory_atom_id=?",
+                         (self.atom_id,))
+        page = self.service.management.memory_entity("book", self.book_id, {})["topicPage"]
+        self.assertEqual([entry["id"] for entry in page["sections"]["current"]], [self.atom_id])
+        self.assertEqual(page["sources"][0]["id"], self.evidence_id)
+
+    def test_unfiltered_topic_request_still_rejects_another_projects_evidence(self) -> None:
+        from rag_ime.memory_graph_read import read_memory_entity
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            first = read_memory_entity(conn, "book", self.book_id, {}, default_project="")
+            self.assertEqual(first["topicPage"]["sources"][0]["id"], self.evidence_id)
+            conn.execute("UPDATE agent_memory_evidence SET project='other-project' WHERE evidence_id=?",
+                         (self.evidence_id,))
+            after = read_memory_entity(conn, "book", self.book_id, {}, default_project="")
+        self.assertEqual(after["topicPage"]["sources"], [])
+        self.assertEqual(after["topicPage"]["sections"]["current"], [])
+
     def test_timeline_visibility_checks_all_sources_beyond_reference_preview_cap(self) -> None:
         event_ids = [self.safe_event_id]
         with sqlite3.connect(self.db_path) as conn, conn:

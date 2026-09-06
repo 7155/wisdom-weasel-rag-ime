@@ -1,0 +1,38 @@
+.paw-results-intro { color: var(--lab-ink, #253247); font-size: 15px; line-height: 1.75; margin: 0; max-width: 78ch; }
+.paw-results-chart { color: var(--lab-ink, #253247); margin: 18px 0; padding: 18px 0; border-block: 1px solid var(--lab-line, #dce3eb); min-width: 0; container: paw-results-chart / inline-size; }
+.paw-results-chart figcaption { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+.paw-results-chart figcaption > strong { font-size: 16px; font-weight: 650; }
+.paw-results-chart__views { display: flex; flex-wrap: wrap; gap: 4px; }
+.paw-results-chart__views button { background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--lab-muted, #59677a); cursor: pointer; font: inherit; font-size: 12px; min-height: 34px; padding: 5px 10px; }
+.paw-results-chart__views button:hover { background: var(--lab-surface-subtle, #f3f5f8); color: var(--lab-ink, #253247); }
+.paw-results-chart__views button[aria-pressed='true'] { background: var(--lab-accent-soft, #edf3fb); color: var(--lab-accent, #3167b1); border-color: var(--lab-line, #dce3eb); }
+.paw-results-chart__views button:focus-visible { outline: 2px solid var(--lab-accent, #3167b1); outline-offset: 2px; }
+.paw-results-chart__legend { align-items: center; color: var(--lab-muted, #59677a); display: flex; flex-wrap: wrap; font-size: 11px; gap: 14px; margin: 14px 0 18px; }
+.paw-results-chart__legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.paw-results-chart__legend > span::before { content: ''; background: var(--lab-muted, #59677a); height: 6px; width: 16px; }
+.paw-results-chart__legend > span:nth-child(2)::before { background: var(--lab-accent, #3167b1); }
+.paw-results-chart__legend small { font-size: inherit; margin-left: auto; }
+.paw-results-chart__plots { display: grid; gap: 20px; }
+.paw-results-chart__metric { min-width: 0; }
+.paw-results-chart__metric-title { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; margin-bottom: 8px; }
+.paw-results-chart__metric-title strong { font-size: 13px; font-weight: 550; }
+.paw-results-chart__metric-title small { color: var(--lab-muted, #59677a); font-size: 10px; }
+.paw-results-chart__row { align-items: center; display: grid; gap: 10px; grid-template-columns: 52px minmax(24px, 1fr) 92px; margin-top: 7px; min-height: 20px; }
+.paw-results-chart__row > span { color: var(--lab-muted, #59677a); font-size: 11px; }
+.paw-results-chart__row b { font-size: 12px; font-weight: 550; font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.paw-results-chart__track { background: var(--lab-surface-subtle, #f3f5f8); border-left: 1px solid var(--lab-line, #dce3eb); height: 12px; }
+.paw-results-chart__track i { background: var(--lab-muted, #59677a); display: block; height: 100%; }
+.paw-results-chart__row--after .paw-results-chart__track i { background: var(--lab-accent, #3167b1); }
+.paw-results-chart__missing { border-bottom: 1px dashed var(--lab-line, #dce3eb); height: 0; }
+.paw-results-chart > p { color: var(--lab-muted, #59677a); font-size: 11px; line-height: 1.6; margin: 16px 0 0; max-width: 75ch; }
+.paw-results-chart__recovery { border-top: 1px solid var(--lab-line, #dce3eb); font-size: 12px; line-height: 1.6; margin-top: 18px; padding-top: 12px; }
+.paw-results-chart__recovery p { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; }
+.paw-results-chart__recovery strong { font-weight: 550; }
+.paw-results-chart__recovery small { color: var(--lab-muted, #59677a); }
+.paw-results-chart > .paw-results-chart__cost-note { color: var(--lab-ink, #253247); }
+.paw-results-chart ::selection { background: var(--lab-accent-soft, #edf3fb); color: var(--lab-ink, #253247); }
+@container paw-results-chart (max-width: 380px) {
+  .paw-results-chart__row { gap: 7px; grid-template-columns: 44px minmax(20px, 1fr) 76px; }
+  .paw-results-chart__legend small { flex-basis: 100%; margin-left: 0; }
+  .paw-results-chart__metric-title small { flex-basis: 100%; }
+}

@@ -4,6 +4,7 @@ import {
   BrainCircuit,
   CheckCircle2,
   FolderOpen,
+  FlaskConical,
   GitBranch,
   LoaderCircle,
   MessageSquareText,
@@ -50,6 +51,7 @@ import { pawBrowserHost } from '@/paw-os/apps/paw-browser-host';
 import type { LucideIcon } from 'lucide-react';
 import {
   parseTraceAgentHandoff,
+  buildTraceLabRoute,
   redactTraceAgentError,
   redactTraceAgentText,
   type TraceAgentHandoff,
@@ -207,12 +209,16 @@ function TraceDiagnosticReportPage({ reportId }: { reportId: string }) {
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const report = useTraceDiagnosticReport(transport, reportId);
+  const savedReport = report.data;
   return (
     <ManagementPage
       actions={(
+        <>
+        {savedReport?.status === 'completed' ? <Button leadingIcon={<FlaskConical size={15} />} onClick={() => openPawOsRoute(desktop, buildTraceLabRoute(savedReport.reportId))} size="small" variant="primary">在 Lab 中批量验证</Button> : null}
         <Button leadingIcon={<RefreshCw size={15} />} loading={report.isFetching} onClick={() => void report.refetch()} size="small">
           刷新报告
         </Button>
+        </>
       )}
       description="这是独立持久化的 Trace 诊断报告；原始 Agent 对话只作为可回溯的过程证据。"
       routeId="trace-agent"
@@ -1354,6 +1360,7 @@ function TraceAgentReport({
         <div className="trace-agent-report-links">
           <Button leadingIcon={<ArrowUpRight size={14} />} onClick={() => openDiagnosticSession(desktop, report.sessionId)} size="small">打开诊断 Agent 对话</Button>
           {persistedReport ? <Button leadingIcon={<ArrowUpRight size={14} />} onClick={() => openDiagnosticReport(desktop, persistedReport.reportId)} size="small" variant="primary">打开网页报告</Button> : null}
+          {diagnosticReady && persistedReport ? <Button leadingIcon={<FlaskConical size={14} />} onClick={() => openPawOsRoute(desktop, buildTraceLabRoute(persistedReport.reportId))} size="small" variant="quiet">在 Lab 中批量验证</Button> : null}
           <Button
             disabled={diagnosticSession.isFetching}
             leadingIcon={diagnosticSession.isFetching ? <LoaderCircle className="ui-spin" size={14} /> : <RefreshCw size={14} />}

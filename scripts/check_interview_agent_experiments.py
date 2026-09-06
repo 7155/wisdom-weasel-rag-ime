@@ -1477,6 +1477,7 @@ def validate_retained_api_pricing_estimates(
                 cost_ref_field: str,
                 cost_hash_field: str,
                 side_name: str,
+                loaded=loaded,
             ) -> bool:
                 raw, cost, raw_path, cost_path = loaded[side_name]
                 raw_ref = str(raw_path.relative_to(repo_root))

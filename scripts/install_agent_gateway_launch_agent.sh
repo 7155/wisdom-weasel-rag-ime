@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+WEB_ONLY=0
+if [[ "${1:-}" == "--web-only" ]]; then
+  WEB_ONLY=1
+  shift
+fi
+if [[ "$#" != "0" ]]; then
+  echo "usage: $0 [--web-only]" >&2
+  exit 2
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
 APP_CODE_DIR="$APP_SUPPORT_DIR/app"
@@ -286,6 +296,17 @@ if [[ "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
   atomically_install_web_dist
   restore_web_source_dist
   trap - EXIT
+fi
+
+# Static assets are read from the installed tree on each request. Updating
+# only that tree must not rewrite the plist or interrupt active Pi Sessions.
+if [[ "$WEB_ONLY" == "1" ]]; then
+  if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "TRUE" ]]; then
+    echo "dry-run: web assets, Agent Gateway and Pi unchanged"
+  else
+    echo "control-center web assets updated; Agent Gateway and Pi left running"
+  fi
+  exit 0
 fi
 
 mkdir -p "$PLIST_DIR" "$LOG_DIR"

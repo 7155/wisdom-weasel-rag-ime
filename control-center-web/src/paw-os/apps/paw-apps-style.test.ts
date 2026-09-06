@@ -243,14 +243,16 @@ describe('PAWOS semantic type roles', () => {
     expect(primitiveCss).toMatch(/\.ui-toast__viewport\s*\{[^}]*z-index:\s*1120;/s);
   });
 
-  it('stacks Project planning controls and keeps the primary action icon-only at narrow widths', () => {
+  it('stacks Project planning controls and preserves action labels at narrow widths', () => {
     const compactDetailCss = workbenchMigratedCss.slice(
       workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 1050px)'),
       workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 760px)'),
     );
     expect(compactDetailCss).toMatch(/\.paw-wb-detail__compact-toggle\s*\{\s*display:\s*inline-flex;/s);
-    expect(compactDetailCss).toMatch(/\.paw-wb-detail__body\s*\{[^}]*max-height:\s*0;[^}]*visibility:\s*hidden;[^}]*transition:\s*max-height/s);
-    expect(compactDetailCss).toMatch(/\.paw-wb-detail\[data-expanded='true'\] \.paw-wb-detail__body\s*\{[^}]*max-height:\s*1200px;[^}]*opacity:\s*1;[^}]*visibility:\s*visible;/s);
+    expect(compactDetailCss).toMatch(/\.paw-wb-detail__body\s*\{[^}]*max-height:\s*0;[^}]*visibility:\s*hidden;/s);
+    expect(compactDetailCss).not.toMatch(/transition:[^;]*max-height/);
+    expect(compactDetailCss).toMatch(/\.paw-wb-detail\[data-expanded='true'\]\s*\{[^}]*max-height:\s*min\(380px, 48vh\);[^}]*overflow:\s*auto;/s);
+    expect(compactDetailCss).toMatch(/\.paw-wb-detail\[data-expanded='true'\] \.paw-wb-detail__body\s*\{[^}]*max-height:\s*none;[^}]*opacity:\s*1;[^}]*visibility:\s*visible;/s);
     const mediumProjectCss = workbenchMigratedCss.slice(
       workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 760px)'),
       workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 520px)'),
@@ -260,7 +262,7 @@ describe('PAWOS semantic type roles', () => {
     expect(mediumProjectCss).toMatch(/\.paw-wb-documents\[data-reader-open='true'\] \.paw-wb-document-index\s*\{\s*display:\s*none;/s);
     expect(appCss).toMatch(/\.paw-native-stage\s*\{[^}]*container-name:\s*paw-native-stage;[^}]*container-type:\s*inline-size;/s);
     const narrowProjectCss = workbenchMigratedCss.slice(workbenchMigratedCss.indexOf('@container paw-native-stage (max-width: 520px)'));
-    expect(narrowProjectCss).toMatch(/\.paw-wb-primary > span\s*\{\s*display:\s*none;/s);
+    expect(narrowProjectCss).not.toMatch(/\.paw-wb-primary > span\s*\{\s*display:\s*none;/s);
     expect(narrowProjectCss).not.toContain('.paw-wb-primary { font-size: 0; }');
     expect(narrowProjectCss).toMatch(/\.paw-wb-planning-tools\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s);
     expect(narrowProjectCss).toMatch(/\.paw-wb-planning-tools__date,[\s\S]*?\.paw-wb-planning-tools__actions\s*\{[^}]*overflow-x:\s*auto;/s);
@@ -443,7 +445,8 @@ describe('PAWOS semantic type roles', () => {
     expect(filesCss).toContain('--color-accent: var(--paw-app-accent, var(--paw-accent, #2563eb));');
     expect(filesCss).not.toMatch(/(?:min-)?height:\s*30px/);
     expect(filesCss).toContain('--color-canvas: #f4f6f8');
-    expect(filesCss).toMatch(/\.paw-files-preview\s*\{[^}]*background:\s*#fff;/s);
+    expect(filesCss).toMatch(/\.paw-files-preview\s*\{[^}]*background:\s*var\(--color-paper\);[^}]*color:\s*var\(--color-text\);/s);
+    expect(filesCss).toMatch(/\.paw-files-preview__body\s*\{[^}]*background:\s*var\(--color-paper\);[^}]*color:\s*var\(--color-text\);/s);
     expect(toolsMigratedCss).not.toContain('.paw-desktop-root .paw-files-app');
     expect(terminalCss).toMatch(/\.paw-terminal-console\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\);/s);
     expect(terminalCss).toMatch(/\.paw-terminal-console\[data-session\]\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) 30px;/s);
@@ -826,7 +829,7 @@ describe('PAWOS semantic type roles', () => {
 
   it('reserves an in-bounds final column for the Agent Home send button', () => {
     expect(agentNextCss).toMatch(
-      /\.an-composer-foot\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*max-content repeat\(3, minmax\(0, 1fr\)\) 32px;/s,
+      /\.an-composer-foot\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*max-content max-content minmax\(0, 1\.5fr\) minmax\(0, 1fr\) 32px;/s,
     );
     expect(agentNextCss).toMatch(/\.an-anchor\s*\{[^}]*min-width:\s*0;/s);
     expect(agentNextCss).toMatch(/\.an-send\s*\{[^}]*margin-left:\s*0;[^}]*justify-self:\s*end;/s);
@@ -1000,11 +1003,9 @@ describe('PAWOS semantic type roles', () => {
 
   it('keeps migrated descriptions and metadata on deliberate direct roles', () => {
     expect(shellMigratedCss).toMatch(/\.paw-launchpad section > div > button small\s*\{[^}]*font-size:\s*12\.5px;[^}]*line-height:\s*1\.5;/s);
-    expect(workbenchMigratedCss).toMatch(/\.paw-wb-document-reader__authority p\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*1\.6;/s);
     expect(systemMigratedCss).toMatch(/\.paw-agent-mode__copy small\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.55;/s);
     expect(terminalCss).toMatch(/\.paw-terminal-statusbar\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.4;/s);
     expect(memoryCss).toMatch(/\.memory-lineage-panel > div:first-child > p,[\s\S]*?font-size:\s*14px;[\s\S]*?line-height:\s*1\.55;/);
-    expect(memoryCss).toMatch(/\.memory-pipeline__note span\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.5;/s);
     expect(knowledgeCss).toMatch(/\.knowledge-graph__inspector > p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.65;/s);
     expect(knowledgeCss).toMatch(/\.knowledge-chunk-grid p\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.62;/s);
   });

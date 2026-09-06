@@ -1,5 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+ipcRenderer.on('paw-host:navigate', (_event, route) => {
+  if (typeof route === 'string' && /^\/agent(?:\?session=[^\s#]*)?$/.test(route)) window.location.hash = route;
+});
+
+contextBridge.exposeInMainWorld('pawScreenAssistant', Object.freeze({
+  getCapture: () => ipcRenderer.invoke('paw-screen:context'),
+  getConversation: () => ipcRenderer.invoke('paw-screen:conversation'),
+  rememberConversation: (conversation) => ipcRenderer.invoke('paw-screen:remember-conversation', conversation),
+  capture: () => ipcRenderer.invoke('paw-screen:capture'),
+  openSession: (sessionId) => ipcRenderer.invoke('paw-screen:open-session', sessionId),
+  saveNote: (note) => ipcRenderer.invoke('paw-screen:save-note', note),
+}));
+
 const nativeHost = process.platform === 'darwin' ? 'macos' : 'electron';
 if (nativeHost === 'macos') {
   const markNativeHost = () => { document.documentElement.dataset.pawNativeHost = nativeHost; };
@@ -20,6 +33,15 @@ contextBridge.exposeInMainWorld('pawBrowserHost', Object.freeze({
   clearHistory() {
     return ipcRenderer.invoke('paw-browser:clear-history');
   },
+  addBookmark(bookmark) {
+    return ipcRenderer.invoke('paw-browser:add-bookmark', bookmark);
+  },
+  getBookmarks() {
+    return ipcRenderer.invoke('paw-browser:get-bookmarks');
+  },
+  getDownloads() {
+    return ipcRenderer.invoke('paw-browser:get-downloads');
+  },
   getHistory() {
     return ipcRenderer.invoke('paw-browser:get-history');
   },
@@ -38,6 +60,12 @@ contextBridge.exposeInMainWorld('pawBrowserHost', Object.freeze({
   openDownloads() {
     return ipcRenderer.invoke('paw-browser:open-downloads');
   },
+  openDownload(downloadId) {
+    return ipcRenderer.invoke('paw-browser:open-download', downloadId);
+  },
+  revealDownload(downloadId) {
+    return ipcRenderer.invoke('paw-browser:reveal-download', downloadId);
+  },
   pickWorkspaceDirectory() {
     return ipcRenderer.invoke('paw-host:pick-workspace-directory');
   },
@@ -46,6 +74,12 @@ contextBridge.exposeInMainWorld('pawBrowserHost', Object.freeze({
   },
   removeHistoryEntry(entryId) {
     return ipcRenderer.invoke('paw-browser:remove-history-entry', entryId);
+  },
+  removeBookmark(bookmarkId) {
+    return ipcRenderer.invoke('paw-browser:remove-bookmark', bookmarkId);
+  },
+  cancelDownload(downloadId) {
+    return ipcRenderer.invoke('paw-browser:cancel-download', downloadId);
   },
   removeExtension(extensionId) {
     return ipcRenderer.invoke('paw-browser:remove-extension', extensionId);
@@ -70,6 +104,16 @@ contextBridge.exposeInMainWorld('pawBrowserHost', Object.freeze({
     const handler = (_event, history) => listener(history);
     ipcRenderer.on('paw-browser:history-updated', handler);
     return () => ipcRenderer.off('paw-browser:history-updated', handler);
+  },
+  onBookmarksChanged(listener) {
+    const handler = (_event, bookmarks) => listener(bookmarks);
+    ipcRenderer.on('paw-browser:bookmarks-updated', handler);
+    return () => ipcRenderer.off('paw-browser:bookmarks-updated', handler);
+  },
+  onDownloadsChanged(listener) {
+    const handler = (_event, downloads) => listener(downloads);
+    ipcRenderer.on('paw-browser:downloads-updated', handler);
+    return () => ipcRenderer.off('paw-browser:downloads-updated', handler);
   },
   onOpenUrl(listener) {
     const handler = (_event, url) => listener(url);

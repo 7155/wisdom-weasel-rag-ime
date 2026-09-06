@@ -39,6 +39,7 @@
     "baseline": {"$ref": "#/$defs/runSummary"},
     "candidate": {"$ref": "#/$defs/runSummary"},
     "comparison": {"$ref": "#/$defs/comparison"},
+    "optimizationEvidence": {"$ref": "#/$defs/optimizationEvidence"},
     "star": {"$ref": "#/$defs/star"},
     "claim": {"$ref": "#/$defs/claim"},
     "openGaps": {
@@ -47,6 +48,69 @@
     "importedAtMs": {"type": "integer", "minimum": 0}
   },
   "$defs": {
+    "optimizationEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "provenance", "patch", "baselineTrace", "caseComparisons", "validationBoundary", "gaps"],
+      "properties": {
+        "status": {"enum": ["available", "partial", "unavailable"]},
+        "provenance": {"const": "existing_run_artifacts"},
+        "patch": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "kind", "artifactPath", "beforeRef", "afterRef", "unifiedDiff", "reason"],
+          "properties": {
+            "status": {"enum": ["available", "unavailable"]},
+            "kind": {"const": "frozen_configuration"},
+            "artifactPath": {"type": "string", "maxLength": 400},
+            "beforeRef": {"type": "string", "maxLength": 400},
+            "afterRef": {"type": "string", "maxLength": 400},
+            "unifiedDiff": {"type": "string", "maxLength": 16000},
+            "reason": {"$ref": "#/$defs/text"}
+          }
+        },
+        "baselineTrace": {
+          "type": "object", "additionalProperties": false,
+          "required": ["runId", "status", "traceIds", "reason"],
+          "properties": {
+            "runId": {"type": "string", "maxLength": 200},
+            "status": {"enum": ["bound", "unavailable"]},
+            "traceIds": {"type": "array", "maxItems": 32, "items": {"type": "string", "pattern": "^trace:[a-zA-Z0-9:._-]{1,200}$"}},
+            "reason": {"$ref": "#/$defs/text"}
+          }
+        },
+        "caseComparisons": {
+          "type": "array", "maxItems": 64,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["caseId", "before", "after"],
+            "properties": {
+              "caseId": {"type": "string", "minLength": 1, "maxLength": 120},
+              "before": {"$ref": "#/$defs/scoredCaseSummary"},
+              "after": {"$ref": "#/$defs/scoredCaseSummary"}
+            }
+          }
+        },
+        "validationBoundary": {
+          "type": "object", "additionalProperties": false,
+          "required": ["candidateAware", "candidateBlind", "heldOutOpened", "unbiasedPromotionClaimAllowed", "costAuthority"],
+          "properties": {
+            "candidateAware": {"type": "boolean"},
+            "candidateBlind": {"type": "boolean"},
+            "heldOutOpened": {"type": "boolean"},
+            "unbiasedPromotionClaimAllowed": {"type": "boolean"},
+            "costAuthority": {"enum": ["runtime_cost_reconciled", "unavailable"]}
+          }
+        },
+        "gaps": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/text"}}
+      }
+    },
+    "scoredCaseSummary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "metrics"],
+      "properties": {
+        "status": {"enum": ["passed", "failed"]},
+        "metrics": {"$ref": "#/$defs/metrics"}
+      }
+    },
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "label": {"type": "string", "minLength": 1, "maxLength": 200},
     "text": {"type": "string", "minLength": 1, "maxLength": 1600},

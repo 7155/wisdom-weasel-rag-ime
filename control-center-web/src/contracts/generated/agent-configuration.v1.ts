@@ -42,6 +42,10 @@ export interface AgentConfigurationV1 {
       subagent: ModelRoute;
       roomCoordinator: ModelRoute;
     };
+    prompts?: {
+      systemInstructions: string;
+      compactionInstructions: string;
+    };
     skillRouting: {
       ordinary: SkillRoute;
       room: SkillRoute;

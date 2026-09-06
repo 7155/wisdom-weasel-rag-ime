@@ -30,7 +30,7 @@ class _CountingProvider:
 
 
 class BenchmarkExactDenseIndexTests(unittest.TestCase):
-    def test_exact_scan_is_stable_scoped_and_caches_query_embedding(self) -> None:
+    def test_exact_scan_is_stable_scoped_with_optional_numpy_cache(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             provider = _CountingProvider()
             index = BenchmarkExactDenseIndex(Path(temporary) / "knowledge.sqlite", provider)
@@ -62,11 +62,18 @@ class BenchmarkExactDenseIndexTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(first[0][0], "chunk-alpha")
             self.assertEqual(scoped, [("chunk-beta", 0.0)])
-            self.assertEqual(provider.query_calls, 1)
             status = index.status()
             self.assertTrue(status["benchmarkDeterministicExact"])
-            self.assertTrue(status["benchmarkMatrixCached"])
-            self.assertEqual(status["benchmarkQueryCacheEntries"], 1)
+            if status["benchmarkNumpyAcceleration"]:
+                self.assertEqual(provider.query_calls, 1)
+                self.assertTrue(status["benchmarkMatrixCached"])
+                self.assertEqual(status["benchmarkQueryCacheEntries"], 1)
+            else:
+                # Base installs deliberately omit the knowledge-ann extra.
+                # Their exact SQLite fallback stays correct without a matrix.
+                self.assertEqual(provider.query_calls, 3)
+                self.assertFalse(status["benchmarkMatrixCached"])
+                self.assertEqual(status["benchmarkQueryCacheEntries"], 0)
 
             reference = SqliteDenseIndex(
                 Path(temporary) / "knowledge.sqlite",

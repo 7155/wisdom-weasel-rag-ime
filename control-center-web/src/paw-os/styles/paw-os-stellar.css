@@ -1,0 +1,869 @@
+/* PAWOS stellar identity.
+ *
+ * The sky belongs to the desktop and the new-work margins. Reading surfaces
+ * stay opaque. This explicit root scope outranks deferred App styles without
+ * changing other Apps' content palettes or the appearance storage contract.
+ */
+:root:not([data-theme='dark']) .paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace, .paw-room-workspace, .paw-os-satellite) .shiki span {
+  color: var(--shiki-light, var(--color-code-text, #26364d)) !important;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] {
+  --paw-stellar-bg: #f5f7fb;
+  --paw-stellar-surface: #ffffff;
+  --paw-stellar-process: #f0f3f8;
+  --paw-stellar-raised: #e9eef6;
+  --paw-stellar-ink: #1c2636;
+  --paw-stellar-muted: #5d6b80;
+  --paw-stellar-line: #dce3ed;
+  --paw-stellar-accent: #3567b7;
+  --paw-stellar-success: #28795f;
+  --paw-stellar-warning: #896216;
+  --paw-stellar-danger: #b44759;
+  --paw-stellar-violet: #746098;
+  --paw-chrome-veil: #fbfcfe;
+  --paw-chrome-hairline: #dce3ed;
+  --paw-chrome-highlight: inset 0 1px 0 rgb(255 255 255 / .85);
+  --paw-chrome-blur: none;
+  --paw-chrome: #fbfcfe;
+  --paw-chrome-soft: #e9eef6;
+  --paw-chrome-ink: #1c2636;
+  --paw-chrome-muted: #5d6b80;
+  --paw-desktop-ink: #1c2636;
+  --paw-desktop-muted: #5d6b80;
+  --paw-desktop-surface: #ffffff;
+  --paw-selection-plate: #3567b7;
+  --paw-shadow-rest: 0 14px 32px -20px rgb(31 49 77 / .2);
+  --paw-shadow: 0 24px 58px -24px rgb(31 49 77 / .26);
+  background: var(--paw-stellar-bg);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-desktop {
+  background: var(--paw-stellar-bg);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+  color: var(--paw-stellar-ink);
+  background: rgb(249 252 255 / .84);
+  text-shadow: 0 1px 0 rgb(255 255 255 / .7);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-desktop-shortcuts button:hover, .paw-wayfinder-work__project > summary:hover, .paw-wayfinder-work__loose-file:hover, .paw-wayfinder-work__project[open] > summary:not([data-selected])) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+  background: #e9eef6;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-desktop-shortcuts button, .paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is([aria-pressed='true'], [data-selected], :focus-visible) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+  color: #214f8b;
+  background: #d9e6f8;
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-wayfinder-work__project-copy small {
+  color: var(--paw-stellar-muted);
+  text-shadow: none;
+}
+.paw-desktop-root[data-paw-visual='stellar'] .paw-wayfinder-work__project-copy small[data-state='running'] { color: var(--paw-stellar-success); }
+.paw-desktop-root[data-paw-visual='stellar'] .paw-wayfinder-work__project-copy small[data-state='attention'] { color: var(--paw-stellar-danger); }
+
+/* The sky is an authored scene, with a separate ringed planet and near stars.
+ * Legacy terrain retains its Runtime pulse contract in other visual worlds. */
+.paw-desktop-root[data-paw-visual='stellar'] .paw-field-media {
+  background: #dce9f8;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-field-media > .paw-composition-field,
+.paw-desktop-root[data-paw-visual='stellar'] .paw-field-live {
+  display: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-field-media::after {
+  background: linear-gradient(180deg, rgb(243 248 255 / .2), transparent 22%, transparent 80%, rgb(32 54 98 / .15));
+}
+
+.paw-stellar-scene { display: none; }
+.paw-desktop-root[data-paw-visual='stellar'] .paw-stellar-scene {
+  display: block;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  isolation: isolate;
+}
+.paw-stellar-scene__far,
+.paw-stellar-scene__near,
+.paw-stellar-scene__planet-plane { position: absolute; inset: -40px; }
+.paw-stellar-scene__nebula {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  animation: paw-stellar-nebula-drift 90s linear infinite alternate;
+}
+.paw-stellar-scene__daylight {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(244 249 255 / .54), transparent 48%),
+    linear-gradient(110deg, rgb(185 211 235 / .2), transparent 64%);
+}
+.paw-stellar-scene__planet {
+  position: absolute;
+  width: clamp(360px, 52vw, 960px);
+  max-width: none;
+  height: auto;
+  left: 63%;
+  top: 49%;
+  opacity: .82;
+  animation: paw-stellar-planet-drift 70s linear infinite alternate;
+}
+.paw-stellar-scene:not([data-agent-count='0']) .paw-stellar-scene__planet { opacity: .18; }
+.paw-stellar-scene__stars { position: absolute; inset: 0; animation: paw-stellar-star-drift 60s linear infinite alternate; }
+.paw-stellar-scene__stars i {
+  position: absolute;
+  border-radius: 50%;
+  color: #fff;
+  background: currentColor;
+  box-shadow: 0 0 8px 1px rgb(222 238 255 / .8);
+}
+.paw-stellar-scene__stars i[data-bright-sky] { color: #507796; box-shadow: 0 0 4px 1px rgb(248 253 255 / .5); }
+.paw-stellar-scene__stars i:nth-child(13n + 1)::before,
+.paw-stellar-scene__stars i:nth-child(13n + 1)::after { position: absolute; top: 50%; left: 50%; content: ''; background: currentColor; transform: translate(-50%, -50%); opacity: .65; }
+.paw-stellar-scene__stars i:nth-child(13n + 1)::before { width: 11px; height: 1px; }
+.paw-stellar-scene__stars i:nth-child(13n + 1)::after { width: 1px; height: 11px; }
+.paw-stellar-scene[data-stellar-paused='true'] :is(.paw-stellar-scene__nebula, .paw-stellar-scene__planet, .paw-stellar-scene__stars) { animation-play-state: paused; }
+@keyframes paw-stellar-nebula-drift {
+  from { transform: scale(1.04) translate3d(-.5%, 0, 0); }
+  to { transform: scale(1.09) translate3d(.5%, -1%, 0); }
+}
+@keyframes paw-stellar-planet-drift {
+  from { transform: translate3d(0, 0, 0) rotate(-2deg); }
+  to { transform: translate3d(-1.2%, -1.8%, 0) rotate(1deg); }
+}
+@keyframes paw-stellar-star-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-16px, 10px, 0); }
+}
+@media (max-width: 700px) {
+  .paw-stellar-scene__stars i:nth-child(n + 49) { display: none; }
+  .paw-stellar-scene__planet { width: 520px; left: 40%; top: 65%; }
+  .paw-stellar-scene__nebula { object-position: 60% center; }
+}
+@media (prefers-reduced-motion: reduce), (hover: none), (pointer: coarse) {
+  .paw-stellar-scene :is(.paw-stellar-scene__nebula, .paw-stellar-scene__planet, .paw-stellar-scene__stars) { animation: none; }
+}
+[data-reduce-motion='true'] .paw-stellar-scene :is(.paw-stellar-scene__nebula, .paw-stellar-scene__planet, .paw-stellar-scene__stars) { animation: none; }
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-menu-bar {
+  background: #f5f7fa;
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-menu-bar::after {
+  background: linear-gradient(90deg, transparent, #9db1cf 34%, #bdcce1 63%, transparent);
+  opacity: .45;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-menu-app[data-app], .paw-menu-extra, .paw-menu-status) {
+  color: var(--paw-stellar-muted);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-system-mark, .paw-menu-app, .paw-menu-extra):hover,
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-menu-app, .paw-menu-extra)[aria-expanded='true'] {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-raised);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-brand-wordmark {
+  letter-spacing: .035em;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-dock, .paw-dock-tip) {
+  color: var(--paw-stellar-ink);
+  background: #ffffff;
+  border-color: var(--paw-stellar-line);
+  box-shadow: 0 14px 32px -18px rgb(31 49 77 / .2);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-dock button,
+.paw-desktop-root[data-paw-visual='stellar'] .paw-dock :is(.paw-dock-launchpad, .paw-dock-overview) {
+  color: var(--paw-stellar-muted);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-dock > i {
+  background: var(--paw-stellar-line);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'][data-window-interaction] :is(.paw-menu-bar, .paw-dock) {
+  background: #fbfcfe;
+}
+
+/* All Apps share the window frame. Their canvas and content keep the App
+ * palette; only Agent is assigned the white reading palette below. */
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-window {
+  border-color: #dce3ed;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-window-titlebar {
+  color-scheme: light;
+  color: var(--paw-stellar-ink);
+  border-bottom-color: var(--paw-stellar-line);
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-window-title {
+  color: var(--paw-stellar-ink);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell:not([data-active]) .paw-window-title {
+  color: var(--paw-stellar-muted);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-active][data-app] .paw-window-titlebar::after {
+  background: linear-gradient(90deg, transparent, var(--paw-stellar-accent), transparent);
+  opacity: .45;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-desktop-shortcuts button strong, .paw-wayfinder-work__project-copy strong) {
+  color: var(--paw-stellar-ink);
+  text-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-field-stage::before {
+  background: radial-gradient(50% 50% at 50% 50%, rgb(255 255 255 / .72), rgb(255 255 255 / .5) 70%, transparent);
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-field-lede__mark, .paw-field-lede__copy) {
+  color: var(--paw-stellar-muted);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-field-lede__title, .paw-field-lede__copy b) {
+  color: var(--paw-stellar-ink);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-field-lede__title em {
+  color: var(--paw-stellar-accent);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-field-lede__start {
+  color: #ffffff;
+  background: var(--paw-stellar-accent);
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-field-lede__start:hover {
+  background: #2e5da7;
+  box-shadow: none;
+}
+
+/* Desktop-owned transient surfaces are opaque so their text never depends
+ * on which star or App happens to sit below a menu. */
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-menu, .paw-context-menu, .paw-wayfinder-work, .paw-wayfinder-work__project-content, .paw-wayfinder-work__context-sheet, .paw-archive-undo, .paw-launchpad) {
+  --paw-ink: var(--paw-stellar-ink);
+  --paw-muted: var(--paw-stellar-muted);
+  --paw-panel: var(--paw-stellar-raised);
+  --paw-panel-strong: var(--paw-stellar-surface);
+  --paw-panel-soft: var(--paw-stellar-process);
+  --paw-accent: var(--paw-stellar-accent);
+  --paw-accent-strong: var(--paw-stellar-accent);
+  --paw-line: var(--paw-stellar-line);
+  --paw-line-soft: var(--paw-stellar-line);
+  color-scheme: light;
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+  box-shadow: 0 16px 40px -20px rgb(31 49 77 / .2);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-wayfinder-work {
+  --wayfinder-stone: var(--paw-stellar-process);
+  --wayfinder-stone-deep: var(--paw-stellar-raised);
+  --wayfinder-ink: var(--paw-stellar-ink);
+  --wayfinder-muted: var(--paw-stellar-muted);
+  --wayfinder-moss: var(--paw-stellar-success);
+  --wayfinder-clay: var(--paw-stellar-danger);
+  --wayfinder-ochre: var(--paw-stellar-warning);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-menu, .paw-context-menu) {
+  --paw-menu-ink: var(--paw-stellar-ink);
+  --paw-menu-bg: var(--paw-stellar-surface);
+  --paw-menu-line: var(--paw-stellar-line);
+  --paw-menu-selected-ink: var(--paw-stellar-ink);
+  --paw-menu-selected-bg: #e6edf8;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-launchpad {
+  background: #f7f9fc;
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-launchpad section > header :is(input[type='search'], button),
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-wayfinder-work__repeats-toggle, .paw-wayfinder-work__state button) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-process);
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-launchpad :is(.paw-launchpad-title > span, .paw-launchpad-group, section > div > button small),
+.paw-desktop-root[data-paw-visual='stellar'] .paw-launchpad section > header input[type='search']::placeholder {
+  color: var(--paw-stellar-muted);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-launchpad section > div > button strong {
+  color: var(--paw-stellar-ink);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-wayfinder-work__row {
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-wayfinder-work__row, .paw-wayfinder-work__repeat):hover,
+.paw-desktop-root[data-paw-visual='stellar'] .paw-wayfinder-work__bucket-toggle:hover {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-raised);
+  border-color: var(--paw-stellar-line);
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-wayfinder-work__more, .paw-wayfinder-work__repeats-toggle[aria-expanded='true']) {
+  color: var(--paw-stellar-accent);
+}
+
+/* The complete Agent window, including portalled chrome, resolves one set
+ * of reading tokens. App-local variables are scoped here, not on the OS. */
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] {
+  --paw-ink: var(--paw-stellar-ink);
+  --paw-muted: var(--paw-stellar-muted);
+  --paw-panel: var(--paw-stellar-raised);
+  --paw-panel-strong: var(--paw-stellar-surface);
+  --paw-panel-soft: var(--paw-stellar-process);
+  --paw-line: var(--paw-stellar-line);
+  --paw-line-soft: #e5eaf1;
+  --paw-accent: var(--paw-stellar-accent);
+  --paw-accent-strong: #2d5da8;
+  --paw-accent-soft: #edf2fa;
+  --paw-success: var(--paw-stellar-success);
+  --paw-warning: var(--paw-stellar-warning);
+  --paw-danger: var(--paw-stellar-danger);
+  --paw-app-canvas: var(--paw-stellar-bg);
+  --paw-app-nav: var(--paw-stellar-surface);
+  --paw-app-surface: var(--paw-stellar-surface);
+  --paw-app-selection: var(--paw-stellar-raised);
+  --paw-control-ink: var(--paw-stellar-ink);
+  --paw-control-muted: var(--paw-stellar-muted);
+  --paw-control-bg: var(--paw-stellar-surface);
+  --paw-control-bg-soft: var(--paw-stellar-process);
+  --paw-control-line: var(--paw-stellar-line);
+  --paw-control-line-strong: #9dadc3;
+  --paw-focus-line: var(--paw-stellar-accent);
+  --paw-focus-halo: rgb(53 103 183 / .12);
+  --paw-menu-ink: var(--paw-stellar-ink);
+  --paw-menu-bg: var(--paw-stellar-surface);
+  --paw-menu-line: var(--paw-stellar-line);
+  --paw-menu-selected-ink: var(--paw-stellar-ink);
+  --paw-menu-selected-bg: #e6edf8;
+  --paw-panel-bg: var(--paw-stellar-surface);
+  --paw-panel-line: var(--paw-stellar-line);
+  --paw-button-primary-ink: #ffffff;
+  --paw-button-primary-bg: var(--paw-stellar-accent);
+  --color-canvas: var(--paw-stellar-bg);
+  --color-surface: var(--paw-stellar-surface);
+  --color-surface-raised: var(--paw-stellar-raised);
+  --color-surface-subtle: var(--paw-stellar-process);
+  --color-surface-hover: #f1f4f9;
+  --color-surface-pressed: #e9eef6;
+  --color-paper: var(--paw-stellar-surface);
+  --color-chrome: var(--paw-stellar-process);
+  --color-border: var(--paw-stellar-line);
+  --color-border-soft: #e5eaf1;
+  --color-border-strong: #9dadc3;
+  --color-text: var(--paw-stellar-ink);
+  --color-text-primary: var(--paw-stellar-ink);
+  --color-text-secondary: var(--paw-stellar-muted);
+  --color-text-tertiary: #627086;
+  --color-accent: var(--paw-stellar-accent);
+  --color-accent-strong: #2d5da8;
+  --color-accent-text: var(--paw-stellar-accent);
+  --color-accent-soft: #edf2fa;
+  --color-accent-subtle: #f1f5fb;
+  --color-focus: var(--paw-stellar-accent);
+  --color-success: var(--paw-stellar-success);
+  --color-success-soft: #eaf4ef;
+  --color-warning: var(--paw-stellar-warning);
+  --color-warning-soft: #faf3e6;
+  --color-warning-border: #e5d5b5;
+  --color-danger: var(--paw-stellar-danger);
+  --color-danger-soft: #faedf0;
+  --color-danger-border: #e8c9d0;
+  --color-info: var(--paw-stellar-accent);
+  --color-info-soft: #edf2fa;
+  --color-code-bg: #f4f6fa;
+  --color-code-surface: #f7f9fc;
+  --color-code-border: var(--paw-stellar-line);
+  --color-code-text: #26364d;
+  --color-code-muted: var(--paw-stellar-muted);
+  color-scheme: light;
+  color: var(--paw-stellar-ink);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace, .paw-room-workspace--migrated-v1),
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-window-titlebar[data-window-chrome] {
+  --paw-chat-surface: var(--paw-stellar-surface);
+  --paw-chat-surface-subtle: var(--paw-stellar-process);
+  --paw-chat-surface-hover: #f1f4f9;
+  --paw-chat-user-bubble: #edf2fa;
+  --paw-chat-text: var(--paw-stellar-ink);
+  --paw-chat-text-secondary: var(--paw-stellar-muted);
+  --paw-chat-text-tertiary: #627086;
+  --paw-chat-icon: var(--paw-stellar-muted);
+  --paw-chat-border: var(--paw-stellar-line);
+  --paw-chat-border-translucent: #e5eaf1;
+  --paw-chat-accent: var(--paw-stellar-accent);
+  --paw-chat-ok: var(--paw-stellar-success);
+  --paw-chat-warn: var(--paw-stellar-warning);
+  --paw-chat-violet: var(--paw-stellar-violet);
+  --paw-chat-danger: var(--paw-stellar-danger);
+  --room-accent: var(--paw-stellar-accent);
+  --room-accent-soft: #edf2fa;
+  --room-queued: #627086;
+  --room-running: var(--paw-stellar-accent);
+  --room-waiting: var(--paw-stellar-warning);
+  --room-review: var(--paw-stellar-violet);
+  --room-complete: var(--paw-stellar-success);
+  --room-failed: var(--paw-stellar-danger);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-agent-next {
+  --an-paper: var(--paw-stellar-surface);
+  --an-paper-bright: var(--paw-stellar-surface);
+  --an-paper-soft: var(--paw-stellar-process);
+  --an-paper-sink: var(--paw-stellar-bg);
+  --an-ink: var(--paw-stellar-ink);
+  --an-ink-2: var(--paw-stellar-muted);
+  --an-ink-3: #627086;
+  --an-hairline: var(--paw-stellar-line);
+  --an-rule: #d4ddea;
+  --an-rule-strong: #9dadc3;
+  --an-red: var(--paw-stellar-danger);
+  --an-yellow: var(--paw-stellar-warning);
+  --an-cobalt: var(--paw-stellar-accent);
+  --an-violet: var(--paw-stellar-violet);
+  --an-teal: var(--paw-stellar-success);
+  --an-rose: #9e5f7f;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-rail {
+  border-right-color: var(--paw-stellar-line);
+  background: #f5f7fa;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-search {
+  color: var(--paw-stellar-muted);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-agent-search input::placeholder {
+  color: var(--paw-stellar-muted);
+  opacity: 1;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-group > header {
+  color: var(--paw-stellar-muted);
+  font-family: inherit;
+  letter-spacing: .01em;
+  line-height: 1.4;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-group > header::after {
+  background: var(--paw-stellar-line);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-row:hover {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-process);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-row[aria-current='page'] {
+  color: var(--paw-stellar-ink);
+  background: #e8effa;
+  box-shadow: inset 1px 0 var(--paw-stellar-accent);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] .paw-agent-row[aria-current='page'] small {
+  color: var(--paw-stellar-muted);
+}
+
+/* New work: one clear composer and a compact continuation list. The orbital
+ * signature is placed in unused margins, with no texture beneath the draft. */
+.paw-desktop-root[data-paw-visual='stellar'] .an-home-root {
+  background: var(--paw-stellar-surface);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-home { background: #fff; }
+.paw-desktop-root[data-paw-visual='stellar'] .an-home-wrap {
+  width: min(800px, 100%);
+  padding: clamp(24px, 6cqh, 60px) 36px 16px;
+}
+.an-home-intro { display: flex; flex: none; align-items: center; gap: 12px; margin-bottom: 22px; }
+.an-home-orbit { position: relative; display: grid; width: 32px; height: 32px; flex: none; place-items: center; border: 1px solid #d9d4e8; border-radius: 50%; transform: rotate(-28deg); }
+.an-home-orbit::before { position: absolute; inset: 8px -5px; border: 1px solid #d9d4e8; border-radius: 50%; content: ''; }
+.an-home-orbit::after { position: absolute; top: 3px; right: 0; width: 5px; height: 5px; border-radius: 50%; background: #8b7bb9; content: ''; }
+.an-home-orbit > span { width: 12px; height: 12px; border-radius: 50%; background: #f0edf7; }
+.paw-desktop-root[data-paw-visual='stellar'] .an-home-title {
+  margin: 0;
+  font-size: clamp(23px, 3cqw, 28px);
+  font-weight: 580;
+  line-height: 1.4;
+  letter-spacing: -.025em;
+  animation: none;
+}
+.paw-desktop-root[data-paw-visual='stellar'] .an-composer {
+  border-color: #e2e4e9;
+  border-radius: 20px;
+  background: var(--paw-stellar-surface);
+  box-shadow: none;
+  animation: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-composer:focus-within {
+  border-color: #b8accf;
+  box-shadow: 0 2px 10px rgb(48 38 71 / .035);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-composer textarea {
+  min-height: 92px;
+  padding: 18px 20px 10px;
+  caret-color: var(--paw-stellar-accent);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.an-chip, .an-starter, .an-room-plan__chip, .an-room-plan__stepper) {
+  background: transparent;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-mode-seg button[aria-checked='true'] {
+  color: #55456e;
+  background: #fff;
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-send {
+  color: #ffffff;
+  background: var(--paw-stellar-accent);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-send:hover:not(:disabled) {
+  background: #2e5da7;
+  transform: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-send:disabled {
+  color: #7a889c;
+  background: #e9eef5;
+  opacity: 1;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.an-starters, .an-mode-brief, .an-home-section, .an-home-foot) {
+  animation: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-starter:hover {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-process);
+  transform: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-home-section {
+  margin-top: 34px;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-home-section h2 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .01em;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-recent-list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-recent-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 16px;
+  padding: 14px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--paw-stellar-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-recent-card:hover,
+.paw-desktop-root[data-paw-visual='stellar'] .an-recent-card.is-room:hover {
+  border-color: var(--paw-stellar-line);
+  background: #f4f7fb;
+  box-shadow: none;
+  transform: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-recent-card .rc-top {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-recent-card .rc-preview {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  padding-left: 15px;
+  color: var(--paw-stellar-muted);
+  font-size: 12.5px;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-recent-card .rc-meta {
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-end;
+  color: #627086;
+  font-variant-numeric: tabular-nums;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-recent-card.is-room .rc-title {
+  color: var(--paw-stellar-ink);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .an-dot {
+  border-radius: 50%;
+}
+
+/* Session/Room outer bars and drafting remain one stable reading surface. */
+.paw-desktop-root[data-paw-visual='stellar'] .paw-session-workspace :is(.paw-session-workspace__body, .paw-session-workspace__primary, .paw-session-workspace__conversation, .paw-session-workspace__trace, .paw-session-workspace__loading),
+.paw-desktop-root[data-paw-visual='stellar'] .paw-session-workspace__trace :is(.an-trace, .an-trace-main, .an-topbar, .paw-agent-trace-v1, .paw-agent-trace-v1__filters),
+.paw-desktop-root[data-paw-visual='stellar'] .paw-session-workspace__side,
+.paw-desktop-root[data-paw-visual='stellar'] .paw-session-workspace__side > :is(.agent-status-panel, .session-subagent-panel, .agent-files-panel) > header {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-surface);
+  border-color: var(--paw-stellar-line);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-session-workspace__side {
+  box-shadow: 0 16px 40px -20px rgb(31 49 77 / .2);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-session-workspace__conversation[data-message-flow='separated'] :is(.agent-inline-diff, .agent-rich-artifact, .agent-file-block, .agent-file-collection),
+.paw-desktop-root[data-paw-visual='stellar'] .paw-agent-trace-v1__filters button {
+  background: var(--paw-stellar-process);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__header, .paw-room-workspace--migrated-v1 .paw-room-workspace__header, .paw-room-workspace__signal) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-room-workspace__mode, .paw-room-window-chrome, .paw-room-workspace__objective span) {
+  color: var(--paw-stellar-muted);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__header nav, .paw-room-window-chrome > nav) {
+  border-color: var(--paw-stellar-line);
+  background: #f4f6fa;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__header nav, .paw-room-window-chrome nav) button[aria-pressed='true'] {
+  color: #55456e;
+  background: #fff;
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-room-workspace__signal-status > span {
+  color: var(--paw-stellar-muted);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-process);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-room-tools,
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-room-tools__header, .paw-room-tools__tabs) {
+  color: var(--paw-stellar-ink);
+  border-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-room-tools__header small, .paw-room-tools__actions > button, .paw-room-tools__tabs > button) {
+  color: var(--paw-stellar-muted);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-room-tools__actions > button, .paw-room-tools__tabs > button):hover,
+.paw-desktop-root[data-paw-visual='stellar'] .paw-room-tools__tabs > button[aria-selected='true'] {
+  color: var(--paw-stellar-ink);
+  background: var(--paw-stellar-process);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-room-tools__tabs > button::after {
+  background: var(--paw-stellar-accent);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-room-workspace__composer {
+  border-top-color: var(--paw-stellar-line);
+  background: var(--paw-stellar-surface);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer {
+  border: 1px solid #cbd6e5;
+  border-radius: 16px;
+  background: var(--paw-stellar-process);
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer:focus-within {
+  border-color: var(--paw-stellar-accent);
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__send:not(:disabled) {
+  color: #ffffff;
+  background: var(--paw-stellar-accent);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__delivery button[aria-checked='true'] {
+  color: var(--paw-stellar-ink);
+  background: #e6edf8;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-session-workspace__conversation[data-message-flow='separated'] .agent-user-message .agent-markdown {
+  color: var(--paw-stellar-ink);
+  border-color: #d7e1ef;
+  background: #edf2fa;
+  box-shadow: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] :is(input, textarea) {
+  caret-color: var(--paw-stellar-accent);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] :is(input, textarea)::placeholder {
+  color: var(--paw-stellar-muted);
+  opacity: 1;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] :is(select, .paw-select) {
+  color-scheme: light;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app='agent'] ::selection {
+  color: #183863;
+  background: #dce8fb;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-agent-app, .paw-window-titlebar, .paw-launchpad, .paw-context-menu) :is(button, [role='button'], a, input, textarea, select):focus-visible {
+  outline-color: var(--paw-stellar-accent);
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] :is(.paw-agent-recents, .an-recent-list, .an-menu, .paw-room-timeline) {
+  scrollbar-width: thin;
+  scrollbar-color: #bdc9da transparent;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-room-workspace__runtime > span[data-terminal] i {
+  background: var(--paw-stellar-muted);
+  box-shadow: none;
+  animation: none;
+}
+
+.paw-desktop-root[data-paw-visual='stellar'] .paw-room-workspace__runtime > span[data-terminal='failed'] i {
+  background: #b54850;
+}
+
+@container paw-window (max-width: 700px) {
+  .paw-desktop-root[data-paw-visual='stellar'] .paw-room-window-chrome .paw-room-workspace__runtime > span[data-compact-status]::after {
+    content: attr(data-compact-status);
+    font-size: 11px;
+  }
+}
+
+@container paw-window (max-width: 680px) {
+  .paw-desktop-root[data-paw-visual='stellar'] .an-home-wrap {
+    padding: 24px 20px 16px;
+  }
+
+  .paw-desktop-root[data-paw-visual='stellar'] .an-home-title {
+    margin-bottom: 0;
+  }
+
+  .paw-desktop-root[data-paw-visual='stellar'] .an-recent-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .paw-desktop-root[data-paw-visual='stellar'] .an-recent-card .rc-meta {
+    grid-column: 1;
+    grid-row: 3;
+    justify-content: flex-start;
+    padding-left: 15px;
+  }
+}
+
+@media (max-width: 540px) {
+  .paw-desktop-root[data-paw-visual='stellar'] .an-home-wrap {
+    padding: 22px 16px 14px;
+  }
+
+  .paw-desktop-root[data-paw-visual='stellar'] .an-home-section {
+    margin-top: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-desktop-root[data-paw-visual='stellar'] :is(.an-home-title, .an-composer, .an-starters, .an-home-section, .an-home-foot) {
+    animation: none;
+    transition: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .paw-desktop-root[data-paw-visual='stellar'] :is(.an-home-title, .an-composer, .an-starters, .an-home-section, .an-home-foot) {
+  animation: none;
+  transition: none;
+}
+
+/* UR-253 replaces the previous per-App colored paper. App identity remains in
+   its icon; shared navigation, inputs and reading surfaces use one palette. */
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] {
+  --paw-app-canvas: #fff;
+  --paw-app-nav: #f6f7f9;
+  --paw-app-surface: #fff;
+  --paw-app-surface-strong: #fff;
+  --paw-app-support-soft: #f7f8fa;
+  --paw-app-selection: #edf0f5;
+  --paw-app-line: #e2e6ed;
+}
+.paw-desktop-root[data-paw-visual='stellar'] .paw-window-shell[data-app] .paw-native-app {
+  --color-accent: #496697;
+  --color-accent-hover: #375580;
+  --color-accent-pressed: #2d4973;
+  --color-accent-strong: #375580;
+  --color-accent-soft: #edf2f9;
+  --color-accent-subtle: #f5f7fb;
+  --color-focus: #6681ae;
+  --color-border: #e4e7ed;
+  --color-border-strong: #cbd2dd;
+  --color-text: #262d38;
+  --color-text-secondary: #5e6979;
+  --color-text-tertiary: #75808f;
+  background: #fff;
+}
+.paw-desktop-root[data-paw-visual='stellar'] .paw-native-nav nav button[aria-current='page'] {
+  color: #293445;
+  background: #e9edf3;
+  box-shadow: none;
+  font-weight: 600;
+}
+.paw-desktop-root[data-paw-visual='stellar'] .paw-native-nav nav button[aria-current='page'] > svg:first-child { color: #526984; }

@@ -74,7 +74,10 @@ class EnterpriseRagRuntimeCostExportTests(unittest.TestCase):
                 return {"passed": True, "reportSha256": "a" * 64}
 
             def fake_cost_main(argv: list[str]) -> int:
-                arguments = dict(zip(argv[::2], argv[1::2], strict=True))
+                all_models = "--all-models" in argv
+                valued = [argument for argument in argv if argument != "--all-models"]
+                arguments = dict(zip(valued[::2], valued[1::2], strict=True))
+                observed["all_models"] = all_models
                 runtime_db = Path(arguments["--runtime-db"])
                 self.assertTrue(runtime_db.is_file())
                 observed.update(arguments)
@@ -117,7 +120,10 @@ class EnterpriseRagRuntimeCostExportTests(unittest.TestCase):
 
             self.assertEqual(0, result)
             self.assertEqual("gpt-5.6-luna", observed["evaluation_model"])
-            self.assertEqual("gpt-5.6-luna", observed["--model"])
+            # The default Judge remains Sol; the receipt must include its
+            # cost together with the selected Luna candidate's cost.
+            self.assertTrue(observed["all_models"])
+            self.assertNotIn("--model", observed)
             self.assertEqual("matched-stage-1", observed["--run-id"])
             self.assertEqual(str(pricing.resolve()), observed["--pricing-config"])
             self.assertEqual(str(cost_output.resolve()), observed["--output"])

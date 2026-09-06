@@ -1,6 +1,6 @@
 {
   "schemaVersion": "paw.interview-metrics-ledger.v1",
-  "generatedAt": "2026-09-01",
+  "generatedAt": "2026-09-05",
   "sourceRevision": "17bcf08ca3bd4a7780960ffa1ac230698fe80717",
   "agentExperimentLedger": "eval/interview-metrics/agent-experiments.v1.json",
   "workingTreeSnapshot": {
@@ -1861,6 +1861,108 @@
         "the receipt has no frozen USD price or billed Provider usage",
         "source-local candidate was not installed and production database was not opened"
       ]
+    },
+    {
+      "id": "memory.pi-current-pair.20260905.r3",
+      "domain": "memory",
+      "title": "Memory current Pi runtime: controlled Sol/Luna synthetic validation",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-05T10:28:18.032Z",
+      "values": {
+        "experimentId": "memory.maintenance-pi-model-only-20260905-r3.v1",
+        "fixtureCases": 5,
+        "durableCases": 4,
+        "nonMemoryControls": 1,
+        "requestsPerModel": 2,
+        "requestCount": 4,
+        "failedRequestCount": 0,
+        "baseline": {
+          "curationCases": 5,
+          "modelDecisionCount": 5,
+          "curationOk": 1,
+          "currentAtomCount": 6,
+          "governedCurrentAtomCount": 6,
+          "legalLineageCurrentAtomCount": 6,
+          "retrievalCases": 5,
+          "durableCaseCount": 4,
+          "retrievalPassed": 1,
+          "projectionFresh": 1,
+          "rollbackPassed": 1,
+          "rollbackRestoredBaseline": 1,
+          "replayAttempted": 1,
+          "replayPassed": 1,
+          "replayReusedModelRequests": 1,
+          "requestCount": 2,
+          "failedRequestCount": 0,
+          "uncachedInputTokens": 10803,
+          "cachedInputTokens": 0,
+          "outputTokens": 3647,
+          "totalTokens": 14450,
+          "apiCostUsd": 0.163425,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "trialElapsedMs": 165559
+        },
+        "candidate": {
+          "curationCases": 5,
+          "modelDecisionCount": 5,
+          "curationOk": 1,
+          "currentAtomCount": 6,
+          "governedCurrentAtomCount": 6,
+          "legalLineageCurrentAtomCount": 6,
+          "retrievalCases": 5,
+          "durableCaseCount": 4,
+          "retrievalPassed": 1,
+          "projectionFresh": 1,
+          "rollbackPassed": 1,
+          "rollbackRestoredBaseline": 1,
+          "replayAttempted": 1,
+          "replayPassed": 1,
+          "replayReusedModelRequests": 1,
+          "requestCount": 2,
+          "failedRequestCount": 0,
+          "uncachedInputTokens": 10909,
+          "cachedInputTokens": 0,
+          "outputTokens": 4169,
+          "totalTokens": 15078,
+          "apiCostUsd": 0.0071846,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "trialElapsedMs": 82277
+        },
+        "costDecreasePercent": 95.60373259905155,
+        "costAuthority": "runtime_cost_reconciled_estimate",
+        "syntheticFixture": true,
+        "personalMemoryQualityMeasured": false,
+        "heldOutConsumed": false,
+        "productionMutationPerformed": false,
+        "providerBillAvailable": false,
+        "oldCliPairReproduced": false
+      },
+      "sample": {
+        "count": 5,
+        "unit": "same five synthetic fixtures evaluated once per model; four requests are not four independent fixture sets"
+      },
+      "reproduction": {
+        "command": "python3 scripts/export_memory_pi_trial_pair.py --source-root \"$MEMORY_PI_PAIR_SOURCE\" --output eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json --check",
+        "status": "Retained-receipt verification only; this command makes no Provider call. The paid Pi Trials are identified by their report refs and source receipt hashes."
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json"
+      ],
+      "claim": {
+        "allowed": "State the new Pi synthetic validation, frozen controls, actual counts, lifecycle gates and Runtime-reconciled estimate decrease. Keep this evidence separate from the old CLI pair. New Pi synthetic validation: both models pass curation, retrieval, rollback and replay; 2 requests each, 0 failures. Runtime-reconciled cost estimate $0.163425 → $0.0071846 (95.60373260% lower); total tokens 14450 → 15078.",
+        "forbidden": "Do not claim Provider billing, real personal-memory quality, production improvement, Held-out generalization, installation/foreground acceptance, old CLI Prompt reproduction, lower token count or multi-Agent benefit."
+      },
+      "limitations": [
+        "One Pi Trial per model, using five public synthetic fixtures; no repeated-run confidence interval.",
+        "No production personal memory, Held-out, installed frontend acceptance or multi-Agent benefit was evaluated.",
+        "This standard-v1 Pi validation is separate from the retained concise-json-v1 CLI pair; it does not reproduce or replace that experiment.",
+        "Cost is a Runtime-reconciled estimate using the frozen Pi catalog, not a Provider bill; elapsed time is diagnostic.",
+        "Public Trial results expose aggregate gates and counts, not per-case answer bodies or per-case durable/abstention pass counts."
+      ]
     }
   ],
   "runs": [
@@ -2185,6 +2287,17 @@
       "command": "python3 scripts/run_extension_app_candidate_eval.py --app-directory control-center-web/extension-apps/zhanggui-wenshu --workspace-root <temporary-workspace> --output <private-report> && python3 -m unittest tests.test_run_extension_app_candidate_eval",
       "outcome": "passed",
       "summary": "The 掌柜问数 Extension App candidate passed its source binding and one deterministic offline fixture with linked SandboxRun, Trace and Eval receipts; 3/3 runner tests passed, Provider calls were 0, production writes were blocked, and no install action was performed."
+    },
+    {
+      "id": "memory-pi-current-pair-20260905-r3",
+      "measuredAt": "2026-09-05T10:28:18.032Z",
+      "command": "python3 scripts/export_memory_pi_trial_pair.py --source-root \"$MEMORY_PI_PAIR_SOURCE\" --output eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json --check",
+      "outcome": "passed",
+      "summary": "New Pi synthetic validation: both models pass curation, retrieval, rollback and replay; 2 requests each, 0 failures. Runtime-reconciled cost estimate $0.163425 → $0.0071846 (95.60373260% lower); total tokens 14450 → 15078. The command verifies retained receipts, without rerunning the paid Trials.",
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json"
+      ],
+      "experimentId": "memory.maintenance-pi-model-only-20260905-r3.v1"
     }
   ],
   "datasets": [
@@ -2295,6 +2408,18 @@
       "localStatus": "not imported; requires self-hosted sites",
       "fit": "end-to-end browser Agent tasks and state-based acceptance",
       "nextAction": "defer until PAW has one shared visible browser guest and stable Browser Trace lifecycle"
+    },
+    {
+      "id": "memory-pi-synthetic-fixture-20260905-r3",
+      "domain": "memory",
+      "sourceUrl": "https://github.com/7155/personal-agent-workbench/blob/main/rag_ime/personal_memory_luna_evaluation.py",
+      "localStatus": "Five source-defined public synthetic cases, frozen at the retained source code hashes; this does not contain production personal memory.",
+      "manifestSha256": "c0cfdaf2429d6e1ac82847ed9efc8dc04fc33611082e8d03e4de7fbb77282fff",
+      "caseCount": 5,
+      "heldOutConsumed": false,
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json"
+      ]
     }
   ]
 }

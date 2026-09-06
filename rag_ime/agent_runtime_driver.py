@@ -26,6 +26,7 @@ MediaResolver = Callable[[str, str, str], str]
 SessionContextProvider = Callable[[Mapping[str, object]], Mapping[str, object]]
 SkillAllowlistProvider = Callable[[Mapping[str, object]], list[str]]
 ToolManifestProvider = Callable[[Mapping[str, object]], list[Mapping[str, object]]]
+PromptSettingsProvider = Callable[[Mapping[str, object]], Mapping[str, object]]
 CompactionObserver = Callable[
     [str, Mapping[str, object], str],
     Mapping[str, object] | None,
@@ -48,6 +49,7 @@ class RuntimeDriverContext:
     tool_manifest_provider: ToolManifestProvider | None = None
     skill_allowlist_provider: SkillAllowlistProvider | None = None
     compaction_observer: CompactionObserver | None = None
+    prompt_settings_provider: PromptSettingsProvider | None = None
 
 
 @dataclass(frozen=True)

@@ -8,14 +8,14 @@ from .contracts.json_schema import validate_contract
 _PROGRESSIVE_CAPABILITY_POLICY = """<capability-policy>
 routing card 是 catalog revision 元数据；nextCandidates 仅建议，notFor 命中不加载。
 skill_load 只加载当前任务所需的精确正文一次；<loaded_skill> 同 revision 不重载，不复制整份技能库或下层历史。
-Skill 是可复用方法，不拥有 Runtime 状态。简单任务不加载流程 Skill；通常一个职责 Skill 加一个任务方法，最多两个互补 Skill，禁止固定流水线和重复职责。
+Skill 是可复用方法，不拥有 Runtime 状态。简单任务不加载流程 Skill；同一阶段通常一个职责 Skill 加一个任务方法，最多两个互补 Skill，禁止固定流水线和重复职责。阶段结束后按剩余验收继续选择方法；阶段内的只读约束不延伸到整个任务。
 已知行为且有测试缝隙用 test-driven-implementation；未知故障用 systematic-debugging；实质用户取舍才用 alignment-and-decision；多步骤、多 owner 才用 implementation-planning。
 只有委派确有收益时用 orchestrate-session；facilitate-room 仅供 Room Facilitator，Partner 继续使用普通 Session Skill。Review 由用户要求或风险决定，不是必经门槛。
 委派由主管按任务选 fresh/new 或 fork；两者一等，无固定偏好。都带有界 TaskBrief、ContextRefs、SkillRefs、预期输出，排除旁支。
 结果统一返回状态、摘要、evidence/artifact/document refs、下一步和残余风险；各 Skill 只补充自己的结果字段。
 有 schema 直调；否则 tool_load 1-4 个，禁预热、猜测、协议改搜。拒绝指定工具：tool_search 后单独 tool_load。Runtime 实际能力/审批/取消/工作区/生命周期/owner 优先。
-先查可验证事实；授权内可逆默认直接执行；外部事实不可得则阻塞。调查后仅剩实质取舍或明确要求 Grill/挑战/压力测试，才用 alignment-and-decision/ask。普通模式合并 1-4 个独立项、分开依赖项。禁裸“确认”；禁将 Goal/In scope/Readiness 内部模板原样作最终聊天。计划不算完成。
-主 Agent 主管 Goal，处理未完/失败/孤儿/未闭环 WorkItem；每个 deliverable 有 owner、新鲜、权威 evidence receipt，缺失即未完成。分开验证真实路径能否跑通、是否满足当前精确需求；缺一轴不能闭环。
+提问遵循 work-policy，交互方式由 alignment-and-decision 定义。禁裸“确认”，不把内部模板原样作最终聊天。计划不算完成。
+主 Agent 主管 Goal；子 Agent 只提交分配范围的结果。处理未完/失败/孤儿 WorkItem；每个 deliverable 有 owner、新鲜、权威 evidence receipt，缺失即未完成。分开验证真实路径能否跑通、是否满足当前精确需求；缺一轴不能闭环。
 </capability-policy>"""
 
 

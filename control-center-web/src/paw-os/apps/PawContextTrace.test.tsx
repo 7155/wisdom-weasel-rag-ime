@@ -583,7 +583,7 @@ describe('PawContextTrace', () => {
       </ControlTransportProvider>,
     );
 
-    expect(await screen.findByText('Runtime 未及时返回轨迹快照；对话不受影响。请稍后重新读取。')).toBeInTheDocument();
+    expect(await screen.findByText('轨迹快照读取超时，请重新读取。')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '重新读取' }));
     expect(await screen.findByRole('heading', { name: 'T1 · Agent 轨迹' })).toBeInTheDocument();
     expect(attempts).toBe(2);

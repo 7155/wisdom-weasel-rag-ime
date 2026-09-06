@@ -80,6 +80,8 @@ describe('merged model and reasoning control', () => {
     await user.click(trigger);
     const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
     expect(within(picker).getByRole('radiogroup', { name: '推理强度' })).toBeInTheDocument();
+    expect(within(picker).queryByRole('listbox')).not.toBeInTheDocument();
+    await user.click(within(picker).getByRole('button', { name: /更换模型/ }));
     const search = within(picker).getByRole('searchbox', { name: '搜索模型' });
     await waitFor(() => expect(search).toHaveFocus());
     await user.type(search, 'flash');
@@ -104,9 +106,7 @@ describe('merged model and reasoning control', () => {
 
     await user.click(trigger);
     const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
-    await waitFor(() => expect(within(picker).getByRole('searchbox', { name: '搜索模型' }))
-      .toHaveFocus());
-    within(picker).getByRole('radio', { name: '高' }).focus();
+    await waitFor(() => expect(within(picker).getByRole('radio', { name: '高' })).toHaveFocus());
     await user.keyboard('{ArrowRight}{Enter}');
     expect(onChange).toHaveBeenCalledWith('gpt', 'gpt-5.6-luna', 'max');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' }))
@@ -127,7 +127,8 @@ describe('merged model and reasoning control', () => {
     });
     expect(screen.getAllByRole('button')).toHaveLength(1);
     expect(trigger).toHaveClass('agent-composer__picker');
-    expect(trigger).toHaveTextContent('GPT-5.6 Luna · OpenAI Codex · 高');
+    expect(trigger).toHaveTextContent('GPT-5.6 Luna');
+    expect(trigger).toHaveTextContent('高');
   });
 
   it('opens the merged popover on the requested section for each picker command', async () => {
@@ -156,7 +157,7 @@ describe('merged model and reasoning control', () => {
     let picker = await screen.findByRole('dialog', { name: '选择模型与推理强度' });
     await waitFor(() => expect(within(picker).getByRole('radio', { name: '高' }))
       .toHaveFocus());
-    expect(within(picker).getByRole('searchbox', { name: '搜索模型' })).toBeInTheDocument();
+    expect(within(picker).queryByRole('searchbox', { name: '搜索模型' })).not.toBeInTheDocument();
 
     await userEvent.setup().keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' }))

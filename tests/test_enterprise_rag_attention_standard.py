@@ -7,6 +7,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from tests.frozen_rag_replay import frozen_source_sha256, run_frozen_standard_verifier
+
 
 ROOT = Path(__file__).resolve().parents[1]
 STANDARD_R5 = (
@@ -57,6 +59,7 @@ def _fact(qrels: dict[str, object], query_id: str, fact_id: str) -> dict[str, ob
 
 
 class EnterpriseRagAttentionStandardTests(unittest.TestCase):
+    @unittest.skipUnless(all(path.is_file() for path in (QRELS_R5, QRELS_R6, AUDIT_R6)), "Private RAG corpus is not bundled in public source")
     def test_r6_is_one_append_only_exact_attention_binding(self) -> None:
         before = _read(QRELS_R5)
         after = _read(QRELS_R6)
@@ -108,7 +111,6 @@ class EnterpriseRagAttentionStandardTests(unittest.TestCase):
         self.assertEqual(20, after["counts"]["evidenceBindingCount"])
 
     def test_receipt_keeps_candidate_aware_boundary_and_exact_comparison(self) -> None:
-        audit = _read(AUDIT_R6)
         receipt = _read(RECEIPT_R6)
 
         self.assertFalse(receipt["candidateBlind"])
@@ -133,6 +135,16 @@ class EnterpriseRagAttentionStandardTests(unittest.TestCase):
             if key.startswith("contains"):
                 self.assertFalse(value, key)
 
+        self.assertEqual(
+            _read(STANDARD_R6)["calibrationSource"]["auditReceiptSha256"],
+            receipt["auditBoundary"]["auditReceiptFileSha256"],
+        )
+        if not AUDIT_R6.is_file():
+            return  # Private-body comparison requires the local corpus.
+        self.assertEqual(_sha256(AUDIT_R6), receipt["auditBoundary"]["auditReceiptFileSha256"])
+        audit = _read(AUDIT_R6)
+        self.assertTrue(audit["candidateAware"])
+
         serialized_public = json.dumps([_read(STANDARD_R6), receipt], ensure_ascii=False)
         for body in (
             audit["frozenSemanticUnit"]["question"],
@@ -145,13 +157,7 @@ class EnterpriseRagAttentionStandardTests(unittest.TestCase):
             self.assertNotIn(body, serialized_public)
 
     def test_dedicated_verifier_recomputes_all_three_controls(self) -> None:
-        completed = subprocess.run(
-            [sys.executable, "scripts/verify_enterprise_rag_attention_standard.py"],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        completed = run_frozen_standard_verifier("verify_enterprise_rag_attention_standard.py")
         self.assertEqual(0, completed.returncode, completed.stderr)
         payload = json.loads(completed.stdout)
         self.assertEqual("ENTERPRISE_RAG_ATTENTION_STANDARD_R6_OK", payload["event"])

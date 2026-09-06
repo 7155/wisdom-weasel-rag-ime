@@ -7,6 +7,8 @@ const nativeRouteMismatchPattern = /(?:route[_\s-]policy[_\s-]rejected|unexpecte
 const memoryBootstrapBudgetPattern = /(?:memory\s+(?:bootstrap|curation\s+packet).*(?:budget|context\s+window|max_chars|token\s+limit|input\s+limit|input\s+too\s+large|too\s+long|exceed)|记忆(?:召回|上下文|整理).*(?:超限|超上限|预算|上下文过大|输入过大))/i;
 const modelQuotaPattern = /(?:usage\s+limit\s+has\s+been\s+reached|quota(?:\s+|[_-])(?:exceeded|exhausted|depleted)|rate\s*limit(?:ed)?|too\s+many\s+requests|请求过于频繁|额度(?:已用尽|不足|超限)|配额(?:已用尽|不足|超限)|\b429\b)/i;
 const memoryBootstrapFailureCodePattern = /^memory_bootstrap_(?:budget_exceeded|failed)$/u;
+const legacyRoomParticipantBusyPattern = /^(?:.+ is currently busy|Room participants are currently busy: .+)$/u;
+export const ROOM_PARTICIPANT_BUSY_TEXT = '目标伙伴正在处理另一条请求；草稿已保留，待当前请求结束后可再次发送。';
 export const MEMORY_BOOTSTRAP_SKIPPED_TEXT = '记忆召回本轮已跳过，消息仍可继续；下次会重新尝试。';
 export const MODEL_QUOTA_EXHAUSTED_TEXT = '模型服务额度暂时用尽，请稍后重试或切换已配置模型。';
 export const SESSION_WORKSPACE_MISSING_TEXT = (
@@ -142,6 +144,12 @@ export function publicAgentErrorText(
     return MODEL_QUOTA_EXHAUSTED_TEXT;
   }
   const receiptFailure = agentCommandReceiptFailure(value);
+  if (
+    receiptFailure?.causeCode === 'ROOM_PARTICIPANT_BUSY'
+    || legacyRoomParticipantBusyPattern.test(message)
+  ) {
+    return ROOM_PARTICIPANT_BUSY_TEXT;
+  }
   if (receiptFailure?.code === 'AGENT_COMMAND_PENDING') {
     if (receiptFailure.recoveryState === 'unresolved') {
       return (

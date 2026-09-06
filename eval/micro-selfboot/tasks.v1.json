@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "paw.micro-selfboot-suite.v1",
+  "revision": "20260905-1",
+  "purpose": "Small synthetic validation for resume evidence; no population-level gains",
+  "budget": {"maxCallsPerTrial": 6, "maxObservedTokensPerTrial": 20000, "maxOutputTokensPerCall": 768, "timeoutSecondsPerCall": 90, "candidateLimit": 1},
+  "tasks": [
+    {"id":"contract", "claim":"Bounded Room contract handoff", "input":{"api":{"path":"/tickets","method":"POST","request":["clientMessageId","title"],"response":["ticketId","state"]},"consumer":{"path":"/tickets","method":"POST","request":["requestId","title"],"response":["id","state"]}},"expected":["request:clientMessageId","response:ticketId"]},
+    {"id":"handoff", "claim":"Fresh Session uses explicit predecessor handoff", "input":{"earlier":"Implement ticket title validation. Keep POST /tickets. Keep clientMessageId. Do not add a required priority field.","next":"Return the endpoint contract to continue this work."},"expected":{"path":"/tickets","idempotencyField":"clientMessageId","priorityRequired":false}},
+    {"id":"update", "claim":"Fresh Session applies explicit newer decision", "input":{"history":[{"time":"2026-09-01","limit":500},{"time":"2026-09-05","limit":800}],"question":"Return currentLimit and sourceDate using the latest explicit decision."},"expected":{"currentLimit":800,"sourceDate":"2026-09-05"}},
+    {"id":"reliability", "claim":"Source-level failure scenarios over real Lab and Room owners", "providerCalls":0},
+    {"id":"optimization", "claim":"Lab diagnoses a bounded policy configuration and validates one candidate", "input":{"policy":"Current policy v2: CNY expenses at most 800 require a receipt and are approved. Above 800 are rejected. Missing receipt is rejected. Unknown currencies require manual review. v1 (retired) used limit 500.","irrelevant":"Office opens at 09:00. Team lunch is Friday. Dashboard color is blue. Parking is on floor B2. These notes do not change expense policy."},"expected":{"currency":"CNY","limit":800,"receiptRequired":true,"unknownCurrency":"manual"}},
+    {"id":"export", "claim":"Exported policy CLI works in a fresh directory with isolated Python", "cases":[{"amount":600,"currency":"CNY","receipt":true,"expected":"approved"},{"amount":801,"currency":"CNY","receipt":true,"expected":"rejected"},{"amount":100,"currency":"CNY","receipt":false,"expected":"rejected"},{"amount":100,"currency":"USD","receipt":true,"expected":"manual"}]}
+  ]
+}

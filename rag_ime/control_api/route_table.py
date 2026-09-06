@@ -362,6 +362,19 @@ def _get(
     )
 
 
+AGENT_LAB_TRIAL_ROUTES: tuple[RouteDescriptor, ...] = (
+    _get(
+        "/api/agent/eval-lab/trials", "agent.eval_lab_trials",
+        query_args=("jobId",), takes_arguments=True,
+    ),
+    RouteDescriptor(
+        method="POST", path="/api/agent/eval-lab/trials/start",
+        handler="agent.eval_lab_trial_start", status=202,
+    ),
+    _post("/api/agent/eval-lab/trials/cancel", "agent.eval_lab_trial_cancel"),
+)
+
+
 # Status and catalog reads. Handlers are dotted where the chain reached through
 # a sub-service; none of them take request data except `/api/profiles`.
 READ_ROUTES: tuple[RouteDescriptor, ...] = (
@@ -389,6 +402,18 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
         "/api/agent/eval-lab/evidence",
         "agent.eval_lab_evidence_read",
         query_args=("runId", "taskIndex"),
+        takes_arguments=True,
+    ),
+    _get(
+        "/api/agent/eval-lab/scene-recipes",
+        "agent.eval_lab_scene_recipes",
+        query_args=("sceneId", "experimentId"),
+        takes_arguments=True,
+    ),
+    _get(
+        "/api/agent/eval-lab/golden",
+        "agent.eval_lab_golden",
+        query_args=("suiteId",),
         takes_arguments=True,
     ),
     _get("/api/agent/providers", "pi_provider_auth.catalog"),
@@ -699,6 +724,7 @@ MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *VOCABULARY_ROUTES,
     *BROWSER_ROUTES,
     *READ_ROUTES,
+    *AGENT_LAB_TRIAL_ROUTES,
     *MANAGEMENT_READ_ROUTES,
     *SUGGESTION_ROUTES,
     *RUNTIME_ACTION_ROUTES,

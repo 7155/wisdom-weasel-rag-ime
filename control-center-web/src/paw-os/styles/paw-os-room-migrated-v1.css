@@ -323,8 +323,7 @@
   white-space: nowrap;
 }
 
-.paw-desktop-root .paw-room-workspace__work-strip i,
-.paw-desktop-root .paw-room-window-flow-ledger i {
+.paw-desktop-root .paw-room-workspace__work-strip i {
   width: 6px;
   height: 6px;
   flex: 0 0 6px;
@@ -587,8 +586,8 @@
 .paw-desktop-root .paw-room-tool-facts dt { color: var(--paw-chat-text-tertiary); white-space: nowrap; }
 .paw-desktop-root .paw-room-tool-facts dd { min-width: 0; margin: 0; color: var(--paw-chat-text-secondary); overflow-wrap: anywhere; }
 
-/* Room Focus: one light collaboration plane, a complete main window and
- * participant/tool satellites in two information rails. */
+/* Room Focus: light shell chrome; the conversation canvas and on-demand
+ * participant inspector are composed by paw-os-room-focus.css. */
 .paw-desktop-root .paw-window-layer[data-room-focus] {
   bottom: 0;
 }
@@ -676,37 +675,6 @@
 .paw-desktop-root .paw-room-focus-modebar i[data-status='failed'],
 .paw-desktop-root .paw-room-focus-modebar i[data-status='aborted'] { background: #c53d46; }
 @keyframes paw-room-focus-status { 50% { opacity: .38; transform: scale(.78); } }
-
-.paw-desktop-root .paw-room-focus-satellite-rail {
-  position: absolute;
-  z-index: 35;
-  right: 0;
-  left: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  scroll-padding-inline: 10px;
-  scroll-snap-type: x proximity;
-  scrollbar-color: rgb(121 86 232 / .36) transparent;
-  scrollbar-width: thin;
-  touch-action: pan-x;
-  pointer-events: auto;
-}
-
-.paw-desktop-root .paw-room-focus-satellite-rail:focus-visible {
-  outline: 2px solid #7956e8;
-  outline-offset: -2px;
-}
-
-.paw-desktop-root .paw-room-focus-satellite-track {
-  position: relative;
-  min-width: 100%;
-  height: 100%;
-}
-
-.paw-desktop-root .paw-room-focus-satellite-track .paw-window-shell {
-  scroll-snap-align: start;
-}
 
 .paw-desktop-root .paw-window-shell[data-focus-layout][data-collaboration-role='primary'] .paw-window {
   border-color: rgb(121 86 232 / .2);
@@ -890,88 +858,7 @@
   line-height: 1.58;
 }
 
-/* Communication stays in one compact chronological focus ledger. */
-.paw-desktop-root .paw-room-window-flow-ledger {
-  position: absolute;
-  z-index: 45;
-  right: auto;
-  bottom: 8px;
-  left: 50%;
-  width: min(720px, calc(100% - 20px));
-  max-height: min(190px, 36vh);
-  overflow: hidden;
-  border: 1px solid rgb(29 36 48 / .09);
-  border-radius: 10px;
-  color: #5f6b7c;
-  background: rgb(255 255 255 / .94);
-  box-shadow: 0 8px 22px rgb(35 47 66 / .08);
-  transform: translateX(-50%);
-  -webkit-backdrop-filter: blur(16px) saturate(125%);
-  backdrop-filter: blur(16px) saturate(125%);
-  pointer-events: auto;
-}
-
-.paw-desktop-root .paw-room-window-flow-ledger > summary {
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 10px;
-  cursor: pointer;
-  list-style: none;
-}
-.paw-desktop-root .paw-room-window-flow-ledger > summary::-webkit-details-marker { display: none; }
-.paw-desktop-root .paw-room-window-flow-ledger > summary:focus-visible { outline: 2px solid #7956e8; outline-offset: -2px; }
-.paw-desktop-root .paw-room-window-flow-ledger > summary > span { min-width: 0; display: flex; align-items: baseline; gap: 7px; padding: 0; border: 0; background: transparent; }
-.paw-desktop-root .paw-room-window-flow-ledger > summary strong { color: #394454; font-size: 14px; white-space: nowrap; }
-.paw-desktop-root .paw-room-window-flow-ledger > summary svg { flex: 0 0 auto; transition: transform 160ms cubic-bezier(.2, .8, .2, 1); }
-.paw-desktop-root .paw-room-window-flow-ledger[open] > summary svg { transform: rotate(90deg); }
-
-.paw-desktop-root .paw-room-window-flow-ledger > .ui-disclosure__reveal {
-  min-width: 0;
-  max-height: 150px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-.paw-desktop-root .paw-room-window-flow-ledger > .ui-disclosure__reveal > div {
-  min-width: 0;
-  display: grid;
-  gap: 7px;
-  padding: 0 8px 8px;
-  overflow: visible;
-}
-
-.paw-desktop-root .paw-room-window-flow-ledger span {
-  min-width: 0;
-  display: inline-grid;
-  grid-template-columns: 6px auto auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid rgb(29 36 48 / .075);
-  border-radius: 7px;
-  background: #fff;
-  font-size: 12px;
-}
-
-.paw-desktop-root .paw-room-window-flow-ledger span:is([data-kind='request'], [data-kind='intercom']) i { background: var(--room-flow-request); }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='question'] i { background: var(--room-flow-question); }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='answer'] i { background: var(--room-flow-answer); }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='result'] i { background: var(--room-flow-result); }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='context'] i { background: var(--room-flow-context); }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='dispatch'] i { background: var(--room-flow-dispatch); }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-kind='approval'] i { background: var(--room-flow-approval); }
-.paw-desktop-root .paw-room-window-flow-ledger small { color: #758092; font-size: 12px; font-weight: 700; }
-.paw-desktop-root .paw-room-window-flow-ledger b { overflow: hidden; color: #28313e; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-window-flow-ledger time { color: #8a94a3; font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* FlowPacket 合同字段：FP-ID 与送达状态全部可见化 */
-.paw-desktop-root .paw-room-window-flow-ledger code { color: #8a94a3; font-family: var(--font-mono); font-size: 12px; }
-.paw-desktop-root .paw-room-window-flow-ledger em { color: #5f6b7c; font-style: normal; white-space: nowrap; }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-status='failed'] em { color: #c53d46; }
-.paw-desktop-root .paw-room-window-flow-ledger span[data-status='running'] em,
-.paw-desktop-root .paw-room-window-flow-ledger span[data-status='streaming'] em { color: #1677d2; }
 
 @container paw-room-workspace (max-width: 760px) {
   /* Too narrow for a side-by-side split: the aside becomes the trailing
@@ -1071,37 +958,49 @@
     height: var(--paw-focus-frame-height) !important;
     transform: var(--paw-focus-frame-transform) !important;
   }
-  .paw-desktop-root .paw-room-window-flow-ledger { bottom: 5px; width: calc(100% - 12px); }
-  .paw-desktop-root .paw-room-window-flow-ledger > .ui-disclosure__reveal { max-height: 112px; }
 }
 
-/* Below the focus plane's minimum useful height, the main window and its
-   satellite rail already need the full surface. Keep the optional ledger out
-   of that tiny plane instead of letting it cover the rail. */
-@media (max-height: 420px) {
-  .paw-desktop-root .paw-room-window-flow-ledger { display: none; }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .paw-room-focus-modebar i { animation: none; }
   .paw-desktop-root .paw-room-window-chrome .paw-room-workspace__runtime i { animation: none; }
   .paw-desktop-root .paw-room-workspace__focus { transition-duration: 1ms; }
-  .paw-desktop-root .paw-room-window-flow-ledger > summary > svg { transition: none; }
 }
-
-:root[data-reduce-motion='true'] .paw-desktop-root .paw-room-window-flow-ledger > summary > svg { transition: none; }
 
 @media (prefers-reduced-transparency: reduce) {
   .paw-desktop-root .paw-room-focus-plane,
-  .paw-desktop-root .paw-room-focus-modebar,
-  .paw-desktop-root .paw-room-window-flow-ledger {
+  .paw-desktop-root .paw-room-focus-modebar {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  .paw-desktop-root .paw-room-window-flow-ledger { background: #fff; }
 }
 
 @media (forced-colors: active) {
-  .paw-desktop-root .paw-room-workspace__work-strip i,
-  .paw-desktop-root .paw-room-window-flow-ledger i { background: CanvasText; }
+  .paw-desktop-root .paw-room-workspace__work-strip i { background: CanvasText; }
 }
+.paw-room-workspace--migrated-v1 .paw-room-workspace__recovery {
+  display: grid;
+  min-height: 260px;
+  padding: 36px 24px;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: var(--paw-muted);
+  text-align: center;
+}
+.paw-room-workspace__recovery strong { color: var(--paw-ink); font-size: 16px; font-weight: 650; }
+.paw-room-workspace__recovery p { max-width: 38ch; margin: 0; font-size: 13px; line-height: 1.65; }
+.paw-room-workspace__recovery button {
+  min-height: 34px;
+  margin-top: 4px;
+  padding: 6px 14px;
+  border: 1px solid var(--paw-chat-border);
+  border-radius: 8px;
+  background: var(--paw-chat-surface);
+  color: var(--paw-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.paw-room-workspace__recovery button:hover:not(:disabled) { background: var(--paw-chat-surface-subtle); }
+.paw-room-workspace__recovery button:focus-visible { outline: 2px solid var(--paw-accent); outline-offset: 3px; }
+.paw-room-workspace__recovery button:disabled { cursor: wait; opacity: .6; }

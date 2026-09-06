@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from rag_ime.agent_context_runtime import render_provider_context_items
 from rag_ime.embeddings import HashingEmbeddingProvider
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent
@@ -104,6 +105,18 @@ class RealMemoryRagEvaluationTests(unittest.TestCase):
         self.assertNotIn("技术说明先给结论", encoded)
         self.assertNotIn("删除或覆盖数据前", encoded)
         self.assertNotIn("atom:explanation-style", encoded)
+
+        # Provenance is allowed, but raw IDs outside that field still fail
+        # isolation. This keeps the metric from accepting arbitrary ID leaks.
+        with patch(
+            "rag_ime.real_memory_rag_evaluation.render_provider_context_items",
+            side_effect=lambda items: render_provider_context_items(items) + "\natom:explanation-style",
+        ):
+            leaked = evaluate_real_memory_rag(
+                self.core, cases=cases, queries=queries, preverified_schema=True,
+            )
+        self.assertFalse(leaked["passed"])
+        self.assertEqual(leaked["promptIsolatedCount"], 1)
 
     def test_query_prompt_treats_memory_text_as_untrusted_data(self) -> None:
         prompt = build_real_memory_query_prompt(

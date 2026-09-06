@@ -7,12 +7,17 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MotionProvider } from '@/design/motion';
 import { PawOsAppearanceProvider } from '@/design/paw-os-themes';
+import { ThemeProvider } from '@/design/themes';
 import { PawOsAppSurfaceProvider, PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawNativeApp } from './PawNativeApps';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  delete document.documentElement.dataset.theme;
+  document.documentElement.style.removeProperty('color-scheme');
+});
 
 const NATIVE_DOCUMENT_ID = `workdoc_${'a'.repeat(32)}`;
 
@@ -75,7 +80,7 @@ describe('PAWOS native Apps', () => {
     const user = userEvent.setup();
     renderNative('project-workbench', transport);
 
-    await user.click(await screen.findByRole('button', { name: '新任务' }));
+    await user.click(await screen.findByRole('button', { name: '查看任务' }));
     expect(await screen.findByRole('heading', { level: 1, name: '任务' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '添加任务' }));
     await user.type(screen.getByPlaceholderText('例如：整理今天的工作清单'), '闭合 Project 写入');
@@ -245,17 +250,16 @@ describe('PAWOS native Apps', () => {
     renderNative('system-settings', transport);
 
     expect(await screen.findByRole('heading', { name: '外观' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /默认明亮/ })).toBeChecked();
+    const themes = screen.getByRole('radiogroup', { name: 'PAWOS 主题' });
+    expect(within(themes).getByDisplayValue('system')).toBeChecked();
     expect(screen.getByRole('navigation', { name: 'System Settings页面' })).toBeInTheDocument();
     await waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(['agent.approvals.list']));
   });
 
   it.each([
     ['memory', '我的记忆', [
-      'agent.sessions.list',
       'memory.summary',
-      'memory.activityTimeline.get',
-      'memory.activityTimeline.calendar',
+      'memory.pages',
     ]],
     ['input-studio', '输入法', ['input.source.get']],
     ['app-center', '插件管理', ['agent.extensions.list', 'agent.extensions.catalog', 'agent.extensions.proposals']],
@@ -267,6 +271,14 @@ describe('PAWOS native Apps', () => {
     expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument();
     await waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(
       expect.arrayContaining([...pathIds]),
+    ));
+  });
+
+  it('preserves the explicit Memory timeline entry after making the catalog the App home', async () => {
+    const transport = nativeTransport();
+    renderNative('memory', transport, { initialRoute: '/memory?view=timeline' });
+    await waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(
+      expect.arrayContaining(['memory.activityTimeline.get', 'memory.activityTimeline.calendar']),
     ));
   });
 });
@@ -307,15 +319,17 @@ function NativeHarness({
     <TooltipProvider delayDuration={0}>
       <QueryClientProvider client={client}>
         <ControlTransportProvider transport={transport}>
-          <PawOsAppearanceProvider>
-            <MotionProvider>
-              <PawOsDesktopProvider openApp={openApp} openRoute={setRoute} openWindow={openWindow}>
-                <PawOsAppSurfaceProvider appId={appId} height={720} width={width}>
-                  <PawNativeApp appId={appId} initialRoute={route} />
-                </PawOsAppSurfaceProvider>
-              </PawOsDesktopProvider>
-            </MotionProvider>
-          </PawOsAppearanceProvider>
+          <ThemeProvider>
+            <PawOsAppearanceProvider>
+              <MotionProvider>
+                <PawOsDesktopProvider openApp={openApp} openRoute={setRoute} openWindow={openWindow}>
+                  <PawOsAppSurfaceProvider appId={appId} height={720} width={width}>
+                    <PawNativeApp appId={appId} initialRoute={route} />
+                  </PawOsAppSurfaceProvider>
+                </PawOsDesktopProvider>
+              </MotionProvider>
+            </PawOsAppearanceProvider>
+          </ThemeProvider>
         </ControlTransportProvider>
       </QueryClientProvider>
     </TooltipProvider>

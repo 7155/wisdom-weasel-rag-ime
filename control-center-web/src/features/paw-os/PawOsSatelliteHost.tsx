@@ -17,7 +17,7 @@ import { openPawOsRoute, usePawOsDesktop } from './surface-context';
 import { routePath } from './model/app-registry';
 import type { PawOsWindowTarget } from './model/desktop';
 import { roomPlanetObserverWindowRequest } from '@/paw-os/apps/room-satellite-auto-open';
-import { PawRoomFocusOverview } from '@/paw-os/apps/PawRoomFocusOverview';
+import { PawRoomLiveFocusOverview } from '@/paw-os/apps/PawRoomLiveFocusOverview';
 import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
 import { PawRoomConversation } from '@/paw-os/apps/PawRoomConversation';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
@@ -27,6 +27,7 @@ import { buildRoomFocusProjection, roomFocusCelestialName, roomFocusStateLabel, 
 import { RoomActivityGlyph } from '@/paw-os/apps/room-tool-glyph';
 import { usePageVisibility } from '@/platform/use-page-visibility';
 import './paw-os-satellite.css';
+import { SatelliteModelBadge } from './SatelliteModelBadge';
 
 export function PawOsSatelliteHost({ target }: { target: PawOsWindowTarget }) {
   if (target.kind === 'work-document') return <WorkDocumentSatellite documentId={target.id} />;
@@ -377,7 +378,7 @@ function RoomPanelSatellite({ target }: { target: Extract<PawOsWindowTarget, { k
       {!roomQuery.isPending && !roomQuery.error && !room ? <SatelliteMissing actionLabel="回到 Room" copy="这个 Room 已不在当前 Room 清单中，可能已归档或删除。" icon={Network} route="rooms" title="找不到这个 Room" /> : null}
       {room ? (
         <div className="paw-os-satellite__room-panel-body">
-          {target.panel === 'focus' && focus ? <PawRoomFocusOverview focus={focus} onOpenParticipant={openParticipant} /> : null}
+          {target.panel === 'focus' && focus ? <PawRoomLiveFocusOverview roomId={target.id} focus={focus} onOpenParticipant={openParticipant} /> : null}
           {target.panel === 'progress' ? <RoomStatusPanel room={room} roomId={target.id} projection={projection} open /> : null}
           {target.panel === 'governance' ? <PawRoomGovernance personas={personas} room={room} onError={setError} onRefresh={refresh} onRoomUpdated={() => { void roomQuery.refetch(); }} /> : null}
         </div>
@@ -422,6 +423,7 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
   const loading = !room && !loadError && (roomQuery.isPending || liveState === 'recovering');
   return (
     <section className="paw-os-satellite paw-os-satellite--participant-chat" data-presentation="planet-observer">
+      <SatelliteModelBadge sessionId={participant?.sessionId || target.sessionId} />
       {loading ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /><Skeleton /></div> : null}
       {loadError ? <SatelliteLoadError error={loadError} icon={MessageSquare} onRetry={retry} title="行星窗口没有打开" /> : null}
       {liveState === 'failed' && (room || projection) ? (
@@ -660,6 +662,7 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
   const error = runsQuery.error || consoleQuery.error;
   return (
     <section className="paw-os-satellite paw-os-satellite--participant-chat paw-os-satellite--subagent-chat">
+      <SatelliteModelBadge sessionId={run?.childSessionId} />
       {runsQuery.isPending || (run && !error && consoleQuery.isPending) ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /><Skeleton /></div> : null}
       {error ? <SatelliteLoadError error={error} icon={MessageSquare} onRetry={() => { void runsQuery.refetch(); void consoleQuery.refetch(); }} title="子 Agent 窗口没有打开" /> : null}
       {!runsQuery.isPending && !runsQuery.error && !run ? <SatelliteMissing copy="这个子 Agent 已不在当前 Session 的运行图中。" icon={MessageSquare} route="agent" title="找不到这个子 Agent" /> : null}

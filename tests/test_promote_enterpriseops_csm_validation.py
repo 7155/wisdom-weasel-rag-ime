@@ -13,6 +13,23 @@ from scripts.promote_enterpriseops_csm_validation import (
 
 
 class PromoteEnterpriseOpsCsmValidationTests(unittest.TestCase):
+    def test_candidate_prompt_files_cannot_be_silently_promoted_as_profiles(self) -> None:
+        for owner in ("root", "evaluationContract", "lane"):
+            with self.subTest(owner=owner), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                baseline = root / "baseline.json"
+                candidate = root / "candidate.json"
+                output = root / "promotion.json"
+                baseline.write_text(json.dumps(_report("baseline-v1", 2, 28)))
+                report = _report("state-contract-v1", 3, 31)
+                container = report if owner == "root" else report[owner]
+                container["candidatePrompt"] = {"enabled": True, "sha256": "a" * 64}
+                report["reportSha256"] = _report_hash(report)
+                candidate.write_text(json.dumps(report))
+                with self.assertRaisesRegex(PromotionError, "candidate Prompt.*Validation.*Held-out"):
+                    promote_validation(baseline, candidate, output, authorize_held_out_once=True)
+                self.assertFalse(output.exists())
+
     def test_requires_explicit_one_shot_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

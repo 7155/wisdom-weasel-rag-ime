@@ -21,7 +21,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -33,10 +33,15 @@ if str(ROOT) not in sys.path:
 from rag_ime.agent_service import AgentService
 from rag_ime.rag_benchmark_agent import RagBenchmarkAgentGatewayServer
 from scripts.run_cloudops_agent_eval import (
+    EvaluationCancelled,
+    _check_cancelled,
     _candidate_runtime_config,
     _token_usage,
     _wait_for_terminal,
     _write_json_atomic,
+)
+from scripts.agent_eval_candidate_prompt import (
+    append_candidate_prompt, candidate_prompt_identity, load_candidate_prompt,
 )
 
 
@@ -1020,9 +1025,31 @@ def _run_profile(
     expected_provider: str,
     expected_model: str,
     suite_revision: str = "v1",
+    candidate_prompt_file: str | Path | None = None,
+    evaluation_split: str = "validation",
+    runtime_identity: Mapping[str, object] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+    on_session: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
+    candidate_prompt = load_candidate_prompt(candidate_prompt_file, evaluation_split=evaluation_split)
+    prompt_identity = candidate_prompt_identity(candidate_prompt)
+    frozen_controls = {
+        "taskContractSha256": _sha256(tasks), "suiteRevision": suite_revision,
+        "split": evaluation_split, "workflowProfile": workflow_profile,
+        "provider": expected_provider, "model": expected_model, "thinking": thinking_level,
+        "timeoutSeconds": timeout_seconds, "skills": [],
+        "runtimeIdentity": dict(runtime_identity or {}),
+        "toolCatalogSha256": _sha256(gateway.catalog),
+        "runnerSha256": _file_sha256(Path(__file__).resolve()),
+        "basePromptSha256": [_sha256(build_agent_prompt(task, workflow_profile=workflow_profile, suite_revision=suite_revision)) for task in tasks],
+    }
+    frozen_controls["contractSha256"] = _sha256(frozen_controls)
     task_results: list[dict[str, object]] = []
+    was_cancelled = False
     for task in tasks:
+        if cancelled is not None and cancelled():
+            was_cancelled = True
+            break
         task_id = str(task["taskId"])
         server = task["gym_servers_config"][0]
         assert isinstance(server, Mapping)
@@ -1044,6 +1071,7 @@ def _run_profile(
             for index, _ in enumerate(task.get("verifiers", []), start=1)
         ]
         ledger: list[dict[str, object]] = []
+        prompt = append_candidate_prompt(build_agent_prompt(task, workflow_profile=workflow_profile, suite_revision=suite_revision), candidate_prompt)
         try:
             database_id = client.seed_database(str(task["seedFile"]))
             runtime_stage = "session_create"
@@ -1061,6 +1089,9 @@ def _run_profile(
                 session_payload["modelProfile"] = f"{expected_provider}/{expected_model}"
             session = service.create_session(session_payload)["session"]
             session_id = str(session["id"])
+            if on_session is not None:
+                on_session(session_id)
+            _check_cancelled(cancelled, service, session_id)
             service.update_session(
                 session_id,
                 {
@@ -1103,14 +1134,11 @@ def _run_profile(
                 )
             ensured = {"runtime": ensured, "thinkingSelection": thinking_receipt}
             runtime_stage = "prompt"
+            _check_cancelled(cancelled, service, session_id)
             receipt = service.prompt(
                 session_id,
                 {
-                    "message": build_agent_prompt(
-                        task,
-                        workflow_profile=workflow_profile,
-                        suite_revision=suite_revision,
-                    ),
+                    "message": prompt,
                     "clientMessageId": f"enterpriseops:{workflow_profile}:{task_id}",
                 },
             )
@@ -1121,8 +1149,12 @@ def _run_profile(
                 session_id=session_id,
                 turn_id=turn_id,
                 timeout_seconds=timeout_seconds,
+                cancelled=cancelled,
             )
         except Exception as exc:
+            if isinstance(exc, EvaluationCancelled):
+                was_cancelled = True
+                terminal = "turn_cancelled"
             error_type = type(exc).__name__
             error_fingerprint = "sha256:" + _sha256(
                 f"{runtime_stage}:{type(exc).__name__}:{exc}"
@@ -1175,12 +1207,18 @@ def _run_profile(
                 "sessionIdSha256": _sha256(session_id),
                 "turnIdSha256": _sha256(turn_id),
                 "modelIdentitySha256": _sha256(ensured) if ensured is not None else "",
+                "promptSha256": _sha256(prompt),
             }
         )
+        if was_cancelled:
+            break
     total_verifiers = sum(int(item["verifier"]["total"]) for item in task_results)
     passed_verifiers = sum(int(item["verifier"]["passed"]) for item in task_results)
     successful_tasks = sum(item["taskSucceeded"] is True for item in task_results)
     return {
+        "status": "cancelled" if was_cancelled else "completed",
+        "candidatePrompt": prompt_identity,
+        "frozenControls": frozen_controls,
         "workflowProfile": workflow_profile,
         "taskCount": len(task_results),
         "taskSuccessCount": successful_tasks,
@@ -1214,12 +1252,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--suite-revision", choices=("v1", ENTERPRISEOPS_SUITE_V2_REVISION), default="v1")
     parser.add_argument("--suite-overlay", type=Path)
     parser.add_argument("--trial-id", required=True)
+    parser.add_argument("--candidate-prompt-file", type=Path, help="UTF-8 generic Validation instructions; never Host Gold.")
     parser.add_argument("--provider", default="openai-codex")
     parser.add_argument("--model", default="gpt-5.6-sol")
     parser.add_argument("--thinking", default="high")
     parser.add_argument("--timeout-seconds", type=float, default=900.0)
     parser.add_argument("--promotion-receipt", type=Path)
     args = parser.parse_args(argv)
+    if args.candidate_prompt_file is not None and args.split != "validation":
+        raise ValueError("candidate Prompt files are allowed only in validation; Held-out is unchanged")
 
     promotion: dict[str, object] | None = None
     promotion_winner: Mapping[str, object] | None = None
@@ -1335,19 +1376,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_provider=str(runtime_identity.get("provider") or ""),
             expected_model=str(runtime_identity.get("model") or ""),
             suite_revision=args.suite_revision,
+            candidate_prompt_file=args.candidate_prompt_file,
+            evaluation_split=args.split,
+            runtime_identity=runtime_identity,
         )
         prompt_contract = [
             {
                 "taskId": str(task["taskId"]),
-                "promptSha256": _sha256(
-                    build_agent_prompt(
-                        task,
-                        workflow_profile=args.workflow_profile,
-                        suite_revision=args.suite_revision,
-                    )
-                ),
+                "promptSha256": str(task["promptSha256"]),
             }
-            for task in tasks
+            for task in lane["tasks"]
         ]
         evaluation_contract = {
             "schemaVersion": "paw.enterpriseops-csm-evaluation-contract.v1",
@@ -1374,6 +1412,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "runtimeProvenanceSha256": runtime_provenance["provenanceSha256"],
             "promptContract": prompt_contract,
             "promptContractSha256": _sha256(prompt_contract),
+            "candidatePrompt": lane["candidatePrompt"],
+            "frozenControls": lane["frozenControls"],
         }
         if promotion is not None:
             evaluation_contract["promotionReceiptSha256"] = str(promotion.get("receiptSha256") or "")
@@ -1381,7 +1421,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = {
             "schemaVersion": "paw.enterpriseops-csm-eval.v1",
             "status": (
-                "completed" if lane["allDatabasesCleaned"] else "invalid_cleanup"
+                lane["status"] if lane["allDatabasesCleaned"] else "invalid_cleanup"
             ),
             "split": args.split,
             "manifest": manifest,
@@ -1390,6 +1430,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "runtimeIdentity": runtime_identity,
             "runtimeProvenance": runtime_provenance,
             "evaluationContract": evaluation_contract,
+            "candidatePrompt": lane["candidatePrompt"],
+            "frozenControls": lane["frozenControls"],
             "toolSelectionMode": "task_selected_oracle",
             "selectedToolNamesVisibleToAgent": True,
             "verifierGoldVisibleToAgent": False,

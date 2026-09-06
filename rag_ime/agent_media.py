@@ -289,6 +289,14 @@ class AgentMediaStore:
                     (session_id, entry, str(turn_id), media_id, ordinal, timestamp),
                 )
 
+    def was_attached(self, *, session_id: str, media_id: str) -> bool:
+        self.receipt(media_id, session_id=session_id)
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM agent_message_media WHERE session_id = ? AND media_id = ? LIMIT 1",
+                (session_id, media_id),
+            ).fetchone() is not None
+
     def attachments_for_entry(self, *, session_id: str, pi_entry_id: str) -> list[dict[str, object]]:
         with self._connect() as conn:
             rows = conn.execute(

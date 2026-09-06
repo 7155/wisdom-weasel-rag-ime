@@ -193,12 +193,18 @@ class PredictionTrigger:
     ) -> bool:
         current = self._clock_ms() if now is None else max(0, int(now))
         state = self._states[decision.group_id]
-        latest = state.in_flight_generation == decision.generation and state.generation == decision.generation
-        if state.in_flight_generation == decision.generation:
+        owns_in_flight = state.in_flight_generation == decision.generation
+        latest = owns_in_flight and state.generation == decision.generation
+        if owns_in_flight:
             state.in_flight_generation = 0
-        if not provider_called and state.call_times_ms:
+        # A late T0/async completion must not settle the newer provider call's
+        # rate-budget slot. Only the request that still owns the in-flight
+        # marker may remove its own non-provider call.
+        if not provider_called and owns_in_flight and state.call_times_ms:
             state.call_times_ms.pop()
-        if ignored or int(result_count) <= 0:
+        # An ignored stale result describes the old generation. A cooldown
+        # written here would suppress newer input and can survive its success.
+        if latest and (ignored or int(result_count) <= 0):
             state.cooldown_until_ms = current + self.config.ignore_cooldown_ms
         return latest
 

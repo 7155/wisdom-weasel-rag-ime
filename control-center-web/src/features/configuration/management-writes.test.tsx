@@ -22,6 +22,37 @@ const hash = 'sha256:ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 afterEach(cleanup);
 
 describe('Configuration settings WorkContract UI', () => {
+  it('keeps other settings available when the optional model catalog fails', async () => {
+    const user = userEvent.setup();
+    renderConfiguration(true, true, true);
+    await user.click(await screen.findByRole('button', { name: /^上下文/ }));
+    const input = screen.getByRole('spinbutton', { name: '上下文容量' });
+    expect(input).toBeEnabled();
+    expect(await screen.findByText('模型列表暂时不可用')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试模型列表' })).toBeInTheDocument();
+    await user.clear(input);
+    await user.type(input, '4096');
+    expect(screen.getByText('共 1 项未保存')).toBeInTheDocument();
+  });
+
+  it('retains the editor and draft after a settings refresh fails', async () => {
+    const user = userEvent.setup();
+    const transport = renderConfiguration(true);
+    await user.click(await screen.findByRole('button', { name: /^上下文/ }));
+    const input = screen.getByRole('spinbutton', { name: '上下文容量' });
+    await user.clear(input);
+    await user.type(input, '4096');
+    transport.settingsFailure = true;
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+    expect(await screen.findByText('设置未能刷新，已保留当前草稿')).toBeInTheDocument();
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue(4096);
+    transport.settingsFailure = false;
+    await user.click(screen.getByRole('button', { name: '重试读取设置' }));
+    await waitFor(() => expect(screen.queryByText('设置未能刷新，已保留当前草稿')).not.toBeInTheDocument());
+    expect(input).toHaveValue(4096);
+  });
+
   it('keeps the mobile search field wrapper sized by its contents', () => {
     // The wrapper contains the label, description, and input. A fixed 44px
     // height clips those children and lets the section grid cover the input.
@@ -283,10 +314,10 @@ describe('Configuration settings WorkContract UI', () => {
   it('shows a model-catalog read failure instead of an empty model catalog', async () => {
     const transport = renderConfiguration(true, true, true);
 
-    expect(await screen.findByRole('heading', { name: '读取失败' })).toBeInTheDocument();
-    expect(screen.getByText('无法读取本机设置，请刷新后重试。')).toBeInTheDocument();
+    expect(await screen.findByText('模型列表暂时不可用')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '读取失败' })).not.toBeInTheDocument();
     expect(screen.queryByText('当前没有可用模型')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试模型列表' })).toBeInTheDocument();
     expect(findRequest(transport, 'agent.role.models')).toBeDefined();
   });
 });
@@ -295,6 +326,7 @@ class ConfigurationTransport implements ControlTransport {
   readonly kind = 'mock' as const;
   readonly requests: ControlRequest[] = [];
   settingsReads = 0;
+  settingsFailure = false;
 
   constructor(
     private readonly writesAvailable: boolean,
@@ -336,6 +368,7 @@ class ConfigurationTransport implements ControlTransport {
     this.requests.push(request);
     if (request.pathId === 'configuration.settings') {
       this.settingsReads += 1;
+      if (this.settingsFailure) throw new Error('settings temporarily unavailable');
       return settingsPayload() as Response;
     }
     if (request.pathId === 'configuration.schema') return schemaPayload() as Response;

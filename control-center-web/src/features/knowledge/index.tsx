@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  ArrowLeft,
   ArrowRight,
   BookOpen,
   Database,
@@ -7,6 +8,7 @@ import {
   FileSearch,
   Files,
   FolderPlus,
+  MoreHorizontal,
   Network,
   RefreshCw,
   Search,
@@ -31,6 +33,12 @@ import {
   Field,
   IconButton,
   Input,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  MenuTrigger,
   Select,
   Switch,
   Tabs,
@@ -92,6 +100,7 @@ import {
 import { KnowledgeDocumentViewer, KnowledgeJobsPanel, KnowledgeMaterialsPanel, type KnowledgeUploadItem } from './document-workspace';
 import { KnowledgeGraphPanel } from './knowledge-graph';
 import { publicKnowledgeText } from './public-copy';
+import { useKnowledgeReadingContext, type KnowledgeReadingController } from './reading-context';
 import { usePawOsAppActive, usePawOsAppCompact, usePawOsAppIdentity } from '@/features/paw-os/surface-context';
 import { usePageVisibility } from '@/platform/use-page-visibility';
 import './knowledge.css';
@@ -104,20 +113,23 @@ export function KnowledgeFeature() {
   const compact = usePawOsAppCompact();
   const pageVisible = usePageVisibility();
   const queriesEnabled = (surfaceActive ?? true) && pageVisible;
-  const [selectedBaseId, setSelectedBaseId] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = asDetailTab(searchParams.get('tab') ?? 'materials');
+  const [selectedBaseId, setSelectedBaseId] = useState(searchParams.get('base') ?? '');
+  const tab = asDetailTab(searchParams.get('tab') ?? 'search');
   // 从别处深链进来的一条资料：只在还没有有效选择时决定落点，之后由人自己开。
   const routeBaseId = searchParams.get('base') ?? '';
   const routeDocumentId = searchParams.get('document') ?? '';
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteBaseOpen, setDeleteBaseOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<KnowledgeDocument | null>(null);
-  const [selectedDocumentId, setSelectedDocumentId] = useState('');
-  const [focusedHit, setFocusedHit] = useState<KnowledgeSearchHit | null>(null);
+  const reading = useKnowledgeReadingContext(selectedBaseId, appSurface?.windowId ?? 'standalone');
+  const { documentId: selectedDocumentId, focusHit: focusedHit } = reading.context;
+  const setSelectedDocumentId = (documentId: string) => reading.update((current) => current.documentId === documentId ? current : { ...current, documentId });
+  const setFocusedHit = (focusHit: KnowledgeSearchHit | null) => reading.update((current) => current.focusHit === focusHit ? current : { ...current, focusHit });
   const [reparseDocument, setReparseDocument] = useState<KnowledgeDocument | null>(null);
   const [uploadItems, setUploadItems] = useState<KnowledgeUploadItem[]>([]);
   const dialogTriggerRef = useRef<HTMLElement | null>(null);
+  const libraryToolsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const queries = useKnowledgeLibraryQueries(selectedBaseId, queriesEnabled);
   const queryClient = useQueryClient();
   const bases = queries.bases.data ?? [];
@@ -126,9 +138,22 @@ export function KnowledgeFeature() {
   const detailQuery = useKnowledgeDocumentDetail(selectedBaseId, selectedDocumentId, queriesEnabled);
   const selectTab = (nextTab: DetailTab, replace = true) => {
     const next = new URLSearchParams(searchParams);
-    if (nextTab === 'materials') next.delete('tab');
-    else next.set('tab', nextTab);
+    next.set('tab', nextTab);
+    if (selectedBaseId) next.set('base', selectedBaseId);
+    if (nextTab === 'viewer' && selectedDocumentId) next.set('document', selectedDocumentId);
     setSearchParams(next, { replace });
+  };
+  const openSource = (documentId: string, origin: 'materials' | 'search' | 'graph', focusHit: KnowledgeSearchHit | null = null) => {
+    reading.update((current) => ({ ...current, documentId, readerOrigin: origin, focusHit }));
+    const next = new URLSearchParams(searchParams);
+    next.set('base', selectedBaseId);
+    next.set('document', documentId);
+    next.set('tab', 'viewer');
+    setSearchParams(next, { replace: true });
+  };
+  const selectBase = (baseId: string) => {
+    setSelectedBaseId(baseId);
+    setSearchParams({ base: baseId, tab: 'search' }, { replace: true });
   };
 
   useEffect(() => {
@@ -141,6 +166,17 @@ export function KnowledgeFeature() {
   }, [bases, routeBaseId, selectedBaseId]);
 
   useEffect(() => {
+    // An explicit source link owns the read target even before the catalog
+    // arrives, or when its document is not in the current catalog response.
+    if (tab === 'viewer' && routeDocumentId && (!routeBaseId || routeBaseId === selectedBaseId)) {
+      if (selectedDocumentId !== routeDocumentId) setSelectedDocumentId(routeDocumentId);
+      return;
+    }
+    // A search/graph citation can be newer than the materials list. Its exact
+    // document remains the read target while detail is fetched independently.
+    if (selectedDocumentId && (focusedHit?.documentId === selectedDocumentId
+      || (tab === 'viewer' && routeDocumentId === selectedDocumentId))) return;
+    if (!queries.documents.isSuccess) return;
     if (!documents.length) {
       setSelectedDocumentId('');
       return;
@@ -148,10 +184,9 @@ export function KnowledgeFeature() {
     if (!documents.some((item) => item.id === selectedDocumentId)) {
       setSelectedDocumentId(documents.find((item) => item.id === routeDocumentId)?.id ?? documents[0]?.id ?? '');
     }
-  }, [documents, routeDocumentId, selectedDocumentId]);
+  }, [documents, focusedHit?.documentId, queries.documents.isSuccess, routeBaseId, routeDocumentId, selectedBaseId, selectedDocumentId, tab]);
 
   useEffect(() => {
-    setFocusedHit(null);
     setUploadItems([]);
   }, [selectedBaseId]);
 
@@ -160,6 +195,7 @@ export function KnowledgeFeature() {
     queries.worker.refetch(),
     queries.parsers.refetch(),
     ...(selectedBaseId ? [queries.base.refetch(), queries.documents.refetch(), queries.jobs.refetch()] : []),
+    ...(selectedBaseId && selectedDocumentId ? [detailQuery.refetch()] : []),
   ]);
 
   const invalidateBase = async (baseId = selectedBaseId) => {
@@ -360,9 +396,8 @@ export function KnowledgeFeature() {
               base={selectedBase}
               bases={bases}
               onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
-              onDelete={(trigger) => { rememberDialogTrigger(trigger); setDeleteBaseOpen(true); }}
               onRefresh={refresh}
-              onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
+              onSelect={selectBase}
               refreshing={queries.bases.isFetching || queries.worker.isFetching}
               selectedBaseId={selectedBaseId}
               worker={worker}
@@ -372,7 +407,7 @@ export function KnowledgeFeature() {
             bases={bases}
             onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
             onRefresh={refresh}
-            onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
+            onSelect={selectBase}
             refreshing={queries.bases.isFetching || queries.worker.isFetching}
             selectedBaseId={selectedBaseId}
             variant={appSurface ? 'app' : 'web'}
@@ -382,19 +417,31 @@ export function KnowledgeFeature() {
             {selectedBase ? (
               <>
                 {/* Inside a PAWOS window the command band above already carries
-                    the library identity, counts, and delete action, so the tab
+                    the library identity and counts, so the tab
                     workspace is the first object on screen. The web route keeps
                     the full header sheet. */}
-                {appSurface ? null : <KnowledgeBaseHeader base={selectedBase} onDelete={(trigger) => { rememberDialogTrigger(trigger); setDeleteBaseOpen(true); }} worker={worker} />}
+                {appSurface ? null : <KnowledgeBaseHeader base={selectedBase} worker={worker} />}
                 <Tabs className="knowledge-library__tabs" onValueChange={(value) => selectTab(asDetailTab(value))} value={tab}>
                   <TabsList aria-label="知识库管理视图">
+                    <TabsTrigger value="search"><Search aria-hidden="true" size={14} />搜索</TabsTrigger>
                     <TabsTrigger value="materials"><Files aria-hidden="true" size={14} />资料</TabsTrigger>
                     <TabsTrigger aria-label="查看材料" value="viewer"><BookOpen aria-hidden="true" size={14} />阅读</TabsTrigger>
-                    <TabsTrigger aria-label="检索测试" value="search"><Search aria-hidden="true" size={14} />检索</TabsTrigger>
-                    <TabsTrigger aria-label="知识图谱" value="graph"><Network aria-hidden="true" size={14} />图谱</TabsTrigger>
-                    <TabsTrigger aria-label="处理记录" value="jobs"><RefreshCw aria-hidden="true" size={14} />处理</TabsTrigger>
-                    <TabsTrigger value="settings"><Settings2 aria-hidden="true" size={14} />设置</TabsTrigger>
                   </TabsList>
+                  <Menu>
+                    <MenuTrigger asChild>
+                      <Button aria-label="更多知识库工具" className="knowledge-library__tools" data-current-tool={['graph', 'jobs', 'settings'].includes(tab) ? tab : undefined} leadingIcon={<MoreHorizontal size={15} />} ref={libraryToolsTriggerRef} size="small" variant="quiet">
+                        {tab === 'graph' ? '图谱' : tab === 'jobs' ? '处理记录' : tab === 'settings' ? '设置' : '更多'}
+                      </Button>
+                    </MenuTrigger>
+                    <MenuContent align="end" onCloseAutoFocus={(event) => { if (deleteBaseOpen) event.preventDefault(); }}>
+                      <MenuItem onSelect={() => selectTab('graph')}><Network size={14} />知识图谱</MenuItem>
+                      <MenuItem onSelect={() => selectTab('jobs')}><RefreshCw size={14} />处理记录</MenuItem>
+                      <MenuItem onSelect={() => selectTab('settings')}><Settings2 size={14} />设置</MenuItem>
+                      <MenuLabel>知识服务：{worker.label}</MenuLabel>
+                      <MenuSeparator />
+                      <MenuItem onSelect={() => { rememberDialogTrigger(libraryToolsTriggerRef.current ?? undefined); setDeleteBaseOpen(true); }}><Trash2 size={14} />删除知识库</MenuItem>
+                    </MenuContent>
+                  </Menu>
                   <TabsContent value="materials">
                     <KnowledgeMaterialsPanel
                       key={selectedBase.id}
@@ -404,17 +451,22 @@ export function KnowledgeFeature() {
                       documents={documents}
                       dropSupported={queries.transport.kind === 'http'}
                       error={queries.documents.error as Error | null}
+                      loading={queries.documents.isPending}
+                      filter={reading.context.materialsFilter}
+                      onFilterChange={(materialsFilter) => reading.update((current) => ({ ...current, materialsFilter }))}
                       importError={importMutation.error as Error | null}
                       importing={importMutation.isPending}
                       onDelete={(document, trigger) => { rememberDialogTrigger(trigger); setDocumentToDelete(document); }}
                       onClearUploads={() => { importMutation.reset(); setUploadItems([]); }}
                       onImport={() => importMutation.mutate({})}
                       onImportFiles={(files) => importMutation.mutate({ droppedFiles: files })}
-                      onOpen={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); selectTab('viewer'); }}
+                      onOpen={(documentId) => openSource(documentId, 'materials')}
                       onReparse={(document, trigger) => { rememberDialogTrigger(trigger); setReparseDocument(document); }}
+                      onRetryList={() => void queries.documents.refetch()}
+                      onRetryDetail={() => void detailQuery.refetch()}
                       onRetryUpload={(item) => importMutation.mutate({ retryItem: item })}
                       onSelect={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); }}
-                      pendingDocumentId={retryMutation.variables?.document.id ?? ''}
+                      pendingDocumentId={retryMutation.isPending ? retryMutation.variables?.document.id ?? '' : ''}
                       selectedDocumentId={selectedDocumentId}
                       uploadItems={uploadItems}
                     />
@@ -423,25 +475,29 @@ export function KnowledgeFeature() {
                     <KnowledgeDocumentViewer
                       detail={detailQuery.data ?? null}
                       documents={documents}
-                      error={detailQuery.error as Error | null}
-                      loading={detailQuery.isPending && Boolean(selectedDocumentId)}
+                      error={(selectedDocumentId ? detailQuery.error : queries.documents.error) as Error | null}
+                      loading={selectedDocumentId ? detailQuery.isPending : queries.documents.isPending}
+                      onRetry={() => { if (selectedDocumentId) void detailQuery.refetch(); else void queries.documents.refetch(); }}
                       focusHit={focusedHit}
-                      onBackToMaterials={() => selectTab('materials')}
+                      onBack={() => selectTab(reading.context.readerOrigin)}
+                      backLabel={reading.context.readerOrigin === 'search' ? '返回搜索结果' : reading.context.readerOrigin === 'graph' ? '返回图谱' : '返回资料'}
+                      onImportMaterials={() => selectTab('materials')}
                       hasMoreChunks={Boolean(detailQuery.hasNextPage)}
                       hasMoreContent={Boolean(detailQuery.hasNextContentPage)}
+                      loadMoreChunksFailed={detailQuery.isFetchNextPageError}
                       loadingMoreChunks={detailQuery.isFetchingNextPage}
                       loadingMoreContent={detailQuery.isFetchingNextContentPage}
                       onLoadMoreChunks={() => void detailQuery.fetchNextPage()}
                       onLoadMoreContent={() => void detailQuery.fetchNextContentPage()}
-                      onSelectDocument={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); }}
+                      onSelectDocument={(documentId) => openSource(documentId, reading.context.readerOrigin)}
                       selectedDocumentId={selectedDocumentId}
                       transport={queries.transport}
                     />
                   </TabsContent>
                   <TabsContent value="search">
-                    <KnowledgeSearchPanel base={selectedBase} onOpenHit={(hit) => { setSelectedDocumentId(hit.documentId); setFocusedHit(hit); selectTab('viewer'); }} transport={queries.transport} />
+                    <KnowledgeSearchPanel key={selectedBase.id} base={selectedBase} reading={reading} onOpenHit={(hit) => openSource(hit.documentId, 'search', hit)} transport={queries.transport} />
                   </TabsContent>
-                  <TabsContent value="graph">
+                  <TabsContent aria-label="知识图谱" aria-labelledby={undefined} value="graph">
                     <KnowledgeGraphPanel
                       active={queriesEnabled}
                       base={selectedBase}
@@ -449,8 +505,7 @@ export function KnowledgeFeature() {
                       onOpenSource={(node) => {
                         if (!node.documentId) return;
                         const document = documents.find((item) => item.id === node.documentId);
-                        setSelectedDocumentId(node.documentId);
-                        setFocusedHit(node.chunkId ? {
+                        openSource(node.documentId, 'graph', node.chunkId ? {
                           id: node.chunkId,
                           documentId: node.documentId,
                           documentName: node.documentName || document?.name || '',
@@ -463,12 +518,11 @@ export function KnowledgeFeature() {
                           lineEnd: null,
                           diagnostics: { effectiveMode: 'unknown', lexicalRank: null, denseRank: null, graphRank: null, lexicalScore: null, denseScore: null, graphScore: null, graphMatches: [], graphPaths: [] },
                         } : null);
-                        selectTab('viewer');
                       }}
                       transport={queries.transport}
                     />
                   </TabsContent>
-                  <TabsContent value="jobs">
+                  <TabsContent aria-label="处理记录" aria-labelledby={undefined} value="jobs">
                     <KnowledgeJobsPanel
                       cancelError={cancelJobMutation.error}
                       cancellingJobId={cancelJobMutation.isPending ? cancelJobMutation.variables ?? '' : ''}
@@ -479,7 +533,7 @@ export function KnowledgeFeature() {
                       onRefresh={() => void queries.jobs.refetch()}
                     />
                   </TabsContent>
-                  <TabsContent value="settings">
+                  <TabsContent aria-label="知识库设置" aria-labelledby={undefined} value="settings">
                     <KnowledgeSettingsPanel
                       key={selectedBase.id}
                       base={selectedBase}
@@ -580,7 +634,7 @@ function KnowledgeBaseRail({
   worker: WorkerState;
 }) {
   // In a PAWOS window the command band above the rail already owns refresh,
-  // create, delete, service health and the narrow-window selector, so the app
+  // create, service health and the narrow-window selector, so the app
   // rail carries only the library index. Duplicating those controls would put
   // two identically named buttons in the same window.
   const app = variant === 'app';
@@ -659,7 +713,6 @@ function KnowledgeBaseSwitcher({
   base,
   bases,
   onCreate,
-  onDelete,
   onRefresh,
   onSelect,
   refreshing,
@@ -669,7 +722,6 @@ function KnowledgeBaseSwitcher({
   base: DocumentKnowledgeBase | null;
   bases: readonly DocumentKnowledgeBase[];
   onCreate: (trigger: HTMLElement) => void;
-  onDelete: (trigger: HTMLElement) => void;
   onRefresh: () => void;
   onSelect: (baseId: string) => void;
   refreshing: boolean;
@@ -698,24 +750,22 @@ function KnowledgeBaseSwitcher({
           <b>{base.chunkCount}</b> 段落
         </span>
       ) : null}
-      <span className="knowledge-base-switcher__worker" data-state={worker.tone}>
+      {worker.tone !== 'success' ? <span className="knowledge-base-switcher__worker" data-state={worker.tone}>
         <i aria-hidden="true" />
         知识服务：{worker.label}
-      </span>
+      </span> : null}
       <div className="knowledge-base-switcher__actions">
         <IconButton disabled={refreshing} icon={<RefreshCw size={15} />} label="刷新知识库" onClick={onRefresh} size="small" tooltip />
-        {base ? <IconButton icon={<Trash2 size={15} />} label="删除知识库" onClick={(event) => onDelete(event.currentTarget)} size="small" tooltip /> : null}
         <Button leadingIcon={<FolderPlus size={15} />} onClick={(event) => onCreate(event.currentTarget)} size="small">新建知识库</Button>
       </div>
     </section>
   );
 }
 
-function KnowledgeBaseHeader({ base, onDelete, worker }: { base: DocumentKnowledgeBase; onDelete: (trigger: HTMLElement) => void; worker: WorkerState }) {
+function KnowledgeBaseHeader({ base, worker }: { base: DocumentKnowledgeBase; worker: WorkerState }) {
   return (
     <header className="knowledge-base-header">
       <div>
-        <span>文档知识库</span>
         <h2>{base.name}</h2>
         <p>{base.description || '这个库还没有说明。'}</p>
       </div>
@@ -725,65 +775,96 @@ function KnowledgeBaseHeader({ base, onDelete, worker }: { base: DocumentKnowled
         <div><dt>解析</dt><dd>{parserLabel(base.parser)}</dd></div>
         <div><dt>服务</dt><dd><StatusBadge label={worker.label} tone={worker.tone} /></dd></div>
       </dl>
-      <IconButton className="knowledge-base-header__delete" icon={<Trash2 size={15} />} label="删除知识库" onClick={(event) => onDelete(event.currentTarget)} size="small" tooltip />
     </header>
   );
 }
 
-function KnowledgeSearchPanel({ base, onOpenHit, transport }: { base: DocumentKnowledgeBase; onOpenHit: (hit: KnowledgeSearchHit) => void; transport: ReturnType<typeof useKnowledgeLibraryQueries>['transport'] }) {
-  const [draft, setDraft] = useState('');
-  const [selectedId, setSelectedId] = useState('');
+function KnowledgeSearchPanel({ base, reading, onOpenHit, transport }: { base: DocumentKnowledgeBase; reading: KnowledgeReadingController; onOpenHit: (hit: KnowledgeSearchHit) => void; transport: ReturnType<typeof useKnowledgeLibraryQueries>['transport'] }) {
+  const snapshot = reading.context.search;
+  const [draft, setLocalDraft] = useState(snapshot.draft);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const resultRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const backRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef(false);
+  const setDraft = (value: string) => {
+    setLocalDraft(value);
+    reading.update((current) => ({ ...current, search: { ...current.search, draft: value } }));
+  };
   const searchMutation = useMutation({
-    mutationFn: (query: string) => searchKnowledgeBase(transport, base.id, query, base.retrievalConfig),
-    onSuccess: (hits) => setSelectedId(hits[0]?.id ?? ''),
+    mutationFn: ({ query, config }: { query: string; config: KnowledgeRetrievalConfig; request: number }) => searchKnowledgeBase(transport, base.id, query, config),
+    onSuccess: (hits, input) => reading.update((current) => current.search.request !== input.request ? current : ({
+      ...current, search: { ...current.search, hits, selectedId: hits[0]?.id ?? '', status: 'success', error: '' },
+    })),
+    onError: (error, input) => reading.update((current) => current.search.request !== input.request ? current : ({
+      ...current, search: { ...current.search, status: 'error', error: publicErrorText(error, '知识服务暂时无法完成检索。') },
+    })),
   });
-  const hits = searchMutation.data ?? [];
-  const selected = hits.find((item) => item.id === selectedId) ?? hits[0] ?? null;
-
+  const hits = snapshot.hits;
+  const selected = hits.find((item) => item.id === snapshot.selectedId) ?? hits[0] ?? null;
+  const config = snapshot.config ?? base.retrievalConfig;
   useEffect(() => {
-    setDraft('');
-    setSelectedId('');
-    searchMutation.reset();
-  // A different base must not retain results or citations from the previous base.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base.id]);
+    if (detailOpen && backRef.current && getComputedStyle(backRef.current).display !== 'none') {
+      backRef.current.focus();
+    } else if (!detailOpen && returnFocusRef.current) {
+      returnFocusRef.current = false;
+      resultRefs.current[hits.findIndex((hit) => hit.id === selected?.id)]?.focus();
+    }
+  }, [detailOpen, hits, selected?.id]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (draft.trim()) searchMutation.mutate(draft.trim());
+    if (!draft.trim() || snapshot.status === 'pending') return;
+    setDetailOpen(false);
+    const config = { ...base.retrievalConfig };
+    const next = reading.update((current) => ({ ...current, search: {
+      ...current.search, query: draft.trim(), config, hits: [], selectedId: '', status: 'pending', error: '', request: current.search.request + 1,
+    } }));
+    searchMutation.mutate({ query: next.search.query, config, request: next.search.request });
   };
   return (
     <div className="knowledge-panel knowledge-search">
       <form className="knowledge-search__form" onSubmit={submit}>
-        <Field htmlFor="knowledge-library-search" label="检索测试" description="只查询当前知识库，不读取个人记忆。">
+        <Field htmlFor="knowledge-library-search" label="搜索知识库" description={`在「${publicKnowledgeText(base.name)}」的资料中查找。`}>
           <Input id="knowledge-library-search" onChange={(event) => setDraft(event.target.value)} placeholder="输入一个问题或关键词" value={draft} />
         </Field>
-        <Button disabled={!draft.trim()} leadingIcon={<Search size={15} />} loading={searchMutation.isPending} type="submit" variant="primary">检索</Button>
+        <Button disabled={!draft.trim()} leadingIcon={<Search size={15} />} loading={snapshot.status === 'pending'} type="submit" variant="primary">搜索</Button>
       </form>
-      <div className="knowledge-search__config" aria-label="当前检索配置">
-        <span>{retrievalModeLabel(base.retrievalConfig.mode)}</span>
-        <span>最多显示 {base.retrievalConfig.topK} 条</span>
-        <span>最低相关度 {base.retrievalConfig.threshold.toFixed(2)}</span>
-      </div>
-      <p className="knowledge-search__score-note">结果按与你的问题的相关程度排序，建议打开来源核对原文。</p>
-      {searchMutation.error ? <InlineNotice title="检索失败" tone="warning">{publicErrorText(searchMutation.error, '知识服务暂时无法完成检索。')}</InlineNotice> : null}
+      <Disclosure className="knowledge-search__config" summary="搜索范围与方式">
+        <p>只查询当前知识库，不读取个人记忆。{snapshot.config ? '下列配置对应当前结果。' : ''}</p>
+        <p>{retrievalModeLabel(config.mode)} · 最多显示 {config.topK} 条 · 最低相关度 {config.threshold.toFixed(2)}</p>
+      </Disclosure>
+      {snapshot.error ? <InlineNotice title="检索失败" tone="warning">{snapshot.error}</InlineNotice> : null}
+      {snapshot.status === 'pending' ? <p role="status">正在查找相关来源…</p> : null}
+      {snapshot.status === 'success' ? <p className="knowledge-search__result-summary" role="status">“{snapshot.query}” · {hits.length} 条结果</p> : null}
       {hits.length ? (
-        <div className="knowledge-search__results">
-          <div className="knowledge-search__list" role="listbox" aria-label="检索结果">
-            {hits.map((hit) => (
-              <button aria-selected={selected?.id === hit.id} data-selected={selected?.id === hit.id || undefined} key={hit.id} onClick={() => setSelectedId(hit.id)} role="option" type="button">
+        <div className="knowledge-search__results" data-detail-open={detailOpen || undefined}>
+          <div className="knowledge-search__list" role="listbox" aria-label="检索结果" onKeyDown={(event) => {
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const index = hits.findIndex((hit) => hit.id === selected?.id);
+            const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? hits.length - 1 : Math.max(0, Math.min(hits.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+            const hit = hits[nextIndex];
+            if (!hit) return;
+            reading.update((current) => ({ ...current, search: { ...current.search, selectedId: hit.id } }));
+            resultRefs.current[nextIndex]?.focus();
+          }}>
+            {hits.map((hit, index) => (
+              <button aria-selected={selected?.id === hit.id} data-selected={selected?.id === hit.id || undefined} key={hit.id} onClick={() => { reading.update((current) => ({ ...current, search: { ...current.search, selectedId: hit.id } })); setDetailOpen(true); }} ref={(node) => { resultRefs.current[index] = node; }} role="option" tabIndex={selected?.id === hit.id ? 0 : -1} type="button">
                 <span><strong>{publicKnowledgeText(hit.documentName)}</strong><small>{publicKnowledgeText(hit.title)} · {citationLabel(hit)}{hit.diagnostics.graphRank === null ? '' : ' · 图谱关联'}</small><small>{publicKnowledgeText(hit.excerpt) || '没有可显示的摘录'}</small></span>
                 <b data-level={relevanceLevel(hit.score)}>{relevanceLabel(hit.score)}</b>
               </button>
             ))}
           </div>
-          {selected ? <KnowledgeHitDetail baseId={base.id} hit={selected} onOpen={onOpenHit} transport={transport} /> : null}
+          {selected ? <div className="knowledge-search__reader">
+            <Button className="knowledge-search__back" leadingIcon={<ArrowLeft size={14} />} onClick={() => { returnFocusRef.current = true; setDetailOpen(false); }} ref={backRef} size="small" variant="quiet">返回检索结果</Button>
+            <KnowledgeHitDetail key={selected.id} baseId={base.id} hit={selected} onOpen={onOpenHit} transport={transport} />
+          </div> : null}
         </div>
-      ) : searchMutation.isSuccess ? (
+      ) : snapshot.status === 'success' ? (
         <EmptyState description="换一个关键词，或检查文件是否已经完成索引。" icon={FileSearch} title="没有匹配段落" />
-      ) : (
-        <EmptyState description="结果会显示文档、页码或行号，并可回到原始来源。" icon={Search} title="验证这套知识是否可用" />
-      )}
+      ) : snapshot.status === 'idle' ? (
+        <p className="knowledge-search__hint">输入问题或关键词。找到相关段落后，可以打开原文核对。</p>
+      ) : null}
     </div>
   );
 }
@@ -828,7 +909,7 @@ function KnowledgeHitDetail({ baseId, hit, onOpen, transport }: { baseId: string
           ) : null}
         </dl>
       </Disclosure>
-      <Button leadingIcon={<ExternalLink size={14} />} loading={openMutation.isPending} onClick={() => openMutation.mutate()} size="small">打开来源</Button>
+      <Button leadingIcon={<ExternalLink size={14} />} loading={openMutation.isPending} onClick={() => openMutation.mutate()} size="small" variant="primary">打开来源</Button>
       {openMutation.error ? <p className="knowledge-inline-error">当前无法打开来源。</p> : null}
     </article>
   );

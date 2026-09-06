@@ -52,6 +52,9 @@ from rag_ime.trace_runtime import (
     make_span,
 )
 from rag_ime.trace_store import TraceStore
+from scripts.agent_eval_candidate_prompt import (
+    append_candidate_prompt, candidate_prompt_identity, load_candidate_prompt,
+)
 
 HostScorer = Callable[[Path, list[dict[str, object]]], Mapping[str, object]]
 _TRIAL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\Z")
@@ -59,6 +62,17 @@ _SCORE_METRICS = ("AnswerCoverage", "CA", "FA", "JRA", "Top3JRA")
 _USAGE_KEYS = ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
 _CONTEXT_PROJECTIONS = frozenset({"standard-v1", "observation-id-v1"})
 _LUNA_OWNER_MECHANISM_PROFILE = "luna-owner-mechanism-gate-v8"
+
+
+class EvaluationCancelled(RuntimeError):
+    """The owning caller stopped this evaluation; no further batch is admitted."""
+
+
+def _check_cancelled(cancelled: Callable[[], bool] | None, service: Any = None, session_id: str = "") -> None:
+    if cancelled is not None and cancelled():
+        if service is not None and session_id:
+            service.abort(session_id)
+        raise EvaluationCancelled("evaluation cancelled")
 
 
 class _CloudOpsContextProjectionGateway:
@@ -411,14 +425,25 @@ def run_cloudops_agent_eval(
     thinking_level: str = "max",
     workflow_profile: str = "baseline-v1",
     context_projection: str = "standard-v1",
+    candidate_prompt_file: str | Path | None = None,
+    evaluation_split: str = "validation",
+    scorer_identity: str = "",
+    cancelled: Callable[[], bool] | None = None,
+    on_session: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     """Execute the frozen batches sequentially and persist one truthful chain."""
 
+    candidate_prompt = load_candidate_prompt(candidate_prompt_file, evaluation_split=evaluation_split)
+    prompt_identity = candidate_prompt_identity(candidate_prompt)
+    _check_cancelled(cancelled)
     clock = now_ms or (lambda: int(time.time() * 1_000))
     normalized_trial = _normalize_trial_id(trial_id)
     gold = Path(gold_path).expanduser().resolve(strict=True)
     if not gold.is_file():
         raise ValueError("CloudOps host scorer input is unavailable")
+    if candidate_prompt_file is not None and Path(candidate_prompt_file).expanduser().resolve() == gold:
+        raise ValueError("Host Gold cannot be used as a candidate Prompt file")
+    gold_sha256 = _file_sha256(gold)
     if tuple(suite.batch_ids) != ("batch-1", "batch-2", "batch-3"):
         raise ValueError("CloudOps P0 runner requires the frozen 3x4 batch plan")
     if any(len(suite.assigned_case_ids(batch_id)) != 4 for batch_id in suite.batch_ids):
@@ -489,13 +514,22 @@ def run_cloudops_agent_eval(
             "thinkingLevel": thinking_level,
             "workflowProfile": workflow_profile,
             "contextProjection": context_projection,
+            "candidatePrompt": prompt_identity,
+            "evaluationSplit": evaluation_split,
         },
     )
     service.bind_tool_manifest_provider(gateway.runtime_manifests)
     batch_results: list[dict[str, object]] = []
     merged_answers: list[dict[str, object]] = []
 
+    def check_admission() -> None:
+        if cancelled is not None and cancelled():
+            append("trial_cancelled", {"completedBatchCount": len(batch_results), "candidatePrompt": prompt_identity})
+            _persist_failed_sandbox(sandbox_store, trial_id=normalized_trial, suite=suite, now_ms=clock(), status="cancelled")
+            raise EvaluationCancelled("evaluation cancelled")
+
     for batch_index, batch_id in enumerate(suite.batch_ids, start=1):
+        check_admission()
         append(
             "batch_started",
             {
@@ -538,16 +572,20 @@ def run_cloudops_agent_eval(
             workflow_profile=workflow_profile,
         )
         tool_manifest_sha256 = _sha256(gateway.runtime_manifests({"id": session_id})[0])
-        prompt = _batch_prompt(
+        base_prompt = _batch_prompt(
             batch_id,
             suite.assigned_case_ids(batch_id),
             workflow_profile=workflow_profile,
         )
+        prompt = append_candidate_prompt(base_prompt, candidate_prompt)
         accepted_at = clock()
         terminal = ""
         turn_id = ""
         events: list[dict[str, object]] = []
         try:
+            if on_session is not None:
+                on_session(session_id)
+            _check_cancelled(cancelled, service, session_id)
             ensured = service.ensure_runtime({"sessionId": session_id})
             if expected_model_profile:
                 _assert_expected_runtime(
@@ -568,6 +606,7 @@ def run_cloudops_agent_eval(
                 "runtime": ensured,
                 "thinkingSelection": thinking_receipt,
             }
+            _check_cancelled(cancelled, service, session_id)
             receipt = service.prompt(
                 session_id,
                 {
@@ -581,6 +620,7 @@ def run_cloudops_agent_eval(
                 session_id=session_id,
                 turn_id=turn_id,
                 timeout_seconds=timeout_seconds,
+                cancelled=cancelled,
             )
             answers = gateway.answers(session_id)
             if terminal != "turn_completed" or len(answers) != 4:
@@ -592,6 +632,7 @@ def run_cloudops_agent_eval(
                 "sessionId": session_id,
                 "turnId": turn_id,
                 "promptSha256": _sha256(prompt),
+                "basePromptSha256": _sha256(base_prompt),
                 "acceptedAtMs": accepted_at,
                 "terminalEvent": terminal,
                 "answersSha256": _sha256(answers),
@@ -621,7 +662,7 @@ def run_cloudops_agent_eval(
             )
         except Exception as exc:
             append(
-                "batch_failed",
+                "batch_cancelled" if isinstance(exc, EvaluationCancelled) else "batch_failed",
                 {
                     "batchId": batch_id,
                     "sessionSha256": _sha256(session_id),
@@ -635,6 +676,7 @@ def run_cloudops_agent_eval(
                 trial_id=normalized_trial,
                 suite=suite,
                 now_ms=clock(),
+                status="cancelled" if isinstance(exc, EvaluationCancelled) else "failed",
             )
             raise
         finally:
@@ -650,6 +692,9 @@ def run_cloudops_agent_eval(
 
     if len(merged_answers) != 12 or {item["case_id"] for item in merged_answers} != set(suite.case_ids):
         raise RuntimeError("CloudOps merged answers do not cover the frozen suite")
+    check_admission()
+    if _file_sha256(gold) != gold_sha256:
+        raise ValueError("CloudOps Host Gold changed during evaluation")
     score = dict(score_host_only(gold, merged_answers))
     metrics, per_case = _validated_score(score, case_ids=suite.case_ids)
     process_signals = _process_signals(score.get("process"))
@@ -672,6 +717,7 @@ def run_cloudops_agent_eval(
             "metrics": metrics,
             "perCase": [dict(per_case[case_id]) for case_id in suite.case_ids],
             "processSignals": process_signals,
+            "candidatePrompt": prompt_identity,
             "usage": total_usage,
             "signals": signals,
             "traceIds": [*batch_trace_ids, aggregate_trace_id],
@@ -798,6 +844,7 @@ def run_cloudops_agent_eval(
                 "maxReadsPerCase": gateway.max_reads_per_case,
                 "workflowProfile": workflow_profile,
                 "contextProjection": context_projection,
+                "candidatePrompt": prompt_identity,
             }
         ),
         "modelProfileFingerprint": "sha256:" + _sha256(
@@ -839,6 +886,8 @@ def run_cloudops_agent_eval(
                 "terminalEvent": str(item["terminalEvent"]),
                 "answerCount": int(item["answerCount"]),
                 "answersSha256": str(item["answersSha256"]),
+                "promptSha256": str(item["promptSha256"]),
+                "basePromptSha256": str(item["basePromptSha256"]),
                 "ledgerSha256": str(ledger.get("ledgerSha256") or "")
                 if isinstance(ledger, Mapping)
                 else "",
@@ -850,6 +899,19 @@ def run_cloudops_agent_eval(
                 "latencyMs": _batch_latency_ms(item),
             }
         )
+    frozen_controls = {
+        "suiteSha256": suite.suite_sha256, "businessContractSha256": suite.contract_sha256,
+        "goldSha256": gold_sha256, "scorerIdentity": scorer_identity,
+        "batchPlanSha256": _sha256(batch_plan), "evaluationSplit": evaluation_split,
+        "runtimeIdentity": public_runtime_identity, "thinkingLevel": thinking_level,
+        "workflowProfile": workflow_profile, "contextProjection": context_projection,
+        "maxReadsPerCase": gateway.max_reads_per_case, "skills": [],
+        "timeoutSeconds": timeout_seconds,
+        "runnerSha256": _file_sha256(Path(__file__).resolve()),
+        "basePrompts": [item["basePromptSha256"] for item in batch_results],
+        "toolManifests": [item["toolManifestSha256"] for item in batch_results],
+    }
+    frozen_controls["contractSha256"] = _sha256(frozen_controls)
     return {
         "schemaVersion": "paw.cloudops-agent-eval-run.v1",
         "trialId": normalized_trial,
@@ -877,6 +939,9 @@ def run_cloudops_agent_eval(
         "thinkingLevel": thinking_level,
         "workflowProfile": workflow_profile,
         "contextProjection": context_projection,
+        "candidatePrompt": prompt_identity,
+        "frozenControls": frozen_controls,
+        "evaluationSplit": evaluation_split,
         "contextProjectionSummary": (
             gateway.projection_summary()
             if callable(getattr(gateway, "projection_summary", None))
@@ -1034,6 +1099,7 @@ def _persist_failed_sandbox(
     trial_id: str,
     suite: CloudOpsBlindSuite,
     now_ms: int,
+    status: str = "failed",
 ) -> dict[str, object]:
     return store.persist(
         build_sandbox_run(
@@ -1045,7 +1111,7 @@ def _persist_failed_sandbox(
             network="allowlisted",
             trace_ids=[],
             eval_run_ids=[],
-            status="failed",
+            status=status,
             now_ms=now_ms,
         )
     )
@@ -1057,9 +1123,11 @@ def _wait_for_terminal(
     session_id: str,
     turn_id: str,
     timeout_seconds: float,
+    cancelled: Callable[[], bool] | None = None,
 ) -> tuple[list[dict[str, object]], str]:
     deadline = time.monotonic() + max(0.01, float(timeout_seconds))
     while time.monotonic() < deadline:
+        _check_cancelled(cancelled, service, session_id)
         events, gap = service.events.replay(session_id)
         if gap:
             raise RuntimeError("CloudOps Agent event replay developed a gap")
@@ -1123,7 +1191,13 @@ def _validated_score(
 def _token_usage(events: list[Mapping[str, object]]) -> dict[str, object]:
     totals = {key: 0 for key in _USAGE_KEYS}
     observed = False
-    for event in events:
+    # Pi repeats the final request's usage on message/turn completion. Count
+    # actual Provider receipts once, including failed paid requests. Older
+    # traces without Provider events retain their existing usage projection.
+    provider_events = [event for event in events if event.get("eventType") in {
+        "provider_request_completed", "provider_request_failed",
+    }]
+    for event in provider_events or events:
         usage = event.get("usage")
         if not isinstance(usage, Mapping):
             payload = event.get("payload")
@@ -1199,7 +1273,38 @@ def _cost_optimization_comparison(
     candidate_workflow = str(candidate.get("workflowProfile") or "")
     baseline_projection = str(baseline.get("contextProjection") or "")
     candidate_projection = str(candidate.get("contextProjection") or "")
+    def prompt_hash(report: Mapping[str, object]) -> str | None:
+        value = report.get("candidatePrompt")
+        if value is None:
+            return candidate_prompt_identity(None)["sha256"]
+        if not isinstance(value, Mapping) or type(value.get("enabled")) is not bool:
+            return None
+        digest = value.get("sha256")
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            return None
+        if value["enabled"] is False and digest != candidate_prompt_identity(None)["sha256"]:
+            return None
+        return digest
+
+    baseline_prompt_hash, candidate_prompt_hash = prompt_hash(baseline), prompt_hash(candidate)
+    prompt_identity_valid = baseline_prompt_hash is not None and candidate_prompt_hash is not None
+    external_prompt_changed = baseline_prompt_hash != candidate_prompt_hash
+    before_controls, after_controls = baseline.get("frozenControls"), candidate.get("frozenControls")
+    same_frozen_controls = (
+        isinstance(before_controls, Mapping) and isinstance(after_controls, Mapping)
+        and isinstance(before_controls.get("contractSha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", before_controls["contractSha256"]) is not None
+        and before_controls["contractSha256"] == after_controls.get("contractSha256")
+        and isinstance(before_controls.get("scorerIdentity"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", before_controls["scorerIdentity"]) is not None
+        and before_controls["scorerIdentity"] == after_controls.get("scorerIdentity")
+    )
     workflow_changed = baseline_workflow != candidate_workflow
+    external_prompt_contract = (
+        prompt_identity_valid and external_prompt_changed and not workflow_changed
+        and bool(baseline_workflow) and baseline_projection == candidate_projection
+        and bool(baseline_projection) and same_frozen_controls
+    )
     observation_projection = (
         not workflow_changed
         and baseline_workflow == candidate_workflow == "baseline-v1"
@@ -1226,11 +1331,16 @@ def _cost_optimization_comparison(
         }
         and baseline_projection == candidate_projection == "standard-v1"
     )
-    identity_checks["singleVariable"] = (
-        observation_projection or prompt_contract or luna_prompt_contract
+    identity_checks["candidatePromptIdentity"] = prompt_identity_valid
+    identity_checks["singleVariable"] = external_prompt_contract or (
+        not external_prompt_changed and (observation_projection or prompt_contract or luna_prompt_contract)
     )
     single_variable = (
-        "public_tool_addressing_projection"
+        "candidate_prompt_file"
+        if external_prompt_contract
+        else "invalid_multiple_or_missing_factors"
+        if external_prompt_changed
+        else "public_tool_addressing_projection"
         if observation_projection
         else "luna_prompt_evidence_contract"
         if luna_prompt_contract
@@ -1332,6 +1442,8 @@ def _cost_optimization_comparison(
         "candidateWorkflowProfile": candidate_workflow,
         "baselineContextProjection": baseline_projection,
         "candidateContextProjection": candidate_projection,
+        "baselineCandidatePromptSha256": baseline_prompt_hash,
+        "candidateCandidatePromptSha256": candidate_prompt_hash,
         "identityGatePassed": identity_ok,
         "identityChecks": {**identity_checks, **{f"runtime.{k}": v for k, v in runtime_checks.items()}},
         "qualityGatePassed": quality_ok,
@@ -1353,7 +1465,14 @@ def _cloudops_optimization_receipt(
 ) -> dict[str, object]:
     comparison = _cost_optimization_comparison(baseline, candidate)
     variable = str(comparison["singleVariable"])
-    if variable in {
+    if variable == "candidate_prompt_file":
+        factor = {
+            "layer": "prompt", "name": variable,
+            "before": comparison["baselineCandidatePromptSha256"],
+            "after": comparison["candidateCandidatePromptSha256"],
+            "why": "apply generic candidate instructions with the same frozen business, Tool and Host verifier controls",
+        }
+    elif variable in {
         "bounded_diagnostic_prompt_contract",
         "luna_prompt_evidence_contract",
     }:
@@ -1562,6 +1681,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--private-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--trial-id", required=True)
+    parser.add_argument("--candidate-prompt-file", type=Path, help="UTF-8 generic candidate instructions; never Host Gold.")
+    parser.add_argument("--evaluation-split", choices=("validation", "development"), default="validation")
     parser.add_argument("--provider", default="openai-codex")
     parser.add_argument("--model", default="gpt-5.6-sol")
     parser.add_argument("--thinking", default="max")
@@ -1681,6 +1802,9 @@ def main(argv: list[str] | None = None) -> int:
             thinking_level=str(args.thinking),
             workflow_profile=str(args.workflow_profile),
             context_projection=str(args.context_projection),
+            candidate_prompt_file=args.candidate_prompt_file,
+            evaluation_split=args.evaluation_split,
+            scorer_identity=_file_sha256(args.scorer),
         )
         report["hostInvocation"] = _public_host_invocation(
             args,

@@ -243,7 +243,6 @@ export function InputMethodFeature() {
     queries.settings,
     queries.schema,
     queries.capabilities,
-    queries.predictionLiveTrace,
   ].some((query) => query.isFetching);
 
   const refresh = () => {
@@ -324,10 +323,13 @@ export function InputMethodFeature() {
         description="每张卡片列出它真实写入的设置；核对差异清单后保存，其余键不动。"
         title="使用方式"
         trailing={(
-          <StatusBadge
-            label={queries.overview.isPending ? '正在读取模式' : profileLabel(reportedProfile)}
-            tone={overviewError ? 'danger' : 'neutral'}
-          />
+          <span>
+            运行报告：{' '}
+            <StatusBadge
+              label={queries.overview.isPending ? '正在读取模式' : overviewError ? '读取失败' : profileLabel(reportedProfile)}
+              tone={overviewError ? 'danger' : 'neutral'}
+            />
+          </span>
         )}
       >
         {runtimeModeMismatch ? (
@@ -376,7 +378,11 @@ export function InputMethodFeature() {
           </RadioGroup.Root>
           <div className="input-mode-decision">
             <div aria-live="polite" className="input-mode-delta">
-              {modeDraft && modeDiffItems.length ? (
+              {settingsPending ? (
+                <span>正在读取当前设置，暂不判断使用方式。</span>
+              ) : settingsError ? (
+                <span>无法读取当前设置，请刷新后重试。</span>
+              ) : modeDraft && modeDiffItems.length ? (
                 <>
                   <div className="input-mode-delta__head">
                     <strong>改用{modeDraft}将改动 {modeDiffItems.length} 项</strong>
@@ -978,18 +984,21 @@ export function InputLexiconFeature() {
             <InlineNotice title="词库审阅失败" tone="danger">{publicErrorText(queries.lexiconReview.error, '暂时无法读取词库建议，请稍后重试。')}</InlineNotice>
             <Button onClick={() => void queries.lexiconReview.refetch()} size="small">重试审阅</Button>
           </div>
-        ) : queries.lexiconReview.data ? (
+        ) : !queries.lexiconReview.data ? (
+          <InlineNotice title="词库审阅不可用" tone="warning">当前没有可验证的词库审阅记录，请刷新后重试。</InlineNotice>
+        ) : null}
+        {queries.lexiconReview.data ? (
           <>
             <LexiconOrganizationState organization={queries.lexiconReview.data.organization} />
             <LexiconWorkflow
+              applyDisabled={queries.lexiconReview.isFetching || Boolean(queries.lexiconReview.error) || Boolean(queries.capabilities.error) || !queries.lexiconAvailable}
               onRefresh={() => void queries.lexiconReview.refetch()}
               review={queries.lexiconReview.data}
+              rollbackDisabled={Boolean(queries.capabilities.error) || !queries.lexiconAvailable}
               transport={queries.transport}
             />
           </>
-        ) : (
-          <InlineNotice title="词库审阅不可用" tone="warning">当前没有可验证的词库审阅记录，请刷新后重试。</InlineNotice>
-        )}
+        ) : null}
       </ManagementSection>
     </ManagementPage>
   );

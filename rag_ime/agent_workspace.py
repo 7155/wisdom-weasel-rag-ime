@@ -47,6 +47,18 @@ class WorkspaceSnapshotError(WorkspaceHarnessError):
         self.retryable = retryable
 
 
+class WorkspaceFileSaveError(WorkspaceHarnessError):
+    """Direct Files edits keep their conflict outcome independent of Tool approval."""
+
+    def __init__(self, code: str, message: str, *, status: int = 409) -> None:
+        super().__init__(message)
+        self.code = code
+        self.http_status = status
+
+    def response_payload(self) -> dict[str, object]:
+        return {"errorCode": self.code, "saved": False}
+
+
 _SENSITIVE_NAMES = frozenset(
     {
         ".env",
@@ -710,6 +722,7 @@ class WorkspaceHarness:
         self._lsp_heartbeat_ttl_ms = 30_000
         self._lsp_root_generations: dict[Path, int] = {}
         self._lsp_lock = threading.RLock()
+        self._file_save_lock = threading.Lock()
         self._lsp_closed = False
         atexit.register(self.close_lsp)
 
@@ -785,7 +798,8 @@ class WorkspaceHarness:
         )
         content_limit = min(requested_limit, _PI_TOOL_RESULT_MAX_BYTES)
         with target.open("rb") as handle:
-            size = os.fstat(handle.fileno()).st_size
+            before_stat = os.fstat(handle.fileno())
+            size = before_stat.st_size
             if offset > size:
                 raise WorkspaceHarnessError(
                     f"workspace_read offset {offset} is beyond end of file ({size} UTF-8 bytes)"
@@ -804,6 +818,11 @@ class WorkspaceHarness:
             digest.update(raw)
             while chunk := handle.read(65_536):
                 digest.update(chunk)
+            after_stat = os.fstat(handle.fileno())
+            if (before_stat.st_size, before_stat.st_mtime_ns, before_stat.st_ctime_ns) != (
+                after_stat.st_size, after_stat.st_mtime_ns, after_stat.st_ctime_ns
+            ):
+                raise WorkspaceHarnessError("workspace file changed during read")
         if b"\x00" in raw:
             raise WorkspaceHarnessError("binary files are not available through workspace_read")
         text = _decode_workspace_read_prefix(
@@ -829,6 +848,51 @@ class WorkspaceHarness:
             read_origin_sha256=digest.hexdigest(),
             start_line=lines_before + 1,
         )
+
+    def file_editability(self, session: Mapping[str, object], path: str) -> dict[str, object]:
+        """Use the same Session roots and file checks as writes; never infer permission in the UI."""
+        result: dict[str, object] = {"editable": False, "maxBytes": 2 * 1024 * 1024}
+        if read_only_policy_active(session):
+            return {**result, "reason": "当前 Session 只读。"}
+        try:
+            target, root = self._resolve_existing_path(self._session_roots(session), path, allow_directory=False)
+            if self._is_sensitive_for_session(session, target, root) or target.is_symlink() or not target.is_file():
+                return {**result, "reason": "此路径不能作为普通文本文件保存。"}
+            if target.stat().st_size > 2 * 1024 * 1024:
+                return {**result, "reason": "文本编辑支持最大 2 MiB 的文件。"}
+            if not (target.stat().st_mode & 0o222) or not os.access(target, os.W_OK):
+                return {**result, "reason": "磁盘文件为只读。"}
+            if not (target.parent.stat().st_mode & 0o222) or not os.access(target.parent, os.W_OK):
+                return {**result, "reason": "文件目录不可写，无法原子保存。"}
+        except (WorkspaceHarnessError, OSError) as exc:
+            return {**result, "reason": str(exc)}
+        return {**result, "editable": True}
+
+    def save_file(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
+        """Apply a user's explicit edit, retaining snapshot checks even in full-access mode."""
+        if set(args) != {"path", "content", "resourceRevision"}:
+            raise WorkspaceFileSaveError("invalid_request", "保存需要路径、文本和读取版本。", status=400)
+        try:
+            revision = _required_workspace_resource_revision(args.get("resourceRevision"), operation="Files save")
+        except WorkspaceSnapshotError as exc:
+            raise WorkspaceFileSaveError(exc.code, str(exc)) from exc
+        with self._file_save_lock:
+            editability = self.file_editability(session, str(args.get("path") or ""))
+            if editability["editable"] is not True:
+                raise WorkspaceFileSaveError("file_read_only", str(editability.get("reason")), status=403)
+            try:
+                prepared = self.prepare_write(session, args, include_review_diff=False)
+            except WorkspaceSnapshotError as exc:
+                raise WorkspaceFileSaveError(exc.code, "文件已被其他任务修改，请核对磁盘版本。") from exc
+            if not prepared.existed_before or prepared.resource_revision != revision:
+                raise WorkspaceFileSaveError("stale_snapshot", "文件已变化或被移除，请核对磁盘版本。")
+            self._atomic_write(prepared.path, prepared.postimage, prepared.preimage_mode, expected_revision=revision)
+            return {
+                "saved": True,
+                "path": str(prepared.path),
+                "resourceRevision": _workspace_resource_revision_from_sha256(prepared.postimage_sha256),
+                "byteSize": len(prepared.postimage),
+            }
 
     def search(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
         roots = self._read_session_roots(session)
@@ -3370,6 +3434,8 @@ class WorkspaceHarness:
         self,
         session: Mapping[str, object],
         args: Mapping[str, object],
+        *,
+        include_review_diff: bool = True,
     ) -> PreparedWorkspaceWrite:
         roots = self._session_roots(session)
         raw_path = str(args.get("path") or "").strip()
@@ -3416,7 +3482,9 @@ class WorkspaceHarness:
         except UnicodeDecodeError as exc:
             raise WorkspaceHarnessError("workspace_write only overwrites UTF-8 text") from exc
         relative = str(target.relative_to(root))
-        diff = _reviewable_diff(before, content, relative, new_file=not existed_before)
+        # Direct Files saves already present the user's text in the editor. Tool
+        # callers retain the bounded review diff; this option is never a request field.
+        diff = _reviewable_diff(before, content, relative, new_file=not existed_before) if include_review_diff else ""
         return PreparedWorkspaceWrite(
             path=target,
             root=root,
@@ -3969,7 +4037,7 @@ class WorkspaceHarness:
         }
 
     @staticmethod
-    def _atomic_write(path: Path, content: bytes, mode: int) -> None:
+    def _atomic_write(path: Path, content: bytes, mode: int, *, expected_revision: str | None = None) -> None:
         with tempfile.NamedTemporaryFile(
             mode="wb",
             prefix=f".{path.name}.",
@@ -3982,6 +4050,15 @@ class WorkspaceHarness:
             os.fsync(handle.fileno())
         try:
             os.chmod(temporary, mode)
+            if expected_revision is not None:
+                # Check after flushing the temporary file, directly before replacement.
+                # Other workspace writers continue using their existing preimage checks.
+                if path.is_symlink() or not path.is_file() or path.parent.resolve(strict=True) != path.parent:
+                    raise WorkspaceFileSaveError("stale_snapshot", "文件路径已变化，请重新打开文件。")
+                if _workspace_resource_revision_from_sha256(hashlib.sha256(path.read_bytes()).hexdigest()) != expected_revision:
+                    raise WorkspaceFileSaveError("stale_snapshot", "文件已被其他任务修改，请核对磁盘版本。")
+                if not (path.stat().st_mode & 0o222) or not os.access(path, os.W_OK):
+                    raise WorkspaceFileSaveError("file_read_only", "磁盘文件已变为只读。", status=403)
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)

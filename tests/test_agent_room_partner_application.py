@@ -40,6 +40,21 @@ class _RoomEvents:
     def has_projection(self, projection_key: str) -> bool:
         return projection_key in self.projections
 
+    def publish_child_terminal(
+        self,
+        *,
+        runtime_event_id: str,
+        dispatch_id: str,
+        **values: object,
+    ) -> dict[str, object]:
+        key = f"room-partner-terminal:{dispatch_id}:{runtime_event_id}"
+        existing = self.projections.get(key)
+        if existing is not None:
+            return dict(existing)
+        self.projections[key] = dict(values)
+        self.published.append(dict(values))
+        return dict(values)
+
     def list_events(
         self,
         room_id: str,

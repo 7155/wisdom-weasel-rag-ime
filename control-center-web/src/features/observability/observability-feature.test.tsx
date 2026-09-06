@@ -20,6 +20,61 @@ const SANDBOX_RUNS_PATH_ID = 'observability.sandboxRuns.list' as ControlPathId;
 afterEach(cleanup);
 
 describe('ObservabilityFeature', () => {
+  it('keeps historical running events distinct from the current execution state', async () => {
+    renderFeature(observationTransport({ trace: canonicalTraceResponse() }));
+    const timeline = await screen.findByRole('list', { name: '运行记录事件' });
+    await screen.findByText('Canonical spans · 2');
+
+    expect(within(timeline).getByText('当时运行中')).toBeInTheDocument();
+    expect(within(timeline).queryByText('运行中', { exact: true })).not.toBeInTheDocument();
+    const overview = document.querySelector('.observation-pulse') as HTMLElement;
+    expect(overview).toHaveTextContent('执行中记录 1');
+    expect(overview).not.toHaveTextContent('进行中 1');
+  });
+
+  it('distinguishes event dates when different days have the same clock time', async () => {
+    const first = observationEvent({ sequence: 1, category: 'tool', phase: 'tool_finished', status: 'completed', summary: '前一天的工具记录' });
+    const second = observationEvent({ sequence: 2, category: 'tool', phase: 'tool_finished', status: 'completed', summary: '后一天的工具记录' });
+    first.createdAtMs = Date.UTC(2026, 8, 1, 8, 4, 0);
+    second.createdAtMs = Date.UTC(2026, 8, 2, 8, 4, 0);
+    renderFeature(observationTransport({ items: [second, first] }));
+    const timeline = await screen.findByRole('list', { name: '运行记录事件' });
+    const firstTime = within(timeline).getByText('前一天的工具记录').closest('li')?.querySelector('time');
+    const secondTime = within(timeline).getByText('后一天的工具记录').closest('li')?.querySelector('time');
+
+    expect(firstTime).toHaveAttribute('datetime', new Date(first.createdAtMs).toISOString());
+    expect(secondTime).toHaveAttribute('datetime', new Date(second.createdAtMs).toISOString());
+    expect(firstTime?.textContent).not.toBe(secondTime?.textContent);
+  });
+
+  it('does not present a truncated page count as the total history', async () => {
+    renderFeature(observationTransport({ truncated: true, total: 2 }));
+    await screen.findByRole('list', { name: '运行记录事件' });
+
+    expect(screen.getByText('当前显示最近 2 条')).toBeInTheDocument();
+    expect(screen.queryByText('最近 2 / 共 2')).not.toBeInTheDocument();
+  });
+
+  it('retains the last snapshot and selected evidence when a refresh fails', async () => {
+    const user = userEvent.setup();
+    let failRead = false;
+    const transport = observationTransport({
+      beforeSnapshot: () => { if (failRead) throw new Error('snapshot temporarily unavailable'); },
+    });
+    renderFeature(transport);
+    const timeline = await screen.findByRole('list', { name: '运行记录事件' });
+    await screen.findByText('Canonical spans · 2');
+    failRead = true;
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+
+    expect(await screen.findByText('刷新未完成，保留上次记录')).toBeInTheDocument();
+    expect(timeline).toBeInTheDocument();
+    expect(screen.getByText('Canonical spans · 2')).toBeInTheDocument();
+    failRead = false;
+    await user.click(screen.getByRole('button', { name: '重试读取' }));
+    await waitFor(() => expect(screen.queryByText('刷新未完成，保留上次记录')).not.toBeInTheDocument());
+  });
+
   it('requests the canonical trace detail only for the selected trace and progressively reveals measured spans and evidence', async () => {
     const user = userEvent.setup();
     const transport = observationTransport({
@@ -890,7 +945,7 @@ describe('ObservabilityFeature', () => {
     expect(screen.getByText('实时')).toBeInTheDocument();
     expect(screen.queryByText(/快照生成于/)).not.toBeInTheDocument();
 
-    const runningBadge = screen.getByText('运行中', { selector: '.mgmt-status' });
+    const runningBadge = screen.getByText('当时运行中', { selector: '.mgmt-status' });
     expect(runningBadge).toHaveAttribute('data-tone', 'info');
     const runningRow = within(timeline).getByText('伙伴 正在分析').closest('li');
     expect(runningRow).toHaveAttribute('data-status', 'running');
@@ -973,6 +1028,7 @@ function renderFeature(
 }
 
 function observationTransport(options: {
+  beforeSnapshot?: () => void;
   items?: ObservationEventV1[];
   total?: number;
   truncated?: boolean;
@@ -989,6 +1045,7 @@ function observationTransport(options: {
   return new MockControlTransport({
     routes: {
       'observability.snapshot': (request: ControlRequest) => {
+        options.beforeSnapshot?.();
         const category = String(request.query?.category ?? '');
         const items = (options.items ?? [
           observationEvent({

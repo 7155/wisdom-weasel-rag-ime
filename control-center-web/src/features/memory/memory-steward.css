@@ -1,14 +1,9 @@
 .memory-steward {
-  --steward-accent: color-mix(in srgb, var(--color-accent) 82%, #4c5cff);
+  --steward-accent: var(--memory-signal, var(--color-accent));
   display: grid;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--steward-accent) 24%, var(--color-border));
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--steward-accent) 9%, transparent), transparent 30%),
-    var(--color-surface);
-  box-shadow: 0 12px 34px color-mix(in srgb, var(--steward-accent) 6%, transparent);
+  background: var(--color-surface);
 }
 
 .memory-steward__header {
@@ -31,7 +26,7 @@
 }
 
 .memory-steward__header > span:nth-child(2) { display: grid; gap: 1px; }
-.memory-steward__header small { color: var(--steward-accent); font-size: 11px; font-weight: 760; }
+.memory-steward__header small { color: var(--color-text-secondary); font-size: 12px; font-weight: 500; }
 .memory-steward__header strong { font-size: 14px; letter-spacing: -.01em; }
 .memory-steward__header p {
   min-width: 0;
@@ -57,7 +52,7 @@
   color: var(--color-text-secondary);
   background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   white-space: nowrap;
 }
 .memory-steward__suggestions button:hover { color: var(--steward-accent); border-color: color-mix(in srgb, var(--steward-accent) 34%, var(--color-border)); }
@@ -69,7 +64,7 @@
   padding: 12px 50px 12px 13px;
   resize: none;
   border: 1px solid color-mix(in srgb, var(--steward-accent) 24%, var(--color-border));
-  border-radius: 13px;
+  border-radius: 8px;
   outline: 0;
   color: var(--color-text-primary);
   background: var(--color-surface-raised);

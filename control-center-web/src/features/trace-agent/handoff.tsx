@@ -119,6 +119,11 @@ export function buildTraceAgentHandoffRoute(input: TraceAgentHandoffInput): stri
   return `/trace-agent?${new URLSearchParams({ handoff: JSON.stringify(handoff) }).toString()}`;
 }
 
+/** Lab resolves this saved report by identity; navigation never starts a run. */
+export function buildTraceLabRoute(reportId: string): string {
+  return `/eval-lab?traceReportId=${encodeURIComponent(reportId)}`;
+}
+
 export function parseTraceAgentHandoff(search: string | URLSearchParams): TraceAgentHandoff | null {
   try {
     const params = typeof search === 'string'

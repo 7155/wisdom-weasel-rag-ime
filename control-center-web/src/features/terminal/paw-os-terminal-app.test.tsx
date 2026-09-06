@@ -95,6 +95,26 @@ afterEach(() => {
 });
 
 describe('PawOsTerminalApp', () => {
+  it('keeps the loading state visible until the session list settles', async () => {
+    let resolveList!: (value: unknown) => void;
+    const listPending = new Promise((resolve) => { resolveList = resolve; });
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': () => listPending,
+      },
+    });
+
+    renderTerminal(transport, <PawOsTerminalApp />);
+    expect(await screen.findByText('正在读取终端会话…')).toBeInTheDocument();
+    expect(screen.queryByText('还没有终端会话')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveList({ schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [] });
+      await listPending;
+    });
+    expect(await screen.findByText('还没有终端会话')).toBeInTheDocument();
+  });
+
   it('does not start list or output polling while its PAWOS window is inactive', async () => {
     const terminal = terminalSession('terminal-one', 'Terminal');
     const transport = new MockControlTransport({
@@ -699,6 +719,57 @@ describe('PawOsTerminalApp', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.write')).toBe(false));
   });
 
+  it('ignores a late resize failure from the closed terminal after selecting the surviving tab', async () => {
+    const user = userEvent.setup();
+    const first = terminalSession('terminal-one', 'Terminal One');
+    const second = terminalSession('terminal-two', 'Terminal Two');
+    let sessions = [first, second];
+    let rejectResize!: (reason: Error) => void;
+    const transport = new MockControlTransport({ routes: {
+      'terminal.sessions.list': () => ({ ok: true, items: sessions }),
+      'terminal.session.read': (request: ControlRequest) => ({ ok: true, terminal: asRecord(request.body).terminalId === first.terminalId ? first : second, cursor: 0, nextCursor: 0, truncated: false, text: '' }),
+      'terminal.session.resize': (request: ControlRequest) => asRecord(request.body).terminalId === second.terminalId
+        ? new Promise((_resolve, reject) => { rejectResize = reject; }) : { ok: true },
+      'terminal.session.close': () => { sessions = [first]; return { ok: true, terminal: { ...second, status: 'closed' } }; },
+    } });
+    renderApp(transport, <PawOsTerminalApp />);
+    await waitFor(() => expect(rejectResize).toBeTypeOf('function'));
+    await user.click(screen.getByRole('button', { name: '结束终端会话 Terminal Two' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Terminal One' })).toHaveAttribute('aria-selected', 'true'));
+    await act(async () => rejectResize(new Error('terminal session was not found')));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Terminal Two' })).not.toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'terminal.session.create')).toHaveLength(0);
+  });
+
+  it.each(['success', 'failure'] as const)('keeps the selected terminal error when the previous tab write settles with %s', async (outcome) => {
+    const user = userEvent.setup();
+    const first = terminalSession('terminal-one', 'Terminal One');
+    const second = terminalSession('terminal-two', 'Terminal Two');
+    let resolveWrite!: (value: unknown) => void;
+    let rejectWrite!: (reason: Error) => void;
+    const transport = new MockControlTransport({ routes: {
+      'terminal.sessions.list': { ok: true, items: [first, second] },
+      'terminal.session.read': (request: ControlRequest) => ({ ok: true, terminal: asRecord(request.body).terminalId === first.terminalId ? first : second, cursor: 0, nextCursor: 0, truncated: false, text: '' }),
+      'terminal.session.resize': (request: ControlRequest) => {
+        if (asRecord(request.body).terminalId === first.terminalId) throw new Error('selected terminal resize failed');
+        return { ok: true };
+      },
+      'terminal.session.write': () => new Promise((resolve, reject) => { resolveWrite = resolve; rejectWrite = reject; }),
+    } });
+    renderApp(transport, <PawOsTerminalApp />);
+    fireEvent.keyDown(await screen.findByRole('textbox', { name: '终端输入' }), { key: 'x', code: 'KeyX' });
+    await waitFor(() => expect(resolveWrite).toBeTypeOf('function'));
+    await user.click(screen.getByRole('tab', { name: 'Terminal One' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('selected terminal resize failed');
+    await act(async () => {
+      if (outcome === 'success') resolveWrite({ ok: true });
+      else rejectWrite(new Error('previous terminal write failed'));
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent('selected terminal resize failed');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('previous terminal write failed');
+  });
+
   it('copies the working directory from the status bar with a temporary truthful receipt', async () => {
     const user = userEvent.setup();
     const terminal = terminalSession('terminal-one', 'Terminal');
@@ -759,6 +830,9 @@ describe('PawOsTerminalApp', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('读取终端会话失败：系统终端服务未连接');
+    expect(screen.getByText('终端会话暂时不可用')).toBeInTheDocument();
+    expect(screen.queryByText('还没有终端会话')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '新建终端' })).not.toBeInTheDocument();
     // A failed list read proves nothing about existing sessions; it must not
     // fall through to the first-load auto-create.
     expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(false);

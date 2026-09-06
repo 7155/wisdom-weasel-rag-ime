@@ -1,0 +1,40 @@
+.scene-trial { color: var(--lab-ink, #253247); margin-bottom: 28px; min-width: 0; }
+.scene-trial__heading { align-items: start; display: flex; gap: 16px; justify-content: space-between; margin-bottom: 20px; }
+.scene-trial__heading h3 { font-size: 17px; letter-spacing: -.015em; margin: 0; }
+.scene-trial__active { align-items: center; background: var(--lab-surface-subtle); border-radius: 7px; display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: space-between; margin-bottom: 14px; padding: 12px 14px; }
+.scene-trial .scene-trial__active p { margin: 0; }
+.scene-trial p { color: var(--lab-muted, #59677a); font-size: 13px; line-height: 1.65; margin: 7px 0 0; max-width: 70ch; }
+.scene-trial__execution { align-items: center; border-block: 1px solid var(--lab-line, #e1e6ed); display: flex; gap: 16px; justify-content: space-between; padding: 18px 0; }
+.scene-trial__state { align-items: start; display: flex; gap: 12px; min-width: 0; }
+.scene-trial__state > svg { color: var(--lab-accent, #3167b1); flex-shrink: 0; margin-top: 2px; }
+.scene-trial__state strong { font-size: 14px; font-weight: 600; }
+.scene-trial__working { animation: scene-trial-spin 1.3s linear infinite; }
+.scene-trial__result { padding: 18px 0 8px; }
+.scene-trial__result dl { display: grid; gap: 15px 28px; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); margin: 0 0 18px; }
+.scene-trial dt { color: var(--lab-muted, #59677a); font-size: 12px; line-height: 1.6; }
+.scene-trial dd { font-size: 14px; font-variant-numeric: tabular-nums; line-height: 1.65; margin: 4px 0 0; overflow-wrap: anywhere; }
+.scene-trial summary { color: var(--lab-muted, #59677a); cursor: pointer; font-size: 13px; line-height: 1.6; padding: 10px 0; }
+.scene-trial summary:focus-visible { outline: 2px solid var(--lab-accent, #3167b1); outline-offset: 3px; }
+.scene-trial__details dl { display: grid; gap: 12px; margin: 8px 0 18px; }
+.scene-trial__details dd { font-size: 12px; }
+.scene-trial__record-identity { border-block: 1px solid var(--lab-line); padding-block: 16px; }
+.scene-trial__record-identity dl { display: grid; gap: 14px 24px; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); margin: 14px 0 0; }
+.scene-trial__next { background: var(--lab-surface-subtle); border-radius: 7px; margin-block: 16px; overflow-wrap: anywhere; padding: 14px 16px; }
+.scene-trial__next > strong { font-size: 14px; }
+.scene-trial__details pre { background: var(--lab-surface-subtle); color: var(--lab-ink); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; padding: 12px; white-space: pre-wrap; }
+.scene-trial__form { align-items: start; display: flex; flex-wrap: wrap; gap: 16px 24px; justify-content: space-between; margin-top: 18px; }
+.scene-trial__form details { flex: 1 1 250px; min-width: 0; }
+.scene-trial__form summary { padding-top: 7px; }
+.scene-trial__form label { display: grid; font-size: 13px; gap: 8px; margin: 12px 0 18px; max-width: 600px; }
+.scene-trial__form :is(input, textarea) { background: var(--lab-surface-raised, #fff); border: 1px solid var(--lab-line-strong, #cbd3de); border-radius: 7px; box-sizing: border-box; color: var(--lab-ink, #253247); font: inherit; line-height: 1.6; min-width: 0; padding: 9px 11px; width: 100%; }
+.scene-trial__form textarea { resize: vertical; }
+.scene-trial__form :is(input, textarea)::placeholder { color: var(--lab-muted, #59677a); }
+.scene-trial__recovery { align-items: center; display: flex; flex-wrap: wrap; gap: 14px; padding: 16px 0; }
+.scene-trial .scene-trial__error { color: var(--lab-danger, #963e34); margin-block: 14px; }
+.scene-trial__history { border-top: 1px solid var(--lab-line, #e1e6ed); margin-top: 20px; padding-top: 8px; }
+.scene-trial__history ol { list-style: none; margin: 0; padding: 0; }
+.scene-trial__history button { background: none; border: 0; border-radius: 6px; color: var(--lab-muted, #59677a); display: flex; flex-wrap: wrap; font: inherit; font-size: 12px; gap: 12px; justify-content: space-between; padding: 10px; text-align: left; width: 100%; }
+.scene-trial__history button:is(:hover, [aria-current="true"]) { background: var(--lab-surface-subtle, #f4f7fb); color: var(--lab-ink, #253247); }
+@keyframes scene-trial-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .scene-trial__working { animation: none; } }
+@container lab-workspace (max-width: 480px) { .scene-trial__execution { align-items: start; flex-direction: column; } .scene-trial__form { flex-direction: column; } .scene-trial__form details { flex: auto; width: 100%; } }

@@ -71,16 +71,16 @@ describe('room collaboration mode planet expansion (UR-184)', () => {
     expect([...ids]).toEqual(['participant-b']);
   });
 
-  it('opens every active roster planet even when Runtime activity is empty', () => {
+  it('opens only partners needed by a running public turn, leaving idle roster members closed', () => {
     const room = roomWith([
       participant('participant-a', 0),
       participant('participant-b', 1),
       participant('participant-idle', 2),
     ]);
 
-    const requests = roomCollaborationPlanetRequests(room);
+    const requests = roomCollaborationPlanetRequests(room, runningProjection(['participant-a', 'participant-b']));
 
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(2);
     for (const request of requests) {
       expect(request.appId).toBe('agent');
       expect(request.background).toBe(true);
@@ -94,7 +94,10 @@ describe('room collaboration mode planet expansion (UR-184)', () => {
       subtitle: '实现与验证',
     });
     expect(requests[1]?.target).toMatchObject({ id: 'participant-b', title: 'Mars' });
-    expect(requests[2]?.target).toMatchObject({ id: 'participant-idle', title: 'Venus' });
+    expect(roomCollaborationPlanetRequests(room)).toEqual([]);
+    const settled = runningProjection(['participant-a', 'participant-b']);
+    settled.turnsById['root']!.status = 'completed';
+    expect(roomCollaborationPlanetRequests(room, settled)).toEqual([]);
   });
 
   it('unions disjoint partners from every running public root but excludes terminal and detached lanes', () => {
@@ -137,7 +140,7 @@ describe('room collaboration mode planet expansion (UR-184)', () => {
   it('opens every active partner beyond five and keeps real ordinal order', () => {
     const room = roomWith(Array.from({ length: 7 }, (_, index) => participant(`participant-${index}`, 6 - index)));
 
-    const requests = roomCollaborationPlanetRequests(room);
+    const requests = roomCollaborationPlanetRequests(room, runningProjection(room.participants.map((item) => item.id)));
 
     expect(requests.map((request) => request.target.id)).toEqual([
       'participant-6', 'participant-5', 'participant-4', 'participant-3',
@@ -150,13 +153,23 @@ describe('room collaboration mode planet expansion (UR-184)', () => {
       participant('participant-a', 0),
       { ...participant('participant-b', 1), status: 'removed' },
     ]);
-    expect(roomCollaborationPlanetRequests(inactive).map((request) => request.target.id))
+    expect(roomCollaborationPlanetRequests(inactive, runningProjection(['participant-a', 'participant-b'])).map((request) => request.target.id))
       .toEqual(['participant-a']);
 
     const archived = { ...roomWith([participant('participant-a', 0)]), status: 'archived' };
     expect(roomCollaborationPlanetRequests(archived)).toEqual([]);
   });
 });
+
+function runningProjection(participantIds: string[]) {
+  const projection = createRoomProjection('room-a');
+  projection.turnOrder = ['root'];
+  projection.turnsById.root = {
+    id: 'root', rootId: 'root', status: 'running', messageIds: ['user-root'], activityIds: [], participantIds,
+    createdAtMs: 1, updatedAtMs: 2,
+  };
+  return projection;
+}
 
 function participant(id: string, ordinal: number): RoomParticipant {
   return {

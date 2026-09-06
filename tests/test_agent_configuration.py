@@ -133,7 +133,7 @@ class AgentConfigurationTests(unittest.TestCase):
         )
         self.assertNotIn("roomCoordinator", update.changed_keys)
 
-    def test_skill_routes_are_revisioned_and_restart_the_runtime(self) -> None:
+    def test_skill_routes_are_revisioned_without_restarting_existing_sessions(self) -> None:
         update = self.store.update(
             {
                 "skillRouting.ordinary": [
@@ -150,8 +150,8 @@ class AgentConfigurationTests(unittest.TestCase):
             ["systematic-debugging", "test-driven-implementation"],
         )
         self.assertEqual(update.changed_keys, ("skillRouting.ordinary",))
-        self.assertTrue(update.runtime_sync_required)
-        self.assertEqual(update.snapshot["sync"]["state"], "pending")
+        self.assertFalse(update.runtime_sync_required)
+        self.assertEqual(update.snapshot["sync"]["state"], "synchronized")
 
     def test_owning_private_skill_cannot_be_removed_from_its_scenario(self) -> None:
         update = self.store.update(

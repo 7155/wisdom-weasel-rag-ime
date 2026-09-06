@@ -15,12 +15,16 @@ type WorkflowStage = 'select' | 'receipt' | 'rolled-back';
 type TimedReceipt = LexiconMutationReceipt & { atMs: number };
 
 export function LexiconWorkflow({
+  applyDisabled = false,
   onRefresh,
   review,
+  rollbackDisabled = false,
   transport,
 }: {
+  applyDisabled?: boolean;
   onRefresh: () => void;
   review: LexiconReview;
+  rollbackDisabled?: boolean;
   transport: ControlTransport;
 }) {
   const [stage, setStage] = useState<WorkflowStage>('select');
@@ -29,10 +33,9 @@ export function LexiconWorkflow({
   const [rollbackReceipt, setRollbackReceipt] = useState<TimedReceipt | null>(null);
 
   useEffect(() => {
-    setStage('select');
+    // Review freshness changes the next selection, not the identity of a
+    // completed write. Its receipt remains the authority for exact rollback.
     setSelectedKeys(defaultSelection(review));
-    setApplyReceipt(null);
-    setRollbackReceipt(null);
   }, [review.reviewToken]);
 
   const selectedEntries = useMemo(
@@ -40,13 +43,14 @@ export function LexiconWorkflow({
     [review.entries, selectedKeys],
   );
   const applyMutation = useMutation({
-    mutationKey: ['input-method', 'lexicon', 'apply', review.reviewToken],
-    mutationFn: async () => ({
-      ...await applyLexiconReview(transport, review, selectedEntries.map((entry) => entry.reviewKey)),
+    mutationKey: ['input-method', 'lexicon', 'apply'],
+    mutationFn: async (input: { review: LexiconReview; selectedKeys: string[] }) => ({
+      ...await applyLexiconReview(transport, input.review, input.selectedKeys),
       atMs: Date.now(),
     }),
     onSuccess: (receipt) => {
       setApplyReceipt(receipt);
+      setRollbackReceipt(null);
       setStage('receipt');
     },
   });
@@ -64,10 +68,16 @@ export function LexiconWorkflow({
     },
   });
 
-  if (!review.applySupported || !review.reviewRequired) {
+  useEffect(() => {
+    if (!applyMutation.isPending) applyMutation.reset();
+  }, [review.reviewToken]);
+
+  const selectionDisabled = applyDisabled || applyMutation.isPending || rollbackMutation.isPending;
+
+  if ((!review.applySupported || !review.reviewRequired) && !applyReceipt && !rollbackReceipt) {
     return <InlineNotice title="词库写入暂不可用" tone="warning">当前服务不能安全保存审阅后的词条，本页不会提交任何更改。</InlineNotice>;
   }
-  if (review.entries.length === 0) {
+  if (review.entries.length === 0 && !applyReceipt && !rollbackReceipt) {
     return (
       <EmptyState
         description="当前没有待加入用户词库的条目。"
@@ -85,7 +95,7 @@ export function LexiconWorkflow({
         {stage === 'select' ? (
           <div className="input-lexicon-review__bulk">
             <Button
-              disabled={selectedKeys.size === review.entries.length}
+              disabled={selectionDisabled || selectedKeys.size === review.entries.length}
               onClick={() => setSelectedKeys(new Set(review.entries.map((entry) => entry.reviewKey)))}
               size="small"
               variant="quiet"
@@ -93,7 +103,7 @@ export function LexiconWorkflow({
               全选
             </Button>
             <Button
-              disabled={selectedKeys.size === 0}
+              disabled={selectionDisabled || selectedKeys.size === 0}
               onClick={() => setSelectedKeys(new Set())}
               size="small"
               variant="quiet"
@@ -118,6 +128,7 @@ export function LexiconWorkflow({
                 <input
                   aria-label={`选择 ${entry.text}`}
                   checked={selectedKeys.has(entry.reviewKey)}
+                  disabled={selectionDisabled}
                   onChange={(event) => setSelectedKeys((current) => toggled(current, entry.reviewKey, event.target.checked))}
                   type="checkbox"
                 />
@@ -143,9 +154,9 @@ export function LexiconWorkflow({
           </div>
           {stage === 'select' ? (
             <Button
-              disabled={selectedEntries.length === 0}
+              disabled={selectionDisabled || !review.applySupported || !review.reviewRequired || selectedEntries.length === 0}
               loading={applyMutation.isPending}
-              onClick={() => applyMutation.mutate()}
+              onClick={() => applyMutation.mutate({ review, selectedKeys: selectedEntries.map((entry) => entry.reviewKey) })}
               size="small"
               variant="primary"
             >
@@ -156,7 +167,7 @@ export function LexiconWorkflow({
 
         {applyMutation.error ? <InlineNotice title="更新失败" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice> : null}
 
-        {stage === 'receipt' && applyReceipt ? (
+        {applyReceipt && !rollbackReceipt ? (
           <>
             <LexiconReceipt receipt={applyReceipt} rolledBack={false} />
             {applyReceipt.requiresRedeploy ? (
@@ -165,14 +176,15 @@ export function LexiconWorkflow({
               <InlineNotice title="等待实测确认" tone="info">词条已经写入用户词库；请用实际输入与选词结果确认效果。</InlineNotice>
             )}
             <div className="mgmt-workflow__buttons">
-              <Button leadingIcon={<RotateCcw size={14} />} loading={rollbackMutation.isPending} onClick={() => rollbackMutation.mutate(applyReceipt.rollbackId)} size="small">撤销这次更新</Button>
+              <Button disabled={rollbackDisabled || applyMutation.isPending} leadingIcon={<RotateCcw size={14} />} loading={rollbackMutation.isPending} onClick={() => rollbackMutation.mutate(applyReceipt.rollbackId)} size="small">撤销这次更新</Button>
+              {stage === 'receipt' && review.entries.length > 0 ? <Button disabled={selectionDisabled} onClick={() => setStage('select')} size="small" variant="quiet">继续审阅</Button> : null}
             </div>
           </>
         ) : null}
 
         {rollbackMutation.error ? <InlineNotice title="撤销失败" tone="danger">{publicErrorText(rollbackMutation.error)}</InlineNotice> : null}
 
-        {stage === 'rolled-back' && rollbackReceipt ? (
+        {rollbackReceipt ? (
           <>
             <LexiconReceipt receipt={rollbackReceipt} rolledBack />
             {rollbackReceipt.requiresRedeploy ? (
@@ -180,9 +192,9 @@ export function LexiconWorkflow({
             ) : (
               <InlineNotice title="等待实测确认" tone="info">词库已经恢复；请用实际选词结果确认。</InlineNotice>
             )}
-            <div className="mgmt-workflow__buttons">
+            {stage === 'rolled-back' ? <div className="mgmt-workflow__buttons">
               <Button onClick={() => setStage('select')} size="small" variant="quiet">返回审阅</Button>
-            </div>
+            </div> : null}
           </>
         ) : null}
       </div>

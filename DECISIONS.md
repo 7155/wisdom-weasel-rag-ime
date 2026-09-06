@@ -126,6 +126,10 @@ implementation choices or live status.
 - **Why:** a PAW loader would fork Pi bootstrap semantics.
 - **Consequence:** new Sessions load active resources; running Sessions keep
   their snapshot. PAWOS and Pi roll back their respective layers.
+- **Authorized lifecycle:** the exact user-authorized package change may be
+  applied through the current Session's existing execution authority and its
+  bound product preview. Do not require a second App Center confirmation for
+  the same authority; package content never supplies that authorization.
 
 ## D-012 — PAW OS Frontend Stays In The PAW Product Repository
 

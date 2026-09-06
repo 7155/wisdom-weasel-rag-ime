@@ -1,0 +1,40 @@
+{
+  "schema": "paw.stellar-assets.v1",
+  "intent": "PAW OS light-universe desktop: a full-bleed nebula background with a separately composited ringed-planet foreground layer.",
+  "packaging": {
+    "requestedFormat": "WebP",
+    "finalFormat": "PNG",
+    "converter": "cwebp 1.6.0 tested; PNG fallback selected because embed-prompt.mjs embeds directly in PNG/JPEG and uses a sidecar for WebP",
+    "pixelDataPreserved": true,
+    "promptEmbedding": "embed-prompt.mjs PNG tEXt chunk"
+  },
+  "assets": [
+    {
+      "file": "nebula.png",
+      "intent": "Opaque cinematic full-bleed desktop background plate.",
+      "prompt": "Create a production background asset for a premium desktop operating system called PAW. No UI, no text, no logos, no planets. Very wide cinematic 16:9 space vista: a luminous pearl-white and glacier-blue interstellar nebula flowing diagonally from lower left to upper right, extremely fine physically inspired wisps, bright crystalline dust and a few pin-sharp distant stars. Vast scale and dramatic depth, beautiful editorial sci-fi rendering, high-end space cinematography. The left upper half is luminous pale icy space with ample quiet area for dark desktop icon labels, while the far right and lower right transition to rich cobalt and muted indigo cosmic depth, sharply contrasted with warm champagne light streaming along the diagonal nebula. Light universe overall, not a dark black wallpaper. Detailed but not noisy, no lens artifacts, no neon grid, no flat vector artwork. This is a full-bleed background layer; a large separate ringed planet will be composited at the right-middle, so keep that region relatively open. Output 2048x1152 or higher landscape.",
+      "dimensions": { "width": 1672, "height": 941 },
+      "sizeBytes": 2009565,
+      "sha256": "28cfed494494cc71efefd6a70b50b7909b754c3a5880c6f93f8984c92cb20b01",
+      "format": "PNG",
+      "opaque": true,
+      "hasAlpha": false,
+      "qa": { "pixelEqualToSuppliedSource": true, "promptVerified": true }
+    },
+    {
+      "file": "ringed-planet.png",
+      "intent": "RGBA foreground cutout composited over the nebula at desktop right-middle.",
+      "prompt": "Create one high quality cinematic 3D ringed planet asset on a truly transparent background with alpha. No scenery, no stars, no backdrop, no text. A monumental icy gas giant with rich cobalt and periwinkle cloud bands, pale pearl illuminated northwestern hemisphere and dramatic deep midnight-blue shadow on its lower right quarter. Cloud bands are detailed and turbulent, with subtle warm champagne currents. Very thin luminous icy atmospheric rim. Wide Saturn-like rings tilt diagonally from lower-left toward upper-right, sweep clearly in FRONT of the lower hemisphere and behind the upper hemisphere, exquisite layered fine icy gold and blue ring streaks with a dark Cassini gap. Three-quarter close camera, majestic and striking rather than toy-like or pastel cute. Entire planet and both ends of rings contained inside canvas, no cropping. Sphere occupies roughly half the width and two thirds the height, rings nearly full width. No cast shadow outside the planet. Studio-quality realistic science fiction rendering, sharp silhouette with preserved transparent alpha, landscape 3:2.",
+      "dimensions": { "width": 1536, "height": 1024 },
+      "sizeBytes": 2623251,
+      "sha256": "f485a633a6768276a36549444c20690755aa9648fe1cecf9f0e7ecffe52f64ca",
+      "format": "PNG",
+      "opaque": false,
+      "hasAlpha": true,
+      "alphaExtrema": [0, 254],
+      "transparentCornerAlpha": { "corners": [0, 0, 0, 0], "eachCornerBlock": "8x8 all zero alpha" },
+      "opaqueBlackBackground": false,
+      "qa": { "pixelEqualToSuppliedSource": true, "promptVerified": true }
+    }
+  ]
+}

@@ -81,7 +81,7 @@
       ],
       "does": "先搜索；无匹配时创建、校验并预览。",
       "input": "能力、来源和验收。",
-      "output": "匹配包或草案、校验和安装提议。"
+      "output": "匹配包、校验与提议或授权安装回执。"
     },
     {
       "name": "bootstrap-project-context",

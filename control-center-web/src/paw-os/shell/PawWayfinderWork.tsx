@@ -1,5 +1,5 @@
-import { Activity, Archive, ChevronDown, ChevronRight, CircleAlert, FolderOpen, LoaderCircle, Settings2, Users, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
+import { Activity, Archive, ChevronDown, ChevronRight, CircleAlert, FolderOpen, LoaderCircle, Orbit, Settings2, Users, X } from 'lucide-react';
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import type { PawWayfinderIconPosition, PawWayfinderState } from '../runtime/desktop-store';
 import { PAW_DESKTOP_GRID, pawDesktopGridEntries, pawDesktopMovePosition, pawDesktopOccupiedPositions, pawDesktopResolvePersistedPositions, pawDesktopSnapPosition, pawDesktopWorkOriginY, pawDesktopWorkPosition, usePawDesktopGridLayout } from './desktop-grid';
@@ -14,6 +14,10 @@ import {
   type WayfinderWorkView,
 } from './wayfinder-work-projection';
 import { usePawWorkDirectory } from './PawWorkDirectory';
+import { SatelliteModelBadge } from '@/features/paw-os/SatelliteModelBadge';
+
+const PawProjectGalaxy = lazy(() => import('./PawProjectGalaxy').then((module) => ({ default: module.PawProjectGalaxy })));
+const PawProjectDocuments = lazy(() => import('./PawProjectDocuments').then((module) => ({ default: module.PawProjectDocuments })));
 
 export const WAYFINDER_DRAG_MIME = 'application/x-paw-wayfinder-icon';
 export const WAYFINDER_ICON_WIDTH = 96;
@@ -71,6 +75,7 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onArchive, onSe
      pixels. The desktop rests closed like macOS Finder: single click selects,
      double click opens, and `null` is the explicit fold-all state. */
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
+  const [galaxyProjectId, setGalaxyProjectId] = useState<string | null>(null);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [contextProjectId, setContextProjectId] = useState<string | null>(null);
   const contextTriggerRef = useRef<HTMLElement | null>(null);
@@ -89,8 +94,13 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onArchive, onSe
   const searching = false;
   const visibleExpandedProjectId = expandedProjectId;
   const contextProject = contextProjectId
-    ? fullView.projects.find((project) => project.id === contextProjectId) ?? null
+    ? view.projects.find((project) => project.id === contextProjectId) ?? fullView.projects.find((project) => project.id === contextProjectId) ?? null
     : null;
+  const galaxyProject = galaxyProjectId ? view.projects.find((project) => project.id === galaxyProjectId) ?? null : null;
+
+  useEffect(() => {
+    if (galaxyProjectId && !galaxyProject) setGalaxyProjectId(null);
+  }, [galaxyProject, galaxyProjectId]);
 
   useEffect(() => {
     if (contextProjectId && !contextProject) setContextProjectId(null);
@@ -313,6 +323,7 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onArchive, onSe
               }}
               onDrop={(event) => dropOnProject(event, project.id)}
               onOpen={openItem}
+              onOpenGalaxy={() => setGalaxyProjectId(project.id)}
               onSelect={onSelectIcon}
               onToggle={() => setExpandedProjectId(folderExpanded ? null : project.id)}
               onToggleBucket={(key) => setExpandedBuckets((current) => toggled(current, key))}
@@ -359,6 +370,41 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onArchive, onSe
           sheetRef={contextSheetRef}
         />
       ) : null}
+      {galaxyProject ? <Suspense fallback={<p role="status">正在打开项目星系…</p>}>
+        <PawProjectGalaxy
+          project={galaxyProject}
+          modelDetails={(item) => item.kind === 'session' ? <SatelliteModelBadge key={item.id} sessionId={item.id} inline /> : <span>各行星使用独立模型</span>}
+          onClose={() => setGalaxyProjectId(null)}
+          onShowList={() => {
+            setExpandedProjectId(galaxyProject.id);
+            setGalaxyProjectId(null);
+          }}
+          onOpen={(item) => {
+            setGalaxyProjectId(null);
+            setExpandedProjectId(null);
+            openItem(item.kind, item.id, item.title);
+          }}
+          onOpenProject={() => {
+            setGalaxyProjectId(null);
+            setExpandedProjectId(null);
+            setContextProjectId(galaxyProject.id);
+          }}
+          documents={<PawProjectDocuments
+            project={galaxyProject}
+            sessions={sessions}
+            onOpenFile={(path, sessionId) => {
+              setGalaxyProjectId(null);
+              setExpandedProjectId(null);
+              openProjectRootInFiles(path, sessionId);
+            }}
+            onOpenWork={(item) => {
+              setGalaxyProjectId(null);
+              setExpandedProjectId(null);
+              openItem(item.kind, item.id, item.title);
+            }}
+          />}
+        />
+      </Suspense> : null}
     </section>
   );
 });
@@ -412,7 +458,7 @@ function wayfinderElementCenter(element: HTMLElement): { x: number; y: number } 
     : null;
 }
 
-function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPosition, onContext, onDragEnd, onDragStart, onDrop, onOpen, onSelect, onToggle, onToggleBucket, onToggleRepeats, project, searching, selected }: {
+function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPosition, onContext, onDragEnd, onDragStart, onDrop, onOpen, onOpenGalaxy, onSelect, onToggle, onToggleBucket, onToggleRepeats, project, searching, selected }: {
   expanded: boolean;
   expandedBuckets: ReadonlySet<string>;
   expandedRepeats: ReadonlySet<string>;
@@ -422,6 +468,7 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
   onDragStart: (event: DragEvent<HTMLElement>, iconId: string) => void;
   onDrop: (event: DragEvent<HTMLElement>) => void;
   onOpen: (kind: 'session' | 'room', id: string, title: string) => void;
+  onOpenGalaxy: () => void;
   onSelect?: (iconId: string, additive: boolean) => void;
   onToggle: () => void;
   onToggleBucket: (key: string) => void;
@@ -517,7 +564,7 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
             const additive = event.shiftKey || event.metaKey || event.ctrlKey;
             onSelect?.(projectIconId(project.id), additive);
           }}
-          onDoubleClick={onToggle}
+          onDoubleClick={(event) => { event.currentTarget.focus(); onOpenGalaxy(); }}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -532,7 +579,8 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
             }
             if (event.key !== 'Enter' && event.key !== ' ') return;
             event.preventDefault();
-            onToggle();
+            event.currentTarget.focus();
+            onOpenGalaxy();
           }}
           onDragEnd={onDragEnd}
           onDragStart={(event) => onDragStart(event, projectIconId(project.id))}
@@ -575,6 +623,9 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
               <small>{project.items.length} 个对话 · {projectActivityLabel(project) || '已准备好'}</small>
             </div>
             <div className="paw-wayfinder-work__project-content-actions">
+              <button className="paw-wayfinder-work__project-content-galaxy" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onOpenGalaxy(); }} type="button" title="以全屏星系选择对话与文档">
+                <Orbit aria-hidden="true" size={15} /><span>全屏星系</span>
+              </button>
               <button
                 aria-label={`打开 ${project.label} 项目设置`}
                 className="paw-wayfinder-work__project-content-context"

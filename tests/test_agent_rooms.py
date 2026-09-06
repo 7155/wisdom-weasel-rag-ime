@@ -395,6 +395,95 @@ class AgentRoomTests(unittest.TestCase):
                 },
             )
 
+    def test_child_terminal_adopts_legacy_event_and_deduplicates_after_retention(self) -> None:
+        room = self.store.create(
+            title="历史终态恢复", routing_policy="natural",
+            participants=[
+                self._participant("companion-present-v1", "主持"),
+                self._participant("companion-firstlight-v1", "伙伴"),
+            ],
+        )
+        target = room["participants"][1]
+        room_id = str(room["id"])
+        scope = {
+            "room_id": room_id, "event_type": "participant_activity",
+            "turn_id": "root:one", "participant_id": target["id"],
+            "source_session_id": target["sessionId"],
+        }
+        hub = AgentRoomEventHub(self.store)
+        legacy = hub.publish(**scope, payload={
+            "sourceEventId": "runtime:event:one", "sourceEventType": "turn_completed",
+            "data": {"activityKind": "child", "phase": "completed", "dispatchId": "child:one"},
+        })
+        observed: list[dict[str, object]] = []
+        restarted = AgentRoomEventHub(self.store)
+        restarted.add_observer(lambda event: observed.append(dict(event)))
+        recovery = {
+            **scope, "runtime_event_id": "runtime:event:one", "dispatch_id": "child:one",
+            "payload": {
+                "activityKind": "child", "phase": "completed", "dispatchId": "child:one",
+                "sourceRuntimeEventId": "runtime:event:one", "summary": "恢复的摘要",
+            },
+        }
+        self.assertEqual(restarted.publish_child_terminal(**recovery), legacy)
+        self.assertEqual(len(self.store.list_events(room_id)), 1)
+        self.assertEqual(observed, [])
+        with self.assertRaisesRegex(ValueError, "projection key was rebound"):
+            restarted.publish_child_terminal(**{
+                **recovery, "payload": {**recovery["payload"], "phase": "aborted"},
+            })
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM agent_room_events WHERE event_id = ?", (legacy["eventId"],))
+        self.assertIsNone(AgentRoomEventHub(self.store).publish_child_terminal(**recovery))
+        self.assertEqual(self.store.list_events(room_id), [])
+        self.assertEqual(observed, [])
+
+    def test_live_and_recovered_child_terminal_share_atomic_publication(self) -> None:
+        room = self.store.create(
+            title="并发终态投影", routing_policy="natural",
+            participants=[
+                self._participant("companion-present-v1", "主持"),
+                self._participant("companion-firstlight-v1", "伙伴"),
+            ],
+        )
+        target = room["participants"][1]
+        scope = {
+            "room_id": str(room["id"]), "event_type": "participant_activity",
+            "turn_id": "root:concurrent", "participant_id": target["id"],
+            "source_session_id": target["sessionId"],
+            "runtime_event_id": "runtime:event:concurrent", "dispatch_id": "child:concurrent",
+        }
+        data = {"activityKind": "child", "phase": "completed", "dispatchId": "child:concurrent"}
+        payloads = (
+            {"sourceEventId": "runtime:event:concurrent", "sourceEventType": "turn_completed", "data": data},
+            {**data, "sourceRuntimeEventId": "runtime:event:concurrent", "summary": "恢复的摘要"},
+        )
+        barrier = threading.Barrier(2)
+        observed: list[dict[str, object]] = []
+        results: list[object] = []
+        errors: list[Exception] = []
+
+        def publish(payload: dict[str, object]) -> None:
+            hub = AgentRoomEventHub(self.store)
+            hub.add_observer(lambda event: observed.append(dict(event)))
+            try:
+                barrier.wait(timeout=5)
+                results.append(hub.publish_child_terminal(**scope, payload=payload))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=publish, args=(payload,)) for payload in payloads]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(len(self.store.list_events(str(room["id"]))), 1)
+
     def test_route_target_uses_exact_longest_mention_and_rejects_real_ambiguity(self) -> None:
         room = self.store.create(
             title="时间线讨论",

@@ -34,12 +34,17 @@ export function BrowserFindBar({
         aria-label="页内查找"
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
           if (event.key === 'Enter') {
             event.preventDefault();
             if (event.shiftKey) onPrevious();
             else onNext();
           }
-          if (event.key === 'Escape') onClose();
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }
         }}
         placeholder="查找网页内容"
         ref={inputRef}

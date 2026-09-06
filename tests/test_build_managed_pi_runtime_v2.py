@@ -40,6 +40,7 @@ from scripts.build_managed_pi_runtime_v2 import (
     _verify_pi_worktree,
     _validated_skill_routing_catalog,
     _verified_session_runtime_contract,
+    main as build_runtime_payload,
 )
 from rag_ime.managed_pi_runtime import ManagedPiRuntimeError
 from rag_ime.agent_extensions import (
@@ -138,6 +139,65 @@ def _write_extension_app_fixture(
 
 
 class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
+    def _runtime_version_for_source(self, source_commit: str) -> str:
+        """Run the real identity calculation and stop before payload writes."""
+
+        class IdentityCaptured(Exception):
+            pass
+
+        real_exists = Path.exists
+
+        def capture_destination(path: Path) -> bool:
+            if path.parent == ROOT / "build" / "managed-pi-runtime":
+                raise IdentityCaptured(path.name)
+            return real_exists(path)
+
+        def git_metadata(command: list[str], **_kwargs: object) -> str:
+            return "100" if "show" in command else "f" * 40
+
+        with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-identity-") as temporary:
+            pi_root = Path(temporary)
+            package_json = pi_root / "packages" / "coding-agent" / "package.json"
+            package_json.parent.mkdir(parents=True)
+            package_json.write_text('{"version":"0.84.2"}', encoding="utf-8")
+            esbuild = pi_root / "node_modules" / ".bin" / "esbuild"
+            esbuild.parent.mkdir(parents=True)
+            esbuild.touch()
+            with (
+                patch("scripts.build_managed_pi_runtime_v2._runtime_host_root", return_value=pi_root),
+                patch("scripts.build_managed_pi_runtime_v2._source_revision", return_value=source_commit),
+                patch("scripts.build_managed_pi_runtime_v2._node_relocation_error", return_value=None),
+                patch("scripts.build_managed_pi_runtime_v2._verified_session_runtime_contract", return_value=({}, "contract-fixture")),
+                patch("scripts.build_managed_pi_runtime_v2._validated_skill_routing_catalog", return_value={}),
+                patch("scripts.build_managed_pi_runtime_v2._hash_tree", return_value=b"skills-fixture"),
+                patch("scripts.build_managed_pi_runtime_v2._hash_extension_app_pi_packages", return_value=b"apps-fixture"),
+                patch("scripts.build_managed_pi_runtime_v2._run", side_effect=git_metadata),
+                patch.object(Path, "exists", capture_destination),
+            ):
+                with self.assertRaises(IdentityCaptured) as captured:
+                    build_runtime_payload(["--pi-worktree", str(pi_root), "--node", sys.executable])
+                return str(captured.exception)
+
+    def test_runtime_version_distinguishes_dirty_sources_at_the_same_commit(self) -> None:
+        commit = "9c3f93c8b1c409e82e14d458510c146088c44561"
+        first = self._runtime_version_for_source(f"{commit}+dirty.{'1' * 64}")
+        second = self._runtime_version_for_source(f"{commit}+dirty.{'2' * 64}")
+
+        self.assertNotEqual(first, second)
+
+    def test_runtime_version_is_deterministic_for_the_same_complete_source(self) -> None:
+        source = f"9c3f93c8b1c409e82e14d458510c146088c44561+dirty.{'1' * 64}"
+
+        self.assertEqual(self._runtime_version_for_source(source), self._runtime_version_for_source(source))
+
+    def test_runtime_version_distinguishes_clean_and_dirty_source(self) -> None:
+        commit = "9c3f93c8b1c409e82e14d458510c146088c44561"
+
+        self.assertNotEqual(
+            self._runtime_version_for_source(commit),
+            self._runtime_version_for_source(f"{commit}+dirty.{'1' * 64}"),
+        )
+
     def test_control_extension_keeps_full_desktop_receipt_out_of_model_context(self) -> None:
         source = (ROOT / "integrations" / "pi" / "rag-ime-control.ts").read_text(
             encoding="utf-8"

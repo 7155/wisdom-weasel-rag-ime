@@ -1,8 +1,8 @@
 # Project Outcomes
 
-Updated: 2026-09-05
+Updated: 2026-09-06
 
-Outcome statuses describe focus; Runtime projections own activity, worktree
+Statuses describe focus; Runtime owns activity, worktree
 state and Tool progress.
 
 ## Evidence Boundary
@@ -18,15 +18,15 @@ Git and Runtime live; `release/product-status.json` and its audit record release
 | O2 | Room completes a real collaboration by composing Pi Sessions | active | The 2026-09-03 installed build proved persisted conversation-first history, full-trust participants, simultaneous live updates, one terminal Root, refresh recovery, and selected-moderator Runtime prewarming; fresh probes measured Provider first text in 2.57–2.58 s while total Room first text varied 6.54–8.58 s | Run a multi-day reconnect/cancellation soak; if visible first text must stay below 7 s, separately bound pre-Provider routing and query-aware memory bootstrap |
 | O3 | A parent Session can use configurable private Tool Agents | active | Current source supports bounded child events/results, read/write choice, model/thinking override, and same-tree peer calls | Prove a useful live parent/child run, then raise capacity through bounded event/UI/resource budgets rather than more Kernel state |
 | O4 | PAW can develop itself through a bounded context and Skill harness | active | The installed managed Pi enforces revisioned four-scenario Skill allowlists; Settings/catalog checks proved mandatory Room/Trace/Lab isolation, and `resume-builder` is absent | Finish foreground 掌柜问数 acceptance and Package uninstall/restore |
-| O5 | Control Center truthfully renders Session and Room state | active | Installed PAWOS previously showed immediate Room text and terminal Root state; the 2026-09-04 source foreground showed first and known-Session prompts exactly once, no ghost failure, and stable refresh recovery | Install the candidate, run Agent Lab Room end to end, then run the long-window state/restoration soak |
-| O6 | Memory, Knowledge, and Agent evaluation provide governed, explainable context | active | Four current project projections now keep quality at or above their frozen baseline while reducing priced API usage: EnterpriseOps 3/3 and 31/31, Runtime-reconciled estimate $1.711214→$0.07291692 (-95.7389%); Enterprise RAG r6 Sol 7/9 Reject → Luna 8/9 Reject → Luna+Prompt-v4 9/9 Keep, $2.170603→$0.1029376 (-95.2576%); CloudOps CA 1.0 and JRA 0.8333→0.9167, $4.568166→$0.27613024 (-93.9553%); Memory 5/5 curation, 4/4 durable recall, 1/1 abstention plus rollback/replay, bound report-usage estimate $0.269115→$0.0107502 (-96.0054%). The first three are Runtime-reconciled estimates; Memory is a lower-authority deterministic pricing estimate. None is a Provider bill. RAG r6 is post-Validation candidate-aware, not candidate-blind/Held-out/unbiased; its Standard correction is not model capability improvement, and latency remains diagnostic only. | Preserve these bounded winners, add typed counterfactual probes and layer-specific repair operators before calling the UI an optimization engine, replace Memory's report estimate with a Runtime receipt when available, and obtain candidate-blind or untouched Held-out RAG evidence before unbiased Promotion |
-| O7 | The macOS input experience is correct in real foreground apps | active | Source, sidecar, patched Squirrel, and automated checks exist; the older status snapshot records partial foreground evidence | Fresh foreground matrix for composition, deletion, app switch, follow-up, RAG/memory selection, Accessibility, and voice |
+| O5 | Control Center truthfully renders Session and Room state | active | Development build 1429 and compact-trace Pi installed; installed HTTP Room recovery, messages/models and OAuth probe passed ([causal record](control-center-web/docs/pawos/PAWOS_RELIABILITY_CONTINUATION_20260905.md)) | Verify resident trace and native multi-window recovery; finish [stellar/Memory](control-center-web/docs/pawos/STELLAR_MEMORY_TOPIC_PAGES_20260905.md), Knowledge and Lab flows |
+| O6 | Memory, Knowledge, and Agent evaluation provide governed, explainable context | active | Four projections retain baseline quality with lower priced usage: EnterpriseOps 3/3 and 31/31, Runtime-reconciled estimate $1.711214→$0.07291692 (-95.7389%); Enterprise RAG r6 Sol 7/9 Reject → Luna 8/9 Reject → Luna+Prompt-v4 9/9 Keep, $2.170603→$0.1029376 (-95.2576%); CloudOps CA 1.0 and JRA 0.8333→0.9167, $4.568166→$0.27613024 (-93.9553%); Memory now has a separate Pi model-only synthetic pair: 5/5 curation, 4/4 durable recall, 1/1 abstention plus rollback/replay, Runtime-reconciled estimate $0.163425→$0.0071846 (-95.6037%), four requests and no failures. The standard-v1 Pi pair preserves the older concise-v1 CLI record. All current amounts are Runtime-reconciled estimates, not bills. RAG r6 is post-Validation candidate-aware, not candidate-blind/Held-out/unbiased; its Standard correction is not model capability improvement, and latency remains diagnostic only. | Validate the installed Prompt/Model controls, Memory Pi adapter and shared demo export ([receipts](control-center-web/docs/pawos/LAB_GOLDEN_WORKFLOW_20260905.md)); complete the remaining scene adapters and real counterfactual and Tool/Skill trials, and obtain candidate-blind or untouched Held-out RAG evidence before unbiased Promotion; [8 Lab records](eval/micro-selfboot/OS_RESULTS.md); [Room merge](eval/micro-selfboot/OPTIMIZATION_RESULTS.md) retains 3/3: tokens -35.5%, estimated cost -24.7% |
+| O7 | The macOS input experience is correct in real foreground apps | active | [Generation review](squirrel-patches/GENERATION_EXPERIENCE.md); [screen continuation](squirrel-patches/SCENARIO_INTEGRATION.md): tasks/recovery checked; Squirrel and Electron built, uninstalled; native capture/full-web checks blocked | Restore native observation, resolve web regression; install matching Squirrel/Electron/Gateway; verify selection, vision follow-up, saves and desktop Tools, then remaining input/voice cases |
 | O8 | A public macOS release is reproducible and distributable | blocked | Public source and engineering build paths exist | Clean scoped source, current release manifest, candidate-quality sign-off, Developer ID signing, notarization, stapling, clean-machine installation, and accepted foreground evidence |
-| O9 | PAW OS reuses selected Tutti frontend patterns while Pi/Gateway retain Runtime ownership | active | A selectable PAW OS shell provides Wayfinder, grouped App identities, windows, Dock, Launchpad, Mission Control, and three reference-aligned themes while the legacy shell remains available; Browser maps its visible tab and address bar to the governed PAW `deviceId + tabId` command path | Finish Files and Terminal adapters, redesign each remaining App surface, then run installed-runtime and multi-window acceptance before cutover |
+| O9 | PAW OS reuses selected Tutti frontend patterns while Pi/Gateway retain Runtime ownership | active | A selectable PAW OS shell provides Wayfinder, grouped App identities, windows, Dock, Launchpad, Mission Control, and three reference-aligned themes while the legacy shell remains available; Browser maps its visible tab and address bar to the governed PAW `deviceId + tabId` command path | Finish App flows, native recovery and whole-OS acceptance; [galaxy, dark mode and Browser libraries](control-center-web/docs/pawos/STELLAR_BROWSER_CONTINUATION_20260905.md) have source checks |
 
 ## O1 — Long-Running Session
 
-Acceptance requires all of the following on one current Runtime/build:
+Acceptance requires one current Runtime/build:
 
 - Luna shows useful text or a public thinking summary without an indefinitely
   empty “thinking” card. Five seconds is an experience target, not a forced
@@ -92,6 +92,12 @@ New projects initialize only when the user invokes Pi's `/init` prompt
 template. It inspects the bound workspace and creates or narrowly supplements
 the root `AGENTS.md`; Session creation never writes project files.
 
+The [2026-09-06 prompt-settings candidate](eval/micro-selfboot/PROMPT_SETTINGS_REVIEW.md)
+adds editable system/compaction additions and docs-aware summaries, with Session
+binding snapshots. Source checks and isolated Settings acceptance passed; the
+new Host is staged inactive. Paired activation awaits a safe Gateway restart;
+the running installation still uses its existing prompts.
+
 ## O5–O8 — Product Surfaces And Release
 
 Session/Room success does not prove whole-product readiness. UI requires Runtime
@@ -101,6 +107,8 @@ evidence, and distribution requires current release gates.
 The [2026-09-06 memory continuity result](eval/memory-topic-selfboot/RESULT.md)
 adds stable Book reuse, governed merges and current-member summaries. Pi development
 required Session recovery; unattended self-hosting remains unproven.
+
+[Source integration](control-center-web/docs/pawos/INTEGRATION_CLOSEOUT_20260906.md); installation acceptance remains separate.
 
 ## Condensed History
 

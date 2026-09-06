@@ -59,7 +59,7 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     defaultRouteId: 'agent',
     presentation: 'conversation',
     accent: 'violet',
-    tagline: 'Session 与 Room',
+    tagline: '对话、上下文与多 Agent 协作',
   },
   {
     id: 'memory',
@@ -67,7 +67,7 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     shortLabel: '记忆',
     routeIds: ['memory'],
     defaultRouteId: 'memory',
-    homeRoute: '/memory?view=timeline',
+    homeRoute: '/memory',
     presentation: 'library',
     accent: 'rose',
     tagline: '可追溯的个人记忆',
@@ -120,7 +120,7 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     defaultRouteId: 'eval-lab',
     presentation: 'utility',
     accent: 'amber',
-    tagline: '评测任务、分数与边界',
+    tagline: '垂直场景的实验、比较与优化',
   },
   {
     id: 'system-settings',
@@ -165,11 +165,11 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
 ] as const;
 
 export const primaryDockAppIds: readonly PawOsAppId[] = [
-  'project-workbench',
   'agent',
+  'eval-lab',
+  'project-workbench',
   'memory',
   'knowledge',
-  'input-studio',
   'files',
   'browser',
   'terminal',

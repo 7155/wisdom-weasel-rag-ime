@@ -28,6 +28,7 @@
     "entityRevision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "project": {"type": "string", "maxLength": 128},
     "entity": {"$ref": "#/$defs/node"},
+    "topicPage": {"$ref": "#/$defs/topicPage"},
     "attributes": {"$ref": "#/$defs/attributes"},
     "connections": {"$ref": "#/$defs/page"},
     "members": {"$ref": "#/$defs/page"},
@@ -42,6 +43,269 @@
     }
   },
   "$defs": {
+    "topicReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "referenceKind",
+        "referenceId"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "atom",
+            "evidence",
+            "event"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "referenceKind": {
+          "type": "string",
+          "enum": [
+            "atom",
+            "evidence",
+            "event"
+          ]
+        },
+        "referenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 180
+        }
+      }
+    },
+    "topicEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "kind",
+        "status",
+        "claimState",
+        "atomIds",
+        "references",
+        "sourceStatus",
+        "lineageId",
+        "validFromMs",
+        "validToMs",
+        "supersedesId",
+        "supersededByIds",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "claimState": {
+          "type": "string",
+          "enum": [
+            "current",
+            "superseded"
+          ]
+        },
+        "atomIds": {
+          "type": "array",
+          "maxItems": 1,
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "references": {
+          "type": "array",
+          "maxItems": 21,
+          "items": {
+            "$ref": "#/$defs/topicReference"
+          }
+        },
+        "sourceStatus": {
+          "type": "string",
+          "enum": [
+            "available",
+            "unavailable"
+          ]
+        },
+        "lineageId": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "validFromMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "validToMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "supersedesId": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "supersededByIds": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "reason": {
+          "type": "null"
+        }
+      }
+    },
+    "topicPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "bookId",
+        "revision",
+        "authority",
+        "freshness",
+        "summary",
+        "sections",
+        "sources",
+        "coverage"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "rag-ime.memory-topic-page.v1"
+        },
+        "bookId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "authority": {
+          "type": "string",
+          "const": "atom_projection"
+        },
+        "freshness": {
+          "type": "string",
+          "enum": [
+            "current",
+            "needs_refresh"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 900
+        },
+        "sections": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "current",
+            "constraints",
+            "openQuestions",
+            "history"
+          ],
+          "properties": {
+            "current": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "$ref": "#/$defs/topicEntry"
+              }
+            },
+            "constraints": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "$ref": "#/$defs/topicEntry"
+              }
+            },
+            "openQuestions": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "$ref": "#/$defs/topicEntry"
+              }
+            },
+            "history": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "$ref": "#/$defs/topicEntry"
+              }
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "maxItems": 80,
+          "items": {
+            "$ref": "#/$defs/topicReference"
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "memberCount",
+            "visibleAtomCount",
+            "omittedAtomCount",
+            "truncated"
+          ],
+          "properties": {
+            "memberCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "visibleAtomCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "omittedAtomCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
     "nodeKind": {
       "type": "string",
       "enum": ["tag", "group", "atom", "book", "phrase", "memory"]

@@ -637,6 +637,11 @@ class RagBenchmarkAgentGatewayTests(unittest.TestCase):
             {"op": "create_run", "label": "node-spool"},
         )
         probe.write_text(
+            "// Match Pi HTTP-dispatcher initialization: replace global fetch after import.\n"
+            "const originalGlobalFetch = globalThis.fetch;\n"
+            "if (globalThis.fetch === originalGlobalFetch) {\n"
+            "  globalThis.fetch = async () => { throw new Error('native fetch cannot handle spool'); };\n"
+            "}\n"
             "const response = await fetch(\n"
             "  'rag-ime-spool://gateway/api/agent/tool/execute',\n"
             "  {method:'POST',headers:{'content-type':'application/json',"
@@ -678,6 +683,117 @@ class RagBenchmarkAgentGatewayTests(unittest.TestCase):
         self.assertEqual(200, result["status"])
         self.assertTrue(result["body"]["ok"])
         self.assertEqual("create_run", result["body"]["operation"])
+
+    def test_current_runtime_initialization_preserves_spool_transport_without_provider(self) -> None:
+        runtime = Path(__file__).resolve().parents[1] / "build/managed-pi-runtime/install-stack-current/runtime-host/cli.mjs"
+        node = shutil.which("node")
+        if not node or not runtime.is_file():
+            self.skipTest("current local Runtime payload or Node is unavailable")
+        self.gateway.bind_session("session-a")
+        root = Path(self.temporary.name)
+        probe = root / "current-runtime-probe.mjs"
+        payload = self._call("session-a", "current-runtime-spool", {"op": "create_run", "label": "runtime-canary"})
+        probe.write_text(
+            f"await import({json.dumps(runtime.as_uri())});\n"
+            "// Wait for Host setup only; stdin is EOF and no Session/prompt is submitted.\n"
+            "await new Promise(resolve => setTimeout(resolve, 250));\n"
+            "const response = await fetch('rag-ime-spool://gateway/api/agent/tool/execute', "
+            f"{{method:'POST', headers:{{'x-rag-ime-agent-token':'benchmark-token'}},body:{json.dumps(json.dumps(payload))}}});\n"
+            "console.log(JSON.stringify({canary:true,status:response.status,body:await response.json()}));\n",
+            encoding="utf-8",
+        )
+        with RagBenchmarkAgentSpoolGateway(self.gateway, spool_dir=root / "spool", token="benchmark-token"):
+            environment = {"PATH": os.environ.get("PATH", "")}
+            environment.update({
+                "RAG_IME_APP_SUPPORT_DIR": str(root / "host"),
+                "RAG_IME_PI_AGENT_DIR": str(root / "host/config"),
+                "PI_CODING_AGENT_DIR": str(root / "host/config"),
+                "RAG_IME_PI_USER_SKILL_PATHS": str(root / "empty-skills"),
+                "RAG_IME_CODEX_SKILL_PATHS": str(root / "empty-skills"),
+                "RAG_IME_BENCHMARK_GATEWAY_SPOOL": str(root / "spool"),
+                "RAG_IME_BENCHMARK_RUNTIME_ENTRYPOINT": str(probe),
+                "RAG_IME_BENCHMARK_GATEWAY_TIMEOUT_MS": "2000",
+            })
+            completed = subprocess.run([node, str(Path(__file__).resolve().parents[1] / "scripts/rag_agent_spool_runtime_wrapper.mjs")], input="", capture_output=True, text=True, timeout=15, env=environment)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        result = next(json.loads(line) for line in completed.stdout.splitlines() if '"canary":true' in line)
+        self.assertEqual(200, result["status"])
+        self.assertTrue(result["body"]["ok"])
+
+    def test_spool_router_preserves_http_replacement_restore_timeout_and_abort(self) -> None:
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is unavailable")
+        root = Path(self.temporary.name)
+        spool = root / "spool-semantics"
+        spool.mkdir()
+        probe = root / "semantics-probe.mjs"
+        probe.write_text("""
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import {readdir} from 'node:fs/promises';
+const router = globalThis.fetch;
+const OriginalRequest = globalThis.Request;
+const OriginalResponse = globalThis.Response;
+const server = http.createServer((request, response) => {
+  let body = '';
+  request.on('data', chunk => body += chunk);
+  request.on('end', () => response.end(JSON.stringify({method:request.method,body,header:request.headers['x-probe']})));
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const url = `http://127.0.0.1:${server.address().port}/probe`;
+try {
+  const first = await fetch(url, {method:'POST',headers:{'x-probe':'http'},body:'forwarded'});
+  assert.deepEqual(await first.json(), {method:'POST',body:'forwarded',header:'http'});
+  let seen = [];
+  const controller = new AbortController();
+  const request = new Request(url);
+  const init = {signal:controller.signal,headers:{'x-probe':'replacement'}};
+  const firstDelegate = async (input, options) => {
+    seen.push([input,options]); return new Response('first');
+  };
+  const secondDelegate = async (input, options) => {
+    seen.push([input,options]); return new Response('second');
+  };
+  globalThis.fetch = firstDelegate;
+  globalThis.fetch = firstDelegate;
+  assert.equal(await (await fetch(request,init)).text(), 'first');
+  globalThis.fetch = secondDelegate;
+  assert.equal(await (await fetch(request,init)).text(), 'second');
+  globalThis.fetch = router; // Restoring the public router must never become its own delegate.
+  assert.equal(await (await fetch(request,init)).text(), 'second');
+  globalThis.fetch = firstDelegate;
+  assert.equal(await (await fetch(request,init)).text(), 'first');
+  for (const [input,options] of seen) {
+    assert.equal(input,request); assert.equal(options,init); assert.equal(options.signal,controller.signal);
+  }
+  assert.equal(globalThis.Request,OriginalRequest);
+  assert.equal(globalThis.Response,OriginalResponse);
+  const spoolUrl = 'rag-ime-spool://gateway/api/agent/tool/execute';
+  await assert.rejects(fetch(spoolUrl,{method:'POST',body:'{}'}), /Tool request timed out/);
+  assert.deepEqual(await readdir(process.env.RAG_IME_BENCHMARK_GATEWAY_SPOOL), []);
+  const stopped = new AbortController();
+  const reason = new Error('stop owned request');
+  const pending = fetch(spoolUrl,{method:'POST',body:'{}',signal:stopped.signal});
+  setTimeout(() => stopped.abort(reason), 10);
+  await assert.rejects(pending, error => error === reason);
+  assert.deepEqual(await readdir(process.env.RAG_IME_BENCHMARK_GATEWAY_SPOOL), []);
+  console.log(JSON.stringify({passed:true,http:true,replaceRestore:true,timeout:true,abort:true}));
+} finally {
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
+}
+""", encoding="utf-8")
+        completed = subprocess.run(
+            [node, str(Path(__file__).resolve().parents[1] / "scripts/rag_agent_spool_runtime_wrapper.mjs")],
+            input="", capture_output=True, text=True, timeout=10,
+            env={"PATH": os.environ.get("PATH", ""),
+                 "RAG_IME_BENCHMARK_GATEWAY_SPOOL": str(spool),
+                 "RAG_IME_BENCHMARK_RUNTIME_ENTRYPOINT": str(probe),
+                 "RAG_IME_BENCHMARK_GATEWAY_TIMEOUT_MS": "50"},
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertTrue(json.loads(completed.stdout)["passed"])
 
     @staticmethod
     def _spool_call(

@@ -1,15 +1,24 @@
 .zhanggui-app {
   --zhanggui-accent: #087f68;
+  --zhanggui-accent-foreground: var(--zhanggui-accent);
   --zhanggui-accent-soft: color-mix(in srgb, var(--zhanggui-accent) 9%, transparent);
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  container: zhanggui-app / inline-size;
   color: var(--color-text-primary);
   background: color-mix(in srgb, var(--color-surface-base) 97%, #d8eee8);
 }
+
+:root[data-theme='dark'] .zhanggui-app { --zhanggui-accent-foreground: #5ecfb2; }
+
+.zhanggui-app > :is(header, nav, p) { flex: none; }
+.zhanggui-app__content { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.zhanggui-app__content > :is(.zhanggui-app__start, .zhanggui-app__session, .zhanggui-app__loading) { flex: 1; }
+.zhanggui-app :is(button, summary, input, textarea):focus-visible { outline: 2px solid var(--zhanggui-accent-foreground); outline-offset: 3px; }
 
 .zhanggui-app button,
 .zhanggui-app summary { font: inherit; }
@@ -34,12 +43,6 @@
 
 .zhanggui-app__identity { min-width: 0; gap: 10px; }
 .zhanggui-app__identity > span:last-child { display: grid; min-width: 0; }
-.zhanggui-app__identity small {
-  color: var(--zhanggui-accent);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .06em;
-}
 .zhanggui-app h1 { margin: 0; font-size: 18px; line-height: 1.12; letter-spacing: -.02em; }
 
 .zhanggui-app__header-actions { gap: 6px; }
@@ -153,8 +156,8 @@
   background: transparent;
   content: '';
 }
-.zhanggui-app__modes button[aria-selected='true'] { color: var(--zhanggui-accent); }
-.zhanggui-app__modes button[aria-selected='true']::after { background: var(--zhanggui-accent); }
+.zhanggui-app__modes button[aria-selected='true'] { color: var(--zhanggui-accent-foreground); }
+.zhanggui-app__modes button[aria-selected='true']::after { background: var(--zhanggui-accent-foreground); }
 .zhanggui-app__modes button:hover { background: color-mix(in srgb, var(--zhanggui-accent) 4%, transparent); }
 .zhanggui-app__modes span { overflow: hidden; font-size: 13px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
 .zhanggui-app__modes small { overflow: hidden; color: var(--color-text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -165,7 +168,7 @@
   justify-items: center;
   gap: 15px;
   min-height: 0;
-  padding: 28px clamp(18px, 6vw, 88px);
+  padding: 28px 32px;
   overflow: auto;
 }
 .zhanggui-app__mark {
@@ -179,8 +182,7 @@
   box-shadow: 0 13px 28px color-mix(in srgb, var(--zhanggui-accent) 20%, transparent);
 }
 .zhanggui-app__start-copy { max-width: 620px; text-align: center; }
-.zhanggui-app__start-copy small { color: var(--zhanggui-accent); font-weight: 700; }
-.zhanggui-app__start-copy h2 { margin: 4px 0 7px; font-size: clamp(23px, 4vw, 34px); letter-spacing: -.04em; }
+.zhanggui-app__start-copy h2 { margin: 4px 0 7px; font-size: 28px; letter-spacing: -.025em; }
 .zhanggui-app__start-copy p,
 .zhanggui-app__start > p { margin: 0; color: var(--color-text-secondary); line-height: 1.55; }
 .zhanggui-app__start > p { max-width: 680px; font-size: 11px; text-align: center; }
@@ -193,7 +195,7 @@
   background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
   font-size: 11px;
 }
-.zhanggui-app__suggestions button:hover { color: var(--zhanggui-accent); border-color: color-mix(in srgb, var(--zhanggui-accent) 32%, transparent); }
+.zhanggui-app__suggestions button:hover { color: var(--zhanggui-accent-foreground); border-color: color-mix(in srgb, var(--zhanggui-accent) 32%, transparent); }
 .zhanggui-app__source {
   display: flex;
   width: min(720px, 100%);
@@ -212,7 +214,7 @@
   padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--zhanggui-accent) 32%, var(--color-border-soft));
   border-radius: 9px;
-  color: var(--zhanggui-accent);
+  color: var(--zhanggui-accent-foreground);
   background: var(--zhanggui-accent-soft);
 }
 .zhanggui-app__source span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -230,7 +232,7 @@
   background: color-mix(in srgb, var(--zhanggui-accent) 4%, var(--color-surface-raised));
 }
 .zhanggui-app__sandbox-choice input { width: 16px; height: 16px; accent-color: var(--zhanggui-accent); }
-.zhanggui-app__sandbox-choice > svg { color: var(--zhanggui-accent); }
+.zhanggui-app__sandbox-choice > svg { color: var(--zhanggui-accent-foreground); }
 .zhanggui-app__sandbox-choice > span { display: grid; min-width: 0; gap: 1px; }
 .zhanggui-app__sandbox-choice strong,
 .zhanggui-app__sandbox-choice small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -280,10 +282,13 @@
 }
 .zhanggui-app__session-note > span { display: flex; min-width: 0; gap: 8px; }
 .zhanggui-app__session-note > span > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.zhanggui-app__session-note strong { flex: 0 0 auto; color: var(--zhanggui-accent); }
+.zhanggui-app__session-note strong { flex: 0 0 auto; color: var(--zhanggui-accent-foreground); }
 
 .zhanggui-app__error { gap: 7px; margin: 8px 12px 0; padding: 8px 10px; border-radius: 9px; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 8%, transparent); font-size: 12px; }
-.zhanggui-app__sandbox-receipt { display: flex; align-items: center; gap: 7px; margin: 8px 12px 0; color: var(--zhanggui-accent); font-size: 11px; }
+.zhanggui-app__error > svg { flex: none; }
+.zhanggui-app__error > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.zhanggui-app__error > button { flex: none; min-height: 32px; padding: 4px 10px; border: 1px solid currentColor; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+.zhanggui-app__sandbox-receipt { display: flex; align-items: center; gap: 7px; margin: 8px 12px 0; color: var(--zhanggui-accent-foreground); font-size: 11px; }
 .zhanggui-app__loading { justify-content: center; gap: 8px; color: var(--color-text-secondary); }
 
 /* Reuse the ordinary Pi Session without copying the generic Agent workbench.
@@ -349,9 +354,8 @@
 .paw-extension-app-state { display: grid; place-content: center; justify-items: center; gap: 9px; width: 100%; height: 100%; padding: 24px; color: var(--color-text-secondary); text-align: center; }
 .paw-extension-app-state[role='alert'] { color: var(--color-danger); }
 
-@media (max-width: 700px) {
+@container zhanggui-app (max-width: 700px) {
   .zhanggui-app__header { align-items: center; padding-inline: 10px; }
-  .zhanggui-app__identity small { display: none; }
   .zhanggui-app__header-actions > button > span { display: none; }
   .zhanggui-app__header-actions > button { width: 34px; padding: 0; }
   .zhanggui-app__modes { padding-inline: 4px; }
@@ -361,6 +365,13 @@
   .zhanggui-app__session-note > span > span { display: none; }
   .zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-timeline { padding-inline: 10px; }
   .zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__composer { padding-inline: 10px; }
+}
+
+@container zhanggui-app (max-width: 460px) {
+  .zhanggui-app__header { gap: 8px; }
+  .zhanggui-app__status { display: none; }
+  .zhanggui-app__start { align-content: start; padding-block: 20px; }
+  .zhanggui-app__start-copy h2 { font-size: 23px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

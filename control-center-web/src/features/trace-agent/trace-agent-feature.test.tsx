@@ -25,6 +25,17 @@ afterEach(() => {
 });
 
 describe('TraceAgentFeature', () => {
+  it('carries the exact saved diagnostic report into Lab without starting another run', async () => {
+    const reportId = `trace-report:${'c'.repeat(32)}`;
+    const routes: string[] = [];
+    const transport = traceAgentTransport({ diagnosticReport: persistedTraceReportFixture(reportId, 'completed') });
+    renderFeature(transport, routes, [`/trace-agent?reportId=${encodeURIComponent(reportId)}`]);
+    await screen.findByRole('region', { name: 'Trace 诊断网页报告' });
+    await userEvent.setup().click(screen.getByRole('button', { name: '在 Lab 中批量验证' }));
+    expect(routes).toContain(`/eval-lab?traceReportId=${encodeURIComponent(reportId)}`);
+    expect(transport.requests.some(({ request }) => ['agent.rooms.create', 'agent.session.prompt'].includes(request.pathId))).toBe(false);
+  });
+
   it('keeps inline transcript expansion targets at least 24px high', () => {
     expect(traceAgentCss).toMatch(/\.trace-agent-timeline__title > button\s*\{[^}]*min-height:\s*24px;/s);
   });

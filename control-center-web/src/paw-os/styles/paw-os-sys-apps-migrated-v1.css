@@ -67,6 +67,26 @@
   --color-accent-subtle: color-mix(in srgb, var(--paw-system-accent) 6%, white);
   --color-accent-border: color-mix(in srgb, var(--paw-system-accent) 40%, var(--color-border));
   --color-accent-text: #fff;
+  /* These Apps always draw light working surfaces. Bridge the complete
+     neutral palette too: inheriting a dark legacy theme produced white
+     headings on white sections and dark inputs with dark text. */
+  --color-canvas: var(--paw-system-stage);
+  --color-surface: var(--paw-system-surface);
+  --color-surface-raised: var(--paw-system-surface);
+  --color-surface-subtle: #f2f5f9;
+  --color-surface-hover: #edf2f8;
+  --color-surface-pressed: #e4ebf4;
+  --color-paper: var(--paw-system-surface);
+  --color-chrome: var(--paw-system-stage);
+  --color-border: #dce2ea;
+  --color-border-soft: #e7ebf1;
+  --color-border-strong: #a6b1c2;
+  --color-text: var(--paw-system-ink);
+  --color-text-primary: var(--paw-system-ink);
+  --color-text-secondary: #49566b;
+  --color-text-tertiary: var(--paw-system-muted);
+  --color-focus: var(--paw-system-accent);
+  color-scheme: light;
   /* The App answers to its own box. `size` (not `inline-size`) so a short
      window can trade chrome for workspace the same way a narrow one trades
      rail labels for icons. Every reflow rule below queries this container,
@@ -860,7 +880,7 @@
 
 .paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .observation-controls {
   padding: 9px 11px;
-  background: #fff;
+  background: var(--paw-system-surface);
   border: 1px solid var(--paw-system-line);
   border-radius: var(--paw-system-radius-md);
 }
@@ -873,9 +893,8 @@
   transition: background-color 130ms ease-out, color 130ms ease-out;
 }
 
-.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] :is(.observation-timeline, .observation-trace) li[data-active='true'] button,
-.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] :is(.observation-timeline, .observation-trace) li[data-active] button {
-  background: var(--paw-system-accent-soft);
+.paw-desktop-root .paw-system-app[data-system-app='system-monitor'] :is(.observation-timeline, .observation-trace) li[data-active='true'] button {
+  background: color-mix(in srgb, var(--paw-system-accent) 12%, var(--paw-system-surface));
 }
 
 .paw-desktop-root .paw-system-app[data-system-app='system-monitor'] .context-debug-session-viewer {
@@ -1254,6 +1273,35 @@
 }
 
 @container paw-sysapp (max-width: 420px) {
+  /* At phone-sized windows, labeled destinations above the page give the
+     working form its full width instead of reserving an opaque icon rail. */
+  .paw-desktop-root .paw-system-app__frame {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .paw-desktop-root .paw-system-app__nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--paw-system-line);
+  }
+  .paw-desktop-root .paw-system-app__nav nav {
+    display: flex;
+    gap: 4px;
+    padding: 5px 8px;
+    overflow: auto hidden;
+  }
+  .paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group { display: none; }
+  .paw-desktop-root .paw-system-app__nav nav button {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+  .paw-desktop-root .paw-system-app__nav-label { display: inline; }
+  .paw-desktop-root .paw-system-app__nav nav button .paw-system-app__nav-badge {
+    position: static;
+  }
   .paw-desktop-root .paw-system-app .mgmt-metrics { grid-template-columns: minmax(0, 1fr); }
   .paw-desktop-root .paw-agent-model { grid-template-columns: minmax(0, 1fr); }
   .paw-desktop-root .paw-agent-modes { grid-template-columns: minmax(0, 1fr); }

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -6,6 +6,7 @@ afterEach(() => cleanup());
 import { BrowserOmnibox, committedUrlParts, omniboxCommitPreview } from './BrowserOmnibox';
 import { BrowserPageStatus } from './BrowserPageStatus';
 import { BrowserTabStrip, browserTabTooltip, type BrowserTabItem } from './BrowserTabStrip';
+import { BrowserFindBar } from './BrowserFindBar';
 
 const tabs: BrowserTabItem[] = [
   { id: 'a', title: '文档', active: true },
@@ -15,6 +16,23 @@ const tabs: BrowserTabItem[] = [
 ];
 
 describe('BrowserTabStrip', () => {
+  it('returns keyboard focus to a surviving tab and then the new-tab action after closing', async () => {
+    const onClose = vi.fn();
+    const props = { onClose, onNewTab: vi.fn(), onSelect: vi.fn() };
+    const view = render(<BrowserTabStrip {...props} tabs={tabs.slice(0, 2)} />);
+    const first = screen.getByRole('tab', { name: '文档' });
+    first.focus();
+    fireEvent.keyDown(first, { key: 'Delete' });
+    expect(onClose).toHaveBeenLastCalledWith('a');
+
+    view.rerender(<BrowserTabStrip {...props} tabs={[{ ...tabs[1], active: true }]} />);
+    const remaining = screen.getByRole('tab', { name: '加载中页面' });
+    await waitFor(() => expect(remaining).toHaveFocus());
+    fireEvent.keyDown(remaining, { key: 'Delete' });
+    view.rerender(<BrowserTabStrip {...props} tabs={[]} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '新建标签页' })).toHaveFocus());
+  });
+
   it('renders one real tab per guest with loading, favicon, and failure identity', () => {
     render(
       <BrowserTabStrip onClose={() => undefined} onNewTab={() => undefined} onSelect={() => undefined} tabs={tabs} />,
@@ -113,6 +131,21 @@ describe('BrowserTabStrip', () => {
     fireEvent.error(icon as Element);
     expect(document.querySelector('.paw-browser-tab-icon img')).toBeNull();
     expect(document.querySelector('.paw-browser-tab-icon svg')).not.toBeNull();
+  });
+});
+
+describe('BrowserFindBar', () => {
+  it('leaves Enter and Escape to the input method until composition is complete', () => {
+    const onNext = vi.fn();
+    const onClose = vi.fn();
+    render(<BrowserFindBar match={null} onChange={vi.fn()} onClose={onClose} onNext={onNext} onPrevious={vi.fn()} value="项目" />);
+    const input = screen.getByRole('textbox', { name: '页内查找' });
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+    expect(onNext).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onNext).toHaveBeenCalledTimes(1);
   });
 });
 

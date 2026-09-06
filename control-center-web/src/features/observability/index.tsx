@@ -145,12 +145,15 @@ export function ObservabilityFeature() {
   const scoped = Boolean(filters.sessionId || filters.roomId || filters.traceId || filters.runId);
   const snapshotTotal = Math.max(feed.items.length, feed.snapshot?.counts.total ?? 0);
   const snapshotTruncated = Boolean(feed.snapshot?.truncated || snapshotTotal > feed.items.length);
+  // The journal's total currently counts the returned page. A truncated page
+  // with no larger total does not establish the size of the whole history.
+  const snapshotTotalKnown = !feed.snapshot?.truncated || snapshotTotal > feed.items.length;
   const snapshotGeneratedAtMs = feed.snapshot?.generatedAtMs ?? 0;
   const showSnapshotAge = feed.connection !== 'live' && snapshotGeneratedAtMs > 0;
   const timelineCountLabel = needle.trim()
     ? `${visibleItems.length} / 已载入 ${feed.items.length}`
     : snapshotTruncated
-      ? `最近 ${visibleItems.length} / 共 ${snapshotTotal}`
+      ? snapshotTotalKnown ? `最近 ${visibleItems.length} / 共 ${snapshotTotal}` : `最近 ${visibleItems.length} 条`
       : `${visibleItems.length} 条`;
 
   function selectCategory(next: CategoryFilter): void {
@@ -191,12 +194,20 @@ export function ObservabilityFeature() {
       title="运行记录"
     >
       <QueryState
-        error={feed.error}
-        isPending={feed.isPending}
+        error={feed.snapshot ? null : feed.error}
+        isPending={!feed.snapshot && feed.isPending}
         onRetry={() => void feed.refresh()}
       >
+        {feed.snapshot && feed.error ? (
+          <InlineNotice title="刷新未完成，保留上次记录" tone="warning">
+            <p>当前仍显示上次读取的记录；重新读取后再确认最新状态。</p>
+            <Button loading={feed.isFetching} onClick={() => void feed.refresh()} size="small">
+              重试读取
+            </Button>
+          </InlineNotice>
+        ) : null}
         {snapshotTruncated ? (
-          <InlineNotice title={`当前显示最近 ${feed.items.length} / 共 ${snapshotTotal} 条`} tone="warning">
+          <InlineNotice title={snapshotTotalKnown ? `当前显示最近 ${feed.items.length} / 共 ${snapshotTotal} 条` : `当前显示最近 ${feed.items.length} 条`} tone="warning">
             Runtime 当前只返回最近一段记录；这里明确保留该边界，不把这批结果当作完整历史。
           </InlineNotice>
         ) : null}
@@ -209,7 +220,7 @@ export function ObservabilityFeature() {
         ) : null}
 
         <section aria-label="运行记录工作台" className="observation-console">
-          <header aria-label="实时概况" className="observation-pulse" data-connection={feed.connection}>
+          <header aria-label="事件记录概况" className="observation-pulse" data-connection={feed.connection}>
             <StatusBadge
               label={connectionLabel(feed.connection)}
               tone={connectionTone(feed.connection)}
@@ -225,11 +236,11 @@ export function ObservabilityFeature() {
             </span>
             <span className="observation-pulse__stat" data-tone={runningCount ? 'active' : undefined}>
               <Radio aria-hidden="true" size={14} />
-              进行中 {runningCount}
+              执行中记录 {runningCount}
             </span>
             <span className="observation-pulse__stat" data-tone={failedCount ? 'danger' : undefined}>
               <TriangleAlert aria-hidden="true" size={14} />
-              异常 {failedCount}
+              失败记录 {failedCount}
             </span>
             <span className="observation-pulse__stat">
               <TimerReset aria-hidden="true" size={14} />
@@ -333,7 +344,7 @@ export function ObservabilityFeature() {
                               <span className="observation-trace__index">{index + 1}</span>
                               <span>
                                 <strong>{publicObservationSummary(item)}</strong>
-                                <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
+                                <small>{categoryLabel(item.category)} · {eventStatusLabel(item.status)}</small>
                               </span>
                               <time dateTime={new Date(item.createdAtMs).toISOString()}>
                                 {formatTime(item.createdAtMs)}
@@ -846,7 +857,7 @@ function ObservationRow({
             {formatTime(item.createdAtMs)}
           </time>
         </span>
-        <StatusBadge label={statusLabel(item.status)} tone={statusTone(item.status)} />
+        <StatusBadge label={eventStatusLabel(item.status)} tone={statusTone(item.status)} />
       </button>
     </li>
   );
@@ -1540,6 +1551,14 @@ function statusLabel(status: ObservationEventV1['status']): string {
   }[status];
 }
 
+// Observation events are immutable journal entries, not the current state of
+// a Session or job. A later terminal event must not make an old start look live.
+function eventStatusLabel(status: ObservationEventV1['status']): string {
+  return ['queued', 'running', 'waiting'].includes(status)
+    ? `当时${statusLabel(status)}`
+    : statusLabel(status);
+}
+
 /**
  * Shared PAWOS status language: queued stays neutral, running uses the active
  * blue, waiting alone is amber, completed is quiet green, failed is red.
@@ -1666,11 +1685,15 @@ function observationCategory(value: string | null): CategoryFilter | null {
 }
 
 function formatTime(timestampMs: number): string {
+  const date = new Date(timestampMs);
   return new Intl.DateTimeFormat('zh-CN', {
+    ...(date.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' as const } : {}),
+    month: '2-digit',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  }).format(new Date(timestampMs));
+  }).format(date);
 }
 
 function formatDuration(durationMs: number): string {

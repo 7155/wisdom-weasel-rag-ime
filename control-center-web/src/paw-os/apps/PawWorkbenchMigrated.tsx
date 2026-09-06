@@ -14,15 +14,13 @@ import {
   PanelsTopLeft,
   Plus,
   RefreshCw,
-  ShieldCheck,
-  Target,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import '../styles/paw-os-workbench-migrated-v1.css';
 
 /**
  * THESIS: Workbench is a live project dependency field, never a summary-card dashboard.
- * OWN-WORLD: Glacier-cool canvas, ultramarine workbench identity, white rounded plates, dotted topology, azure flow, and restrained semantic inks.
+ * SURFACE: White reading areas, quiet gray structure, one restrained blue identity and task-derived dependency geometry.
  * STORY: Answer "what is the next unresolved thing" first, then inspect task ownership and dependencies, then open the authoritative task or WorkDocument.
  * WINDOW SHAPE: Every page is fixed chrome around one flexible workspace, the way a native window App behaves — command deck on top, a status ledger at the
  * bottom, and working panes that own their own scroll in between. Nothing stacks a page of plates that pushes the work below the first viewport.
@@ -67,7 +65,7 @@ export interface PawWorkbenchMigratedProps {
   documentHistorySupported?: boolean;
   onDocumentScopeChange?: (scope: PawWorkbenchDocumentScope) => void;
   onDocumentHistoryQueryChange?: (query: string) => void;
-  planningTools?: ReactNode;
+  planningTools?: ReactNode | ((selectedTask: PawWorkbenchRecord | null) => ReactNode);
   primaryAction?: { label: string; onClick: () => void };
   onNavigate?: (pageId: PawWorkbenchPageId) => void;
   onRefresh?: (resource: PawWorkbenchResourceKey) => void;
@@ -228,7 +226,7 @@ export function PawWorkbenchMigrated({
       ) : null}
       {activePageId === 'planning' ? (
         <div className="paw-wb-planning">
-          {planningTools}
+          {typeof planningTools === 'function' ? planningTools(selectedTask) : planningTools}
           <TaskOrchestration
             goals={goals}
             onCreateGoal={onCreateGoal}
@@ -416,7 +414,7 @@ function ProjectOverview({
           <header>
             <div><GitBranch aria-hidden size={16} /><h2>当前工作</h2></div>
             <div className="paw-wb-pane__scope">
-              <span>{tasks.length > 8 ? `当前 ${displayedTasks.length} / 共 ${tasks.length}` : `${tasks.length} 项`}</span>
+              <span>{resourceCountLabel(planningState, tasks.length > 8 ? `当前 ${displayedTasks.length} / 共 ${tasks.length}` : `${tasks.length} 项`)}</span>
             </div>
           </header>
           <ResourceNotice label="任务" onRefresh={onRefresh ? () => onRefresh('planning') : undefined} state={planningState} />
@@ -441,7 +439,7 @@ function ProjectOverview({
             <header>
               <div><FileText aria-hidden size={16} /><h2>工作文档</h2></div>
               <div className="paw-wb-pane__scope">
-                <span>{resolvedDocumentTotal > 6 ? `当前 ${displayedDocuments.length} / 已加载 ${documents.length}${remainingUnloadedDocuments ? ` · 共 ${resolvedDocumentTotal}` : ''}` : `${resolvedDocumentTotal} 份`}</span>
+                <span>{resourceCountLabel(documentsState, resolvedDocumentTotal > 6 ? `当前 ${displayedDocuments.length} / 已加载 ${documents.length}${remainingUnloadedDocuments ? ` · 共 ${resolvedDocumentTotal}` : ''}` : `${resolvedDocumentTotal} 份`)}</span>
               </div>
             </header>
             <ResourceNotice label="工作文档" onRefresh={onRefresh ? () => onRefresh('documents') : undefined} state={documentsState} />
@@ -533,7 +531,6 @@ function NowBand({
   return (
     <section aria-label="当前最需要处理的工作" className="paw-wb-now" data-state={next ? next.lane : tasks.length ? 'clear' : 'empty'}>
       <div className="paw-wb-now__lead">
-        <span className="paw-wb-now__eyebrow"><Target aria-hidden size={14} />{next ? '下一个未完成' : '当前计划'}</span>
         {next ? (
           <>
             <h2 title={taskTitle(next.task)}>{taskTitle(next.task)}</h2>
@@ -553,18 +550,8 @@ function NowBand({
           </div>
         ) : null}
       </div>
-      {tasks.length ? (
-        <div
-          aria-label={`整体完成 ${donePercent}%：${doneCount} / ${tasks.length} 项任务已完成`}
-          className="paw-wb-now__gauge"
-          role="img"
-          style={{ '--paw-wb-gauge-angle': `${(doneCount / tasks.length) * 360}deg` } as CSSProperties}
-        >
-          <strong>{donePercent}<i aria-hidden>%</i></strong>
-          <small>{doneCount} / {tasks.length} 已完成</small>
-        </div>
-      ) : null}
-      <dl aria-label="未完成工作脉搏" className="paw-wb-now__pulse">
+      <dl aria-label="当前计划状态" className="paw-wb-now__pulse">
+        {tasks.length ? <div><dt>已完成</dt><dd>{doneCount} / {tasks.length} 项 · {donePercent}%</dd></div> : null}
         <div data-tone={blockedCount ? 'blocked' : undefined}><dt>受阻</dt><dd>{blockedCount}</dd></div>
         <div data-tone={reviewCount ? 'review' : undefined}><dt>待验收</dt><dd>{reviewCount}</dd></div>
         <div data-tone={activeCount ? 'active' : undefined}><dt>进行中</dt><dd>{activeCount}</dd></div>
@@ -614,7 +601,7 @@ function TaskOrchestration({
           <strong>目标与任务</strong>
           {onCreateGoal ? <button aria-label="添加目标" onClick={onCreateGoal} type="button"><Plus aria-hidden size={14} /></button> : null}
         </header>
-        <div className="paw-wb-outline__project"><StatusMark lane="active" /><strong title={projectName}>{projectName}</strong><small>{tasks.length} 项</small></div>
+        <div className="paw-wb-outline__project"><strong title={projectName}>{projectName}</strong><small>{resourceCountLabel(resourceState, `${tasks.length} 项`)}</small></div>
         {goals.length ? <ol className="paw-wb-outline__goals">{goals.map((goal, index) => {
           const title = text(goal.title) || '未命名目标';
           return <li key={text(goal.id) || `goal-${index}`}>
@@ -625,7 +612,7 @@ function TaskOrchestration({
             ) : <><StatusMark lane={taskLane(goal)} /><span>{title}</span></>}
           </li>;
         })}</ol> : null}
-        {tasks.length > 5 ? (
+        {tasks.length > 5 || taskQuery ? (
           <input
             aria-label="筛选任务"
             className="paw-wb-outline__filter"
@@ -640,12 +627,12 @@ function TaskOrchestration({
             const index = tasks.indexOf(task);
             return <li key={taskId(task, index)}><button aria-label={`在任务列表中选择：${taskTitle(task)}`} aria-current={taskId(task, index) === selectedTaskId || undefined} onClick={() => onSelectTask(task, index)} title={`${taskTitle(task)} · ${taskMeta(task)}`} type="button"><StatusMark lane={taskLane(task)} /><span>{taskTitle(task)}</span><small>{taskProgressLabel(task)}</small></button></li>;
           })}</ol>
-        ) : trimmedTaskQuery ? <p className="paw-wb-outline__quiet">没有匹配的任务。</p> : null}
+        ) : trimmedTaskQuery ? <div className="paw-wb-filter-empty"><p>没有匹配的任务。</p><button onClick={() => setTaskQuery('')} type="button">清除任务筛选</button></div> : null}
       </aside>
 
       <section aria-label="真实任务依赖图" className="paw-wb-graph" role="region">
         <header>
-          <div><GitBranch aria-hidden size={16} /><strong>依赖图</strong><span>{tasks.length} 节点 · {graph.edges.length} 条真实依赖</span></div>
+          <div><GitBranch aria-hidden size={16} /><strong>依赖图</strong><span>{resourceCountLabel(resourceState, `${tasks.length} 节点 · ${graph.edges.length} 条真实依赖`)}</span></div>
         </header>
         <ResourceNotice label="任务编排" onRefresh={onRefresh ? () => onRefresh('planning') : undefined} state={resourceState} />
         {tasks.length ? (
@@ -823,9 +810,9 @@ function WorkDocumentWorkspace({
     ? documents.filter((document) => matchesDocument(document, trimmedActiveQuery))
     : documents;
   return (
-    <div className="paw-wb-documents" data-reader-open={selectedDocument ? 'true' : undefined}>
+    <div className="paw-wb-documents" data-reader-open={selectedDocument || detailState?.loading || detailState?.error ? 'true' : undefined}>
       <aside className="paw-wb-document-index">
-        <header><FileText aria-hidden size={16} /><strong>工作文档</strong><span title={`已载入 ${documents.length} / 共 ${resolvedDocumentTotal}`}>{resolvedDocumentTotal}</span></header>
+        <header><FileText aria-hidden size={16} /><strong>工作文档</strong><span title={resourceCountLabel(listState, `已载入 ${documents.length} / 共 ${resolvedDocumentTotal}`)}>{resourceCountLabel(listState, String(resolvedDocumentTotal))}</span></header>
         {onDocumentScopeChange ? (
           <div className="paw-wb-document-index__scope" role="group" aria-label="工作文档范围">
             <button aria-pressed={documentScope === 'active'} onClick={() => onDocumentScopeChange('active')} type="button">当前</button>
@@ -838,15 +825,15 @@ function WorkDocumentWorkspace({
             <input onChange={(event) => onDocumentHistoryQueryChange(event.target.value)} placeholder="标题、Authority 或路径" type="search" value={documentHistoryQuery} />
           </label>
         ) : null}
-        {documentScope === 'active' && documents.length > 5 ? (
+        {documentScope === 'active' && (documents.length > 5 || activeQuery) ? (
           <label className="paw-wb-document-index__search">
             <span>筛选当前文档</span>
             <input onChange={(event) => setActiveQuery(event.target.value)} placeholder="标题、Authority 或路径" type="search" value={activeQuery} />
           </label>
         ) : null}
         <ResourceNotice label="工作文档" onRefresh={onRefresh ? () => onRefresh('documents') : undefined} state={listState} />
-        {visibleDocuments.length ? <ol>{visibleDocuments.map((document, index) => <li key={documentId(document, index)}><button aria-current={sameDocument(document, selectedDocument) || undefined} onClick={() => void onOpenDocument(document)} title={`${documentTitle(document)} · ${text(document.activePath) || text(document.path) || text(document.authorityId)}`} type="button"><FileText aria-hidden size={15} /><span><strong>{documentTitle(document)}</strong><small>{authorityLabel(text(document.authorityKind))} · r{number(document.documentRevision)}</small></span><StatusMark lane={documentLane(document)} /></button></li>)}</ol> : trimmedActiveQuery && documents.length ? (
-          <EmptyState icon={<FileText size={22} />} title="没有匹配的文档" copy="调整筛选词，或清空后查看全部当前文档。" />
+        {visibleDocuments.length ? <ol>{visibleDocuments.map((document, index) => <li key={documentId(document, index)}><button aria-current={sameDocument(document, selectedDocument) || undefined} onClick={() => void onOpenDocument(document)} title={`${documentTitle(document)} · ${text(document.path) || text(document.activePath) || text(document.authorityId)}`} type="button"><FileText aria-hidden size={15} /><span><strong>{documentTitle(document)}</strong><small>{authorityLabel(text(document.authorityKind))} · r{number(document.documentRevision)}</small></span><StatusMark lane={documentLane(document)} /></button></li>)}</ol> : trimmedActiveQuery && documents.length ? (
+          <EmptyState action={<button onClick={() => setActiveQuery('')} type="button">清除文档筛选</button>} icon={<FileText size={22} />} title="没有匹配的文档" copy="调整筛选词，或清空后查看全部当前文档。" />
         ) : resourceSettled(listState) ? <EmptyState icon={<FileText size={22} />} title={documentScope === 'history' ? '没有匹配的历史文档' : '暂无工作文档'} copy={documentScope === 'history' ? '调整筛选条件，或返回当前文档。' : '这里只投影 Runtime 已登记的文档。'} /> : null}
       </aside>
 
@@ -865,29 +852,34 @@ function WorkDocumentWorkspace({
             </header>
             <div className="paw-wb-document-reader__body">
               <ResourceNotice label="文档详情" onRefresh={onRefresh ? () => onRefresh('documentDetail') : undefined} state={detailState} />
-              <section className="paw-wb-document-reader__authority">
-                <ShieldCheck aria-hidden size={19} />
-                <p>文档承载已接受语义；运行状态、路径与 revision 由 Runtime 原样投影。</p>
-              </section>
+              <p className="paw-wb-document-reader__note">查看登记来源、当前路径与归档状态。</p>
               <dl className="paw-wb-document-facts">
-                <Fact label="Authority" value={text(selectedDocument.authorityId) || '—'} mono />
-                <Fact label="Authority kind" value={authorityLabel(text(selectedDocument.authorityKind))} />
-                <Fact label="Authority revision" value={String(number(selectedDocument.authorityRevision))} />
-                <Fact label="Document revision" value={String(number(selectedDocument.documentRevision))} />
+                <Fact label="来源类型" value={authorityLabel(text(selectedDocument.authorityKind))} />
                 <Fact label="状态" value={stateLabel(text(selectedDocument.state) || 'active')} />
                 <Fact label="更新时间" value={updatedLabel(number(selectedDocument.updatedAtMs))} />
-                <Fact label="当前路径" value={text(selectedDocument.activePath) || text(selectedDocument.path) || '—'} mono wide />
-                <Fact label="Document ID" value={text(selectedDocument.documentId) || text(selectedDocument.id) || '—'} mono wide />
-                <Fact label="Authority key" value={text(selectedDocument.authorityKey) || '—'} mono wide />
-                {text(selectedDocument.contentSha256) ? <Fact label="内容校验" titleValue={text(selectedDocument.contentSha256)} value={shortHash(text(selectedDocument.contentSha256))} mono wide /> : null}
+                <Fact label="当前路径" value={text(selectedDocument.path) || text(selectedDocument.activePath) || '—'} mono wide />
               </dl>
+              <details className="paw-wb-document-provenance">
+                <summary>来源与版本详情</summary>
+                <dl className="paw-wb-document-facts">
+                  <Fact label="Authority" value={text(selectedDocument.authorityId) || '—'} mono />
+                  <Fact label="Authority revision" value={String(number(selectedDocument.authorityRevision))} />
+                  <Fact label="Document revision" value={String(number(selectedDocument.documentRevision))} />
+                  <Fact label="Document ID" value={text(selectedDocument.documentId) || text(selectedDocument.id) || '—'} mono wide />
+                  <Fact label="Authority key" value={text(selectedDocument.authorityKey) || '—'} mono wide />
+                  {text(selectedDocument.contentSha256) ? <Fact label="内容校验" titleValue={text(selectedDocument.contentSha256)} value={shortHash(text(selectedDocument.contentSha256))} mono wide /> : null}
+                </dl>
+              </details>
               {text(selectedDocument.error) ? <div className="paw-wb-document-error"><CircleAlert aria-hidden size={16} /><span>{text(selectedDocument.error)}</span></div> : null}
               {resourceSettled(detailState) ? documentLifecycle : null}
             </div>
           </>
         ) : (
           <div className="paw-wb-document-reader__body">
-            <EmptyState icon={<ExternalLink size={25} />} title="选择一份工作文档" copy="详情只显示文档合同已有的权威、revision、路径与状态。" />
+            {detailState?.loading || detailState?.error ? <>
+              <button className="paw-wb-document-reader__return" onClick={onCloseDocument} type="button"><ChevronLeft aria-hidden size={15} />返回文档列表</button>
+              <ResourceNotice label="文档详情" onRefresh={onRefresh ? () => onRefresh('documentDetail') : undefined} state={detailState} />
+            </> : <EmptyState icon={<ExternalLink size={25} />} title="选择一份工作文档" copy="查看来源、当前路径和归档记录，也可以在独立窗口中继续核对。" />}
           </div>
         )}
       </section>
@@ -906,8 +898,12 @@ function ResourceNotice({ label, onRefresh, state }: { label: string; onRefresh?
   );
 }
 
-function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
-  return <div className="paw-wb-empty">{icon}<strong>{title}</strong><p>{copy}</p></div>;
+function EmptyState({ action, icon, title, copy }: { action?: ReactNode; icon: ReactNode; title: string; copy: string }) {
+  return <div className="paw-wb-empty">{icon}<strong>{title}</strong><p>{copy}</p>{action}</div>;
+}
+
+function resourceCountLabel(state: PawWorkbenchResourceState | undefined, value: string): string {
+  return state?.error ? '数量暂不可用' : state?.loading ? '数量待读取' : value;
 }
 
 function resourceSettled(state?: PawWorkbenchResourceState): boolean {

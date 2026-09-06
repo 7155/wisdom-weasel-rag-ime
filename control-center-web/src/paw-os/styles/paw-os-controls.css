@@ -50,6 +50,12 @@
 .paw-desktop-root button:where(:not(:disabled)) { cursor: pointer; }
 .paw-desktop-root button:disabled { cursor: default; }
 
+/* Primary actions need the filled-button foreground even when an App uses
+   --color-accent-text for links on its white reading surface. */
+.paw-desktop-root .ui-button[data-variant='primary'] {
+  color: var(--paw-button-primary-ink);
+}
+
 /* ---------------------------------------------------------------- Select
  * Default skin for every native <select> in PAWOS plus the .paw-select
  * opt-in class for non-native triggers. Opaque field, graphite chevron,

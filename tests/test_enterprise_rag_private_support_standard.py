@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
-import sys
 import unittest
 from pathlib import Path
+
+from tests.frozen_rag_replay import run_frozen_standard_verifier
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +81,7 @@ def _fact(qrels: dict[str, object], query_id: str, fact_id: str) -> dict[str, ob
 
 
 class EnterpriseRagPrivateSupportStandardTests(unittest.TestCase):
+    @unittest.skipUnless(all(path.is_file() for path in (QRELS_R3, QRELS_R4, QRELS_R5, AUDIT_R5)), "Private RAG corpus is not bundled in public source")
     def test_r5_is_a_direct_r4_successor_appending_only_f3_support(self) -> None:
         for path, expected in EXPECTED_IMMUTABLE_HASHES.items():
             self.assertEqual(expected, _sha256(path), path)
@@ -136,14 +137,12 @@ class EnterpriseRagPrivateSupportStandardTests(unittest.TestCase):
         self.assertNotEqual(prior_standard["manifestSha256"], standard["manifestSha256"])
 
     def test_public_receipt_is_safe_and_preserves_candidate_aware_boundary(self) -> None:
-        audit = _read(AUDIT_R5)
         standard = _read(STANDARD_R5)
         receipt = _read(RECEIPT_R5)
 
         self.assertFalse(receipt["candidateBlind"])
         self.assertTrue(receipt["candidateAware"])
         self.assertTrue(receipt["auditAware"])
-        self.assertTrue(audit["candidateAware"])
         self.assertEqual(0, receipt["providerCalls"])
         self.assertEqual(0, receipt["judgeCalls"])
         self.assertEqual(0, receipt["candidateRuns"])
@@ -165,6 +164,16 @@ class EnterpriseRagPrivateSupportStandardTests(unittest.TestCase):
             if key.startswith("contains"):
                 self.assertFalse(value, key)
 
+        self.assertEqual(
+            _read(STANDARD_R5)["calibrationSource"]["auditReceiptSha256"],
+            receipt["auditBoundary"]["auditReceiptFileSha256"],
+        )
+        if not AUDIT_R5.is_file():
+            return  # Private-body comparison requires the local corpus.
+        self.assertEqual(_sha256(AUDIT_R5), receipt["auditBoundary"]["auditReceiptFileSha256"])
+        audit = _read(AUDIT_R5)
+        self.assertTrue(audit["candidateAware"])
+
         serialized_public = json.dumps([standard, receipt], ensure_ascii=False)
         for body in (
             audit["frozenSemanticUnit"]["question"],
@@ -177,13 +186,7 @@ class EnterpriseRagPrivateSupportStandardTests(unittest.TestCase):
             self.assertNotIn(body, serialized_public)
 
     def test_dedicated_verifier_recomputes_frozen_sol_offline(self) -> None:
-        completed = subprocess.run(
-            [sys.executable, "scripts/verify_enterprise_rag_private_support_standard.py"],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        completed = run_frozen_standard_verifier("verify_enterprise_rag_private_support_standard.py")
         self.assertEqual(0, completed.returncode, completed.stderr)
         payload = json.loads(completed.stdout)
         self.assertEqual("ENTERPRISE_RAG_PRIVATE_SUPPORT_STANDARD_R5_OK", payload["event"])

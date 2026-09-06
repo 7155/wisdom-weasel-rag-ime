@@ -1874,7 +1874,7 @@ def _validated_sandbox_replay_cohort(value: object) -> dict[str, str]:
         ),
         "caseId": _safe_token(value.get("caseId"), "replayCohort caseId"),
     }
-    for field in (
+    for field_name in (
         "inputFingerprint",
         "environmentFingerprint",
         "configFingerprint",
@@ -1882,13 +1882,13 @@ def _validated_sandbox_replay_cohort(value: object) -> dict[str, str]:
         "toolProfileFingerprint",
         "skillProfileFingerprint",
     ):
-        fingerprint = value.get(field)
+        fingerprint = value.get(field_name)
         if (
             not isinstance(fingerprint, str)
             or _SHA256_FINGERPRINT_PATTERN.fullmatch(fingerprint) is None
         ):
             raise TraceContractError(
-                f"replayCohort {field} must be a SHA-256 fingerprint"
+                f"replayCohort {field_name} must be a SHA-256 fingerprint"
             )
-        result[field] = fingerprint
+        result[field_name] = fingerprint
     return result

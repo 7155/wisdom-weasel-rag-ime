@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from rag_ime.agent_core_policy import work_policy_prompt
 from rag_ime.agent_definitions import (
     collaboration_profile,
     collaboration_profile_catalog,
@@ -176,17 +177,21 @@ class AgentPromptAuditTests(unittest.TestCase):
     ) -> None:
         policy = progressive_capability_policy()
 
-        self.assertIn("先查可验证事实", policy)
-        self.assertIn("授权内可逆默认直接执行", policy)
-        self.assertIn("外部事实不可得则阻塞", policy)
-        self.assertIn("调查后仅剩实质取舍", policy)
-        self.assertIn("明确要求 Grill/挑战/压力测试", policy)
-        self.assertIn("普通模式合并 1-4 个独立项、分开依赖项", policy)
+        work_policy = work_policy_prompt()
+        self.assertIn("可检查的事实自己查", work_policy)
+        self.assertIn("授权内的可逆默认自己定", work_policy)
+        self.assertIn("无法获取的外部事实标记阻塞并说明恢复条件", work_policy)
+        self.assertIn("仅当取舍实质影响用户目标", work_policy)
+        self.assertIn("或用户明确要求 Grill 时询问", work_policy)
+        self.assertIn("先加载 alignment-and-decision，再使用原生 ask", work_policy)
+        self.assertIn("普通模式询问最小的成组选择", work_policy)
+        self.assertIn("显式 Grill 按技能逐题等待", work_policy)
+        self.assertIn("提问遵循 work-policy", policy)
+        self.assertNotIn("授权内的可逆默认自己定", policy)
         self.assertIn("禁裸“确认”", policy)
-        self.assertIn(
-            "Goal/In scope/Readiness 内部模板原样作最终聊天",
-            policy,
-        )
+        self.assertIn("不把内部模板原样作最终聊天", policy)
+        self.assertIn("阶段内的只读约束不延伸到整个任务", policy)
+        self.assertIn("主 Agent 主管 Goal；子 Agent 只提交分配范围的结果", policy)
         self.assertIn("计划不算完成", policy)
 
     def test_room_lifecycle_uses_plain_language_for_bounded_peer_work(

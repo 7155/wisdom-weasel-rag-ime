@@ -214,7 +214,6 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
       const current = get().windows[windowId];
       if (current) {
         set((state) => {
-          const nextFocusGroup = runtimeSatelliteFocusGroup(options.target);
           return ({
           windows: current.minimized || options.initialRoute !== undefined || options.target !== undefined || options.title !== undefined
             ? {
@@ -234,10 +233,7 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
             : [...state.stack.filter((id) => id !== windowId), windowId],
           launchpadOpen: false,
           overviewOpen: false,
-          collaborationFocusGroup: nextFocusGroup || state.collaborationFocusGroup,
-          collaborationFocusReturnWindowId: nextFocusGroup && !state.collaborationFocusGroup
-            ? state.activeWindowId
-            : state.collaborationFocusReturnWindowId,
+          ...focusForOpenedWindow(state, options.target ?? current.target, options.background),
           });
         });
         return windowId;
@@ -268,7 +264,6 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
       };
       set((state) => {
         const windows = { ...state.windows, [windowId]: node };
-        const nextFocusGroup = runtimeSatelliteFocusGroup(options.target);
         return {
           windows,
           stack: options.background
@@ -277,10 +272,7 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
           activeWindowId: options.background ? state.activeWindowId : windowId,
           launchpadOpen: false,
           overviewOpen: false,
-          collaborationFocusGroup: nextFocusGroup || state.collaborationFocusGroup,
-          collaborationFocusReturnWindowId: nextFocusGroup && !state.collaborationFocusGroup
-            ? state.activeWindowId
-            : state.collaborationFocusReturnWindowId,
+          ...focusForOpenedWindow(state, options.target, options.background),
         };
       });
       return windowId;
@@ -741,6 +733,27 @@ export function satelliteGroup(target?: PawOsWindowTarget): string {
 function runtimeSatelliteFocusGroup(target?: PawOsWindowTarget): string {
   if (target?.kind !== 'process-terminal' && target?.kind !== 'browser-target') return '';
   return satelliteGroup(target);
+}
+
+function focusForOpenedWindow(
+  state: PawDesktopState,
+  target: PawOsWindowTarget | undefined,
+  background = false,
+): Pick<PawDesktopState, 'collaborationFocusGroup' | 'collaborationFocusReturnWindowId'> {
+  const runtimeGroup = runtimeSatelliteFocusGroup(target);
+  const targetGroup = satelliteGroup(target) || satelliteOwnerGroup(target);
+  // Opening another App is an explicit navigation. A retained collaboration
+  // layout must not cover it; background work and this group's own windows
+  // keep the current focus without closing or cancelling any Session.
+  const group = runtimeGroup || (background || targetGroup === state.collaborationFocusGroup
+    ? state.collaborationFocusGroup : null);
+  return {
+    collaborationFocusGroup: group,
+    collaborationFocusReturnWindowId: group
+      ? runtimeGroup && !state.collaborationFocusGroup
+        ? state.activeWindowId : state.collaborationFocusReturnWindowId
+      : null,
+  };
 }
 
 /**

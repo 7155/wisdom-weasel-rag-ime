@@ -28,6 +28,10 @@ const PawOsApp = lazy(async () => ({
   default: (await import('@/paw-os/PawOsApp')).PawOsApp,
 }));
 
+const ScreenAssistant = lazy(async () => ({
+  default: (await import('@/features/screen-assistant/ScreenAssistant')).ScreenAssistant,
+}));
+
 const LegacyProductApp = lazy(async () => ({
   default: (await import('./LegacyProductApp')).LegacyProductApp,
 }));
@@ -60,7 +64,7 @@ export function App({ frontendProduct }: { frontendProduct?: FrontendProduct } =
   });
 
   return (
-    <ThemeProvider forcedTheme={product === 'paw-os' ? 'light' : undefined}>
+    <ThemeProvider>
       <PawOsAppearanceProvider>
         <MotionProvider>
         <TooltipProvider delayDuration={350}>
@@ -72,7 +76,7 @@ export function App({ frontendProduct }: { frontendProduct?: FrontendProduct } =
                 <QueryClientProvider client={queryClient}>
                   <ProductIdentityProvider>
                     <Suspense fallback={<ProductLoading />}>
-                      {product === 'paw-os' ? (
+                      {standaloneSurface === 'screen-assistant' ? <ScreenAssistant /> : product === 'paw-os' ? (
                         <PawOsApp />
                       ) : (
                         <LegacyProductApp />

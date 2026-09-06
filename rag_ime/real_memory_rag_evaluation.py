@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -384,11 +385,18 @@ def evaluate_real_memory_rag(
             and target_text in compact_whitespace(session_context)
             and '<rag-ime-context type="memory_recall">' in session_context
         )
+        # Stable source IDs are allowed only in the renderer's provenance
+        # field. They must not leak into free-form recalled text or the query.
+        isolated_context = re.sub(
+            rf"(?m)^依据：来源：{re.escape(atom_id)}(?=；|$)",
+            "依据：来源：[source]",
+            session_context,
+        )
         prompt_isolated = bool(
             envelope.get("message") == query
             and envelope.get("transientContext") == ""
             and query not in session_context
-            and atom_id not in session_context
+            and atom_id not in isolated_context
         )
         results.append(
             {

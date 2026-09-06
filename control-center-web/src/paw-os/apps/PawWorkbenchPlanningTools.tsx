@@ -27,6 +27,7 @@ export function PawWorkbenchPlanningTools({
   planning,
   projectName,
   projectPath,
+  selectedTask,
 }: {
   date: string;
   onDateChange: (date: string) => void;
@@ -34,6 +35,7 @@ export function PawWorkbenchPlanningTools({
   planning: PawWorkbenchRecord;
   projectName: string;
   projectPath: string;
+  selectedTask?: PawWorkbenchRecord | null;
 }) {
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const plan = record(planning.plan);
@@ -42,6 +44,7 @@ export function PawWorkbenchPlanningTools({
   const goals = rows(planning, ['goals']);
   const openTasks = tasks.filter((task) => !['done', 'completed', 'cancelled'].includes(text(task.status).toLowerCase()));
   const firstTask = openTasks[0] ?? tasks[0];
+  const taskForBreakdown = selectedTask === undefined ? firstTask : selectedTask;
   const firstGoal = goals.find((goal) => ['active', 'in_progress', 'running'].includes(text(goal.status).toLowerCase())) ?? goals[0];
   const focus = text(plan.intention) || text(firstTask?.title) || '尚未设置当天重点';
 
@@ -53,8 +56,10 @@ export function PawWorkbenchPlanningTools({
   }
 
   function handoff(intent: AgentHandoffIntent) {
-    const taskTitle = text(firstTask?.title) || focus;
-    const taskDetail = text(firstTask?.detail) || text(firstTask?.description);
+    const task = intent === 'breakdown' ? taskForBreakdown : firstTask;
+    if (intent === 'breakdown' && !task) return;
+    const taskTitle = text(task?.title) || focus;
+    const taskDetail = text(task?.detail) || text(task?.description);
     const completedCount = finiteNumber(summary.completedTaskCount) ?? 0;
     const prompts: Record<AgentHandoffIntent, string> = {
       organize: `帮我整理 ${date} 的工作。当天重点是“${focus}”，还有 ${openTasks.length} 项待继续，已完成 ${completedCount} 项。请给我清晰的优先级和下一步。`,
@@ -63,12 +68,12 @@ export function PawWorkbenchPlanningTools({
     };
     const goalTitle = text(firstGoal?.title);
     const goalId = text(firstGoal?.id) || text(firstGoal?.goalId);
-    const taskId = text(firstTask?.id) || text(firstTask?.taskId);
+    const taskId = text(task?.id) || text(task?.taskId);
     const bindings = [
       projectName ? `项目：${projectName}` : '',
       projectPath ? `工作区：${projectPath}` : '',
       goalTitle ? `目标：${goalTitle}${goalId ? `（${goalId}）` : ''}` : '',
-      firstTask ? `任务：${taskTitle}${taskId ? `（${taskId}）` : ''}` : '',
+      task ? `任务：${taskTitle}${taskId ? `（${taskId}）` : ''}` : '',
       `日期：${date}`,
     ].filter(Boolean);
     onOpenAgent(`${bindings.join('\n')}\n\n${prompts[intent]}`);
@@ -86,7 +91,7 @@ export function PawWorkbenchPlanningTools({
         </div>
         <div className="paw-wb-planning-tools__actions">
           <button onClick={() => handoff('organize')} type="button"><Sparkles aria-hidden size={14} />交给 Agent 安排</button>
-          <button disabled={!firstTask} onClick={() => handoff('breakdown')} type="button"><ListTodo aria-hidden size={14} />拆解当前任务</button>
+          <button disabled={!taskForBreakdown} onClick={() => handoff('breakdown')} type="button"><ListTodo aria-hidden size={14} />拆解当前任务</button>
           <button onClick={() => handoff('review')} type="button"><CheckCircle2 aria-hidden size={14} />一起复盘</button>
           <button onClick={() => setSchedulesOpen(true)} type="button"><CalendarClock aria-hidden size={14} />定时安排</button>
         </div>

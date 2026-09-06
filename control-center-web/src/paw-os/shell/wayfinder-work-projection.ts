@@ -71,6 +71,8 @@ export type WayfinderWorkItem = {
   runtimeRunning: boolean;
   statusLabel: string;
   detail: string;
+  /** Recorded Room task counts only; Session messages do not imply a percent. */
+  progress?: { completed: number; total: number };
   /** Room planet names in ordinal order — rendered side by side, never as rows. */
   agents: string[];
   /** Older records with the same goal copy, newest first. */
@@ -298,6 +300,9 @@ function roomRow(room: WayfinderWorkRoomSource, status: {
     runtimeRunning: status.recordFresh && status.runtimeFresh && status.running,
     statusLabel: activity === 'unknown' ? '已离线' : activity === 'attention' ? '需要处理' : activity === 'running' ? '进行中' : '就绪',
     detail: activity === 'unknown' ? '同步中断，显示最近记录' : roomWorkDetail(room.workItems),
+    ...(status.recordFresh && room.workItems?.length ? {
+      progress: { completed: room.workItems.filter((item) => item.state === 'done').length, total: room.workItems.length },
+    } : {}),
     agents: (room.participants ?? [])
       .filter((participant) => participant.status !== 'removed')
       .sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0))

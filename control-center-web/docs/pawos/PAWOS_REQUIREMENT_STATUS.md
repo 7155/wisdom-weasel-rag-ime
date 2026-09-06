@@ -2,7 +2,7 @@
 
 This document answers “which requirements are complete?” without changing the
 meaning ledger set indexed by [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md). The
-thirty requirement volumes own user meaning; this index owns explicit assessment and evidence
+forty-four requirement volumes own user meaning; this index owns explicit assessment and evidence
 links. Runtime, Git, installation, and foreground state remain authoritative in
 their own projections and receipts.
 
@@ -41,7 +41,38 @@ Evidence levels describe scope, not a completion ladder. For example, E2 does
 not prove E4–E6, and a screenshot without an authoritative run identity does
 not prove the Runtime path.
 
-## Current honest summary — 2026-09-04
+## Source progress — 2026-09-05
+
+The ledger now covers 283 requirements. The conservative indexed count is
+253 unassessed, 23 in progress, 7 complete, and 22 receipts; the table below remains the dated
+241-requirement assessment. New source work does not automatically close a
+requirement. [Room experience progress](ROOM_EXPERIENCE_20260905.md) records the
+white UI correction, real message/reply navigation, satellite counts, terminal
+state fixes, and focused verification. These changes have been previewed in
+the source browser against the existing Gateway; subsequent installed recovery
+receipts are linked from that work document. The new [Golden workflow](LAB_GOLDEN_WORKFLOW_20260905.md)
+is separately in progress; these source changes do not imply installed acceptance.
+
+The [UR-260–UR-264 continuation ledger](requirements/PAWOS_REQUIREMENTS_260_264.md)
+maps eight exact user messages to five current requirements. The
+[causal technical record](PAWOS_RELIABILITY_CONTINUATION_20260905.md) is maintained
+by the active owner and links causes, changes and observed results. The new E1/E2
+receipts below cover only the multiple-partner frontend source and its focused
+checks. They add no native installation or full Room recovery claim.
+
+| Current continuation | Recorded progress | Remaining acceptance |
+| --- | --- | --- |
+| UR-260 — whole OS light stellar depth | Light direction explicitly selected; whole OS scope retained. | App-by-App implementation and real interaction review, after current reliability repairs. |
+| UR-261 — OAuth before metrics | The [owning authentication receipt](ROOM_EXPERIENCE_20260905.md#continued-session--2026-09-05-evening) records the corrected OAuth bridge, live login and a diagnostic completion. | Formal metric runs remain separate. That bridge receipt does not install the pending Python backend cleanup or complete the metrics requirement. |
+| UR-262 — independent partner windows | E1 source and E2: 115 focused frontend tests passed, including simultaneous windows, incremental entrants, own-window restore and terminal retention. | The owner's source geometry observation is narrower than complete Room recovery. Real narrow-screen interaction and any native installation/foreground claims require their own receipts. |
+| UR-263 — Runtime trace recovery | Current failure and recovery investigation are recorded by the owner. | Verify the affected real Session/Room, trace retry, first paint, terminal state and composer; old source receipts cannot close this current failure. |
+| UR-264 — causal documentation | New exact-source ledger, correction links and status/navigation coverage are present. | Owner closes the unified cause/fix/verification record with remaining boundaries and a revision receipt; document structure alone is not product acceptance. |
+
+The latest [UR-275–UR-277](requirements/PAWOS_REQUIREMENTS_275_277.md) reject plastic materials, distinguish the galactic core from a Sun, and require rotation/orbit simulation. The [stellar continuation](STELLAR_BROWSER_CONTINUATION_20260905.md) records 186 scoped tests, the final production build and bounded source-browser interaction. Earlier 170-test receipts remain historical; neither run proves user visual satisfaction, native Browser or whole-OS acceptance.
+
+The latest [UR-278–UR-283](requirements/PAWOS_REQUIREMENTS_278_283.md) retain exact model, sync, in-OS authoring, scene loading, user-rejected visual rollback and both-mode requirements. [Current source evidence](OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md) records 228 frontend and 45+2 backend checks, the restored build and bounded Edge interaction; there is no new E4 receipt. UR-283 is satisfied for the checked source display-mode boundary, without closing the separate visual or native requirements.
+
+## Assessment snapshot — 2026-09-04
 
 | Scope | Current indexed result | Boundary / next action |
 | --- | --- | --- |
@@ -83,9 +114,9 @@ not inferred status.
   "schemaVersion": "pawos.requirement-status.v1",
   "sourceReceipt": {
     "path": "PAWOS_REQUIREMENTS.md",
-    "sha256": "sha256:949bdee90e213f2a94bf4b0f4c3bbe3ecea30002ec97e65f8eb3a11c7beed902",
-    "recordedAt": "2026-08-29T01:32:03+08:00",
-    "owner": "PAWOS requirements status index"
+    "sha256": "sha256:b5e308197f9af274f17c9f3bdf52561afd26971a384c61dcb1cd042d1207a595",
+    "recordedAt": "2026-09-06T01:34:59.794518+00:00",
+    "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f"
   },
   "evidenceLevelLabels": {
     "E1": "Source",
@@ -210,6 +241,180 @@ not inferred status.
         "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md#2026-09-04--对话稳定性修复结果真实-case-与独立复核"
       ],
       "sha256": "sha256:c782058b49215e7b029bbff01915be9395162ba5453512ce0632a7ea039197e5"
+    },
+    "RCP-PAWOS-MULTIPARTNER-SOURCE-20260905": {
+      "level": "E1",
+      "recordedAt": "2026-09-05T10:54:21+00:00",
+      "owner": "PAW reliability continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "claim": "The source reuses stable participant window IDs, lays out every open partner independently, restores minimized partners through the navigation, and opens only new Runtime-active participants without closing terminal results. This receipt proves source presence only.",
+      "artifactRefs": [
+        "control-center-web/src/paw-os/apps/PawRoomFocusParticipants.tsx",
+        "control-center-web/src/paw-os/apps/PawRoomWorkspace.tsx",
+        "control-center-web/src/paw-os/apps/room-satellite-auto-open.ts",
+        "control-center-web/src/paw-os/shell/PawWindowLayer.tsx",
+        "control-center-web/src/paw-os/styles/paw-os-room-focus.css",
+        "control-center-web/docs/pawos/PAWOS_RELIABILITY_CONTINUATION_20260905.md"
+      ],
+      "sha256": "sha256:61717bda66db8d981399081d305ef86a55e652873900bc2a60663875dbba4d75"
+    },
+    "RCP-PAWOS-MULTIPARTNER-TESTS-20260905": {
+      "level": "E2",
+      "recordedAt": "2026-09-05T10:54:21+00:00",
+      "owner": "PAW reliability continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "claim": "The latest scoped vitest invocations passed 115 tests across five frontend files: 33 layout, Runtime-participant and bar checks, then 82 WindowLayer and RoomWorkspace checks. They cover multi-window visibility, narrow-screen layout, own-window collapse/restore, incremental opening, idle exclusion and terminal retention. tsc -b and scoped diff checks also passed. No Provider call, installation or native foreground acceptance is claimed.",
+      "artifactRefs": [
+        "control-center-web/src/paw-os/apps/PawRoomFocusParticipants.test.tsx",
+        "control-center-web/src/paw-os/apps/PawRoomWorkspace.test.tsx",
+        "control-center-web/src/paw-os/apps/room-satellite-auto-open.test.ts",
+        "control-center-web/src/paw-os/shell/PawWindowLayer.test.tsx",
+        "control-center-web/src/paw-os/shell/collaboration-focus.test.ts",
+        "control-center-web/docs/pawos/PAWOS_RELIABILITY_CONTINUATION_20260905.md"
+      ],
+      "sha256": "sha256:b8ec7028464bda0c4ef97fc88884ac0785020b2052f2a3524344fb1b340cd8f1"
+    },
+    "RCP-PAWOS-STELLAR-SOURCE-20260906": {
+      "level": "E1",
+      "recordedAt": "2026-09-05T16:10:49.792010+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Independent project galaxy renderer, real work/docs integration, centered execution mark, theme and Browser library source described by the owning record.",
+      "artifactRefs": [
+        "STELLAR_BROWSER_CONTINUATION_20260905.md",
+        "../../src/paw-os/shell/PawProjectGalaxy.tsx",
+        "../../src/paw-os/shell/project-galaxy-stage.ts",
+        "../../electron/browser-library.mjs"
+      ],
+      "sha256": "sha256:de34752ff8203a5356d4fa848fd45fc908965bcb8552f722b1d228e8f01f8f0e"
+    },
+    "RCP-PAWOS-STELLAR-TESTS-20260906": {
+      "level": "E2",
+      "recordedAt": "2026-09-05T16:10:49.792010+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Final project galaxy, Desktop, backdrop, document, lifecycle, identity/entrance and execution-mark checks: 10 files, 170 tests passed. This does not assert the entire concurrently edited suite passed.",
+      "artifactRefs": [
+        "STELLAR_BROWSER_CONTINUATION_20260905.md",
+        "/tmp/paw-project-universe-final-tests.log"
+      ],
+      "sha256": "sha256:9602db4d27e034e542a07e5bd9a3e55b4d4e052411f162dbacb189ef333cedda"
+    },
+    "RCP-PAWOS-STELLAR-BUILD-20260906": {
+      "level": "E3",
+      "recordedAt": "2026-09-05T16:10:49.792010+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "tsc -b and production HTTP Vite build passed into the isolated ignored output/stellar-build directory; transport and preview boundaries enforced; no installation.",
+      "artifactRefs": [
+        "STELLAR_BROWSER_CONTINUATION_20260905.md",
+        "../../output/stellar-build/rag-ime-control-web-build.json",
+        "/tmp/paw-project-universe-final-build.log"
+      ],
+      "sha256": "sha256:ec020f32c48fcd36381f87069dfd899a1555959e0e28bbb2634cfc615008a915"
+    },
+    "RCP-PAWOS-STELLAR-FOREGROUND-20260906": {
+      "level": "E6",
+      "recordedAt": "2026-09-05T16:10:49.792010+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Source desktop opens a real two-Session folder directly into the new WebGL galaxy; selection/docs, return focus, wallpaper pause and canvas unmount checked. Real docs API integration, 355px narrow viewport and a centered pending indicator were checked separately; no native Browser or installed runtime claim.",
+      "artifactRefs": [
+        "STELLAR_BROWSER_CONTINUATION_20260905.md"
+      ],
+      "sha256": "sha256:de34752ff8203a5356d4fa848fd45fc908965bcb8552f722b1d228e8f01f8f0e"
+    },
+    "RCP-PAWOS-BROWSER-LIBRARY-TESTS-20260906": {
+      "level": "E2",
+      "recordedAt": "2026-09-05T16:10:49.792010+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Electron Browser library and host-config checks: 28 passed; real native download foreground remains unverified.",
+      "artifactRefs": [
+        "STELLAR_BROWSER_CONTINUATION_20260905.md",
+        "/tmp/paw-stellar-final-electron.log"
+      ],
+      "sha256": "sha256:5eb5f8e0b38e0b48bc146e9e1d654660ee5d526001997830ef20381a06de1642"
+    },
+    "RCP-PAWOS-GALAXY-MATERIAL-MOTION-SOURCE-20260906": {
+      "level": "E1",
+      "recordedAt": "2026-09-06T00:18:37.737343+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Current owned record and source contain local photographed surfaces, bounded volume emission/extinction, galactic-core semantics, test-particle dynamics, stable surface identities, label avoidance and retained renderer/docs lifecycle. Source presence does not prove user visual satisfaction.",
+      "artifactRefs": [
+        "STELLAR_BROWSER_CONTINUATION_20260905.md",
+        "../../src/paw-os/shell/project-galaxy-stage.ts",
+        "../../src/paw-os/shell/project-galaxy-volume.ts",
+        "../../src/paw-os/shell/project-galaxy-physics.ts",
+        "../../src/paw-os/shell/project-galaxy-surfaces.ts"
+      ],
+      "sha256": "sha256:a9c963116f159b040d7b49608d3c4ee12629b6e17db2fdc5f8000da342a152d8"
+    },
+    "RCP-PAWOS-GALAXY-MATERIAL-MOTION-TESTS-20260906": {
+      "level": "E2",
+      "recordedAt": "2026-09-06T00:18:37.737343+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Thirteen related files passed 161 tests; the correctly named Wayfinder file passed 25 separately. After the final arm-pattern correction, Stage/physics passed 6 overlapping tests. Digest covers the three log files concatenated in artifact order; total distinct scoped tests is 186, not 192.",
+      "artifactRefs": [
+        "/tmp/paw-galaxy-photographic-final-tests-20260906.log",
+        "/tmp/paw-galaxy-wayfinder-final-tests-20260906.log",
+        "/tmp/paw-galaxy-pattern-final-tests-20260906.log"
+      ],
+      "sha256": "sha256:6571f2e24052c313156def469897a984fc8097cd4e8d155ea954993ff66ec29d"
+    },
+    "RCP-PAWOS-GALAXY-MATERIAL-MOTION-BUILD-20260906": {
+      "level": "E3",
+      "recordedAt": "2026-09-06T00:18:37.737343+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "After the final arm-pattern correction, tsc -b and the production HTTP Vite build passed into ignored output/stellar-build. No installation or live Runtime restart.",
+      "artifactRefs": [
+        "/tmp/paw-galaxy-photographic-final-build-20260906.log",
+        "../../output/stellar-build/rag-ime-control-web-build.json"
+      ],
+      "sha256": "sha256:286c8093f2af88c84862785bf853ce4c55c004a2e5016f0e451bf20bb4ba3488"
+    },
+    "RCP-PAWOS-GALAXY-MATERIAL-MOTION-FOREGROUND-20260906": {
+      "level": "E6",
+      "recordedAt": "2026-09-06T00:18:37.737343+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Actual source Edge desktop: four real tasks, pause preserves positions, selected real progress, no intersecting labels in sampled pose, 4x playback for at least 98 seconds retains spiral form. A separate three-task folder reads actual PROJECT.md while retaining the map. Narrow geometry and close/focus checked. This is bounded source interaction, not user visual approval, native Browser acceptance or a calibrated simulation.",
+      "artifactRefs": [
+        "STELLAR_BROWSER_CONTINUATION_20260905.md"
+      ],
+      "sha256": "sha256:a9c963116f159b040d7b49608d3c4ee12629b6e17db2fdc5f8000da342a152d8"
+    },
+    "RCP-PAWOS-CAPABILITY-MODES-SOURCE-20260906": {
+      "level": "E1",
+      "recordedAt": "2026-09-06T01:34:59.794518+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Own-Session model badge, separate recovery state, shared native Pi Package authoring and authorized apply, scene Skill snapshot routing and both project modes exist in the dirty source. Rejected visual experiment is reverted.",
+      "artifactRefs": [
+        "OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md"
+      ],
+      "sha256": "sha256:938dba636f59dc723f2034fbd62263f987af7cbe15bdf38a8c384614ef6af90c"
+    },
+    "RCP-PAWOS-CAPABILITY-MODES-TESTS-20260906": {
+      "level": "E2",
+      "recordedAt": "2026-09-06T01:34:59.794518+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Restored candidate: 14 frontend files / 228 tests; 45 backend lifecycle and configuration tests; 2 fake-Pi snapshot tests pass. No Provider or real package installation was executed.",
+      "artifactRefs": [
+        "OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md"
+      ],
+      "sha256": "sha256:938dba636f59dc723f2034fbd62263f987af7cbe15bdf38a8c384614ef6af90c"
+    },
+    "RCP-PAWOS-CAPABILITY-MODES-BUILD-20260906": {
+      "level": "E3",
+      "recordedAt": "2026-09-06T01:34:59.794518+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Restored source production Vite/TypeScript build passed using HTTP transport; output/stellar-build is a local candidate, not an installed App.",
+      "artifactRefs": [
+        "OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md"
+      ],
+      "sha256": "sha256:938dba636f59dc723f2034fbd62263f987af7cbe15bdf38a8c384614ef6af90c"
+    },
+    "RCP-PAWOS-CAPABILITY-MODES-FOREGROUND-20260906": {
+      "level": "E6",
+      "recordedAt": "2026-09-06T01:34:59.794518+00:00",
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "claim": "Actual Edge source page shows restored painted desktop and restored four-task project galaxy. Galaxy to list to galaxy retains the four real records and horizontal button. Studio Agent/manual panels and scenario entry open. This is not real lifecycle mutation, model-switch acceptance, native Browser or installed App evidence.",
+      "artifactRefs": [
+        "OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md"
+      ],
+      "sha256": "sha256:938dba636f59dc723f2034fbd62263f987af7cbe15bdf38a8c384614ef6af90c"
     }
   },
   "requirements": {
@@ -505,7 +710,13 @@ not inferred status.
         "RCP-PAWOS-CONVERSATION-RUNTIME-20260904",
         "RCP-PAWOS-CONVERSATION-FOREGROUND-20260904"
       ],
-      "requiredEvidenceLevels": ["E1", "E2", "E3", "E5", "E6"],
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E3",
+        "E5",
+        "E6"
+      ],
       "owner": "PAW conversation stability Goal",
       "updatedAt": "2026-09-04T01:55:31+08:00",
       "note": "First and known-Session prompts converge by exact identity, appear once immediately, retain one terminal result across refresh, and show no ghost failure card in the isolated real foreground. E4 was intentionally not required because this Goal did not authorize installation."
@@ -521,7 +732,13 @@ not inferred status.
         "RCP-PAWOS-CONVERSATION-RUNTIME-20260904",
         "RCP-PAWOS-CONVERSATION-FOREGROUND-20260904"
       ],
-      "requiredEvidenceLevels": ["E1", "E2", "E3", "E5", "E6"],
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E3",
+        "E5",
+        "E6"
+      ],
       "owner": "PAW conversation stability Goal",
       "updatedAt": "2026-09-04T01:55:31+08:00",
       "note": "HTTP admission, SSE delivery, snapshot repair, cursor replay, durable transcript recovery, and Host restart converged without skipped events, terminal regression, or duplicate public messages in the checked source Runtime."
@@ -537,13 +754,457 @@ not inferred status.
         "RCP-PAWOS-CONVERSATION-RUNTIME-20260904",
         "RCP-PAWOS-CONVERSATION-FOREGROUND-20260904"
       ],
-      "requiredEvidenceLevels": ["E1", "E2", "E3", "E5", "E6"],
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E3",
+        "E5",
+        "E6"
+      ],
       "owner": "PAW conversation stability Goal",
       "updatedAt": "2026-09-04T01:55:31+08:00",
       "note": "Structured conflicts remain retryable, ambiguous Memory admission never replays automatically, ordinary conversations remain intact under injected Memory failures, and the two proven no-consumer error branches were removed or bypassed."
     },
     "UR-240": {},
-    "UR-241": {}
+    "UR-241": {},
+    "UR-242": {},
+    "UR-243": {},
+    "UR-244": {},
+    "UR-245": {},
+    "UR-246": {},
+    "UR-247": {},
+    "UR-248": {},
+    "UR-249": {},
+    "UR-250": {},
+    "UR-251": {},
+    "UR-252": {},
+    "UR-253": {},
+    "UR-254": {},
+    "UR-255": {},
+    "UR-256": {},
+    "UR-257": {},
+    "UR-258": {},
+    "UR-259": {},
+    "UR-260": {
+      "assessment": "in_progress",
+      "runsVerdict": "unverified",
+      "requirementVerdict": "unverified",
+      "evidenceRefs": [],
+      "owner": "PAW reliability continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "updatedAt": "2026-09-05T10:54:21+00:00",
+      "note": "The user selected light stellar depth for the whole OS. Design scope is retained while immediate login, window and synchronization repairs proceed; no all-App redesign acceptance is recorded.",
+      "nextAction": "Continue the accepted light design and motion discussion, then verify each changed App and real interaction without treating one wallpaper as whole-OS completion."
+    },
+    "UR-261": {
+      "assessment": "in_progress",
+      "runsVerdict": "unverified",
+      "requirementVerdict": "unverified",
+      "evidenceRefs": [],
+      "owner": "PAW reliability continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "updatedAt": "2026-09-05T10:54:21+00:00",
+      "note": "The owning continuation document records a repaired OAuth bridge and live authentication diagnostic. Formal interview metrics and the pending Python backend application installation remain separate; no new E4-E6 receipt is added by this ledger update.",
+      "nextAction": "Link the authentication owner closeout and exact installed boundary, then continue formally scoped metric runs with their own denominators, costs and result receipts."
+    },
+    "UR-262": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "evidenceRefs": [
+        "RCP-PAWOS-MULTIPARTNER-SOURCE-20260905",
+        "RCP-PAWOS-MULTIPARTNER-TESTS-20260905"
+      ],
+      "owner": "PAW reliability continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "updatedAt": "2026-09-05T10:54:21+00:00",
+      "note": "Five focused frontend files passed 115 tests after the single-selected-window failure was reproduced. Existing independent window IDs are reused; multiple partners remain visible and terminal results are retained. Source geometry is not full Room recovery or native installation acceptance.",
+      "nextAction": "Finish the owner-controlled real source narrow-screen and recovery checks; record any native installation and foreground verification separately before claiming native completion."
+    },
+    "UR-263": {
+      "assessment": "in_progress",
+      "runsVerdict": "unverified",
+      "requirementVerdict": "unverified",
+      "evidenceRefs": [],
+      "owner": "PAW reliability continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "updatedAt": "2026-09-05T10:54:21+00:00",
+      "note": "The current trace snapshot and Room recovery failure is under active owner diagnosis. The copied UI phrase that conversation is unaffected is a hypothesis to verify, not an accepted fact; older source recovery receipts do not close this incident.",
+      "nextAction": "Verify the affected real Session/Room through the corrected Runtime trace path, retry and reload; record message, terminal and composer behavior alongside the exact installed/source boundary."
+    },
+    "UR-264": {
+      "assessment": "in_progress",
+      "runsVerdict": "unverified",
+      "requirementVerdict": "unverified",
+      "evidenceRefs": [],
+      "owner": "PAW reliability continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "updatedAt": "2026-09-05T10:54:21+00:00",
+      "note": "UR-260-264, eight exact source messages, corrections and continuation links are recorded. The unified causal technical document remains owned by the active root task; no product completion follows from this structural update.",
+      "nextAction": "Close the owner-maintained cause/fix/verification document with exact changed files, both verification axes, unverified boundaries and its revision receipt."
+    },
+    "UR-265": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "evidenceRefs": [],
+      "owner": "PAW continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "updatedAt": "2026-09-05T11:57:29.051616+00:00",
+      "note": "New actual layered stellar desktop implemented; 71 focused tests pass and three viewport captures exist. Independent visual review and install pending.",
+      "nextAction": "Complete actual page and install checks; see STELLAR_MEMORY_TOPIC_PAGES_20260905.md."
+    },
+    "UR-266": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "evidenceRefs": [],
+      "owner": "PAW continuation 01a070e8-ba60-7390-a628-8bef2d3c2e1b",
+      "updatedAt": "2026-09-05T11:57:29.051616+00:00",
+      "note": "Topic pages from current scoped Atoms and admitted Evidence; 102 backend and 88 frontend/entry tests pass. Actual snapshot UI and install pending; no semantic quality gain claimed.",
+      "nextAction": "Complete actual page and install checks; see STELLAR_MEMORY_TOPIC_PAGES_20260905.md."
+    },
+    "UR-267": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-STELLAR-SOURCE-20260906",
+        "RCP-PAWOS-STELLAR-TESTS-20260906",
+        "RCP-PAWOS-STELLAR-BUILD-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-05T16:10:49.792010+00:00",
+      "note": "Fresh Session directory projection and bounded wallpaper agents are implemented; no real simultaneous internal/subagent pair acceptance and no Runtime busy overlay.",
+      "nextAction": "Continue the remaining installed/native and full-OS acceptance in the owning continuation record; retain the newest visual corrections and do not promote source checks into broader completion."
+    },
+    "UR-268": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-STELLAR-SOURCE-20260906",
+        "RCP-PAWOS-BROWSER-LIBRARY-TESTS-20260906",
+        "RCP-PAWOS-STELLAR-BUILD-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-05T16:10:49.792010+00:00",
+      "note": "Existing native history/settings plus persistent bookmarks/downloads and independent race fixes are implemented; native Browser foreground and installation remain pending.",
+      "nextAction": "Continue the remaining installed/native and full-OS acceptance in the owning continuation record; retain the newest visual corrections and do not promote source checks into broader completion."
+    },
+    "UR-269": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-STELLAR-SOURCE-20260906",
+        "RCP-PAWOS-STELLAR-TESTS-20260906",
+        "RCP-PAWOS-STELLAR-BUILD-20260906",
+        "RCP-PAWOS-STELLAR-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-05T16:10:49.792010+00:00",
+      "note": "Dark/light/system, 96/48 wallpaper particles, pause/freshness and bounded lazy project GPU rendering are implemented; source UI checked, no whole-OS stress/power acceptance.",
+      "nextAction": "Continue the remaining installed/native and full-OS acceptance in the owning continuation record; retain the newest visual corrections and do not promote source checks into broader completion."
+    },
+    "UR-270": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-STELLAR-SOURCE-20260906",
+        "RCP-PAWOS-STELLAR-TESTS-20260906",
+        "RCP-PAWOS-STELLAR-BUILD-20260906",
+        "RCP-PAWOS-STELLAR-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-05T16:10:49.792010+00:00",
+      "note": "Stellar system mark and separate live thinking/tool motion are implemented; the pending-strip centering defect is fixed under UR-274.",
+      "nextAction": "Continue the remaining installed/native and full-OS acceptance in the owning continuation record; retain the newest visual corrections and do not promote source checks into broader completion."
+    },
+    "UR-271": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-STELLAR-SOURCE-20260906",
+        "RCP-PAWOS-STELLAR-TESTS-20260906",
+        "RCP-PAWOS-STELLAR-BUILD-20260906",
+        "RCP-PAWOS-STELLAR-FOREGROUND-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-SOURCE-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-TESTS-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-BUILD-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T00:18:37.737343+00:00",
+      "note": "Real project Session/Room selection, public progress and real docs API/Files handoff are implemented; entry and renderer semantics are superseded by UR-272 and UR-273.",
+      "nextAction": "Apply the latest UR-275 to UR-277 material, galactic-core and motion corrections; do not treat earlier visual receipts as acceptance of the current appearance."
+    },
+    "UR-272": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-STELLAR-SOURCE-20260906",
+        "RCP-PAWOS-STELLAR-TESTS-20260906",
+        "RCP-PAWOS-STELLAR-BUILD-20260906",
+        "RCP-PAWOS-STELLAR-FOREGROUND-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-SOURCE-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-TESTS-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-BUILD-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T00:18:37.737343+00:00",
+      "note": "Actual desktop folder opening now directly enters the full viewport galaxy; one-shot spiral disclosure, real records, docs, text-list escape, keyboard return and narrow layout checked.",
+      "nextAction": "Apply the latest UR-275 to UR-277 material, galactic-core and motion corrections; do not treat earlier visual receipts as acceptance of the current appearance."
+    },
+    "UR-273": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-STELLAR-SOURCE-20260906",
+        "RCP-PAWOS-STELLAR-TESTS-20260906",
+        "RCP-PAWOS-STELLAR-BUILD-20260906",
+        "RCP-PAWOS-STELLAR-FOREGROUND-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-SOURCE-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-TESTS-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-BUILD-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T00:18:37.737343+00:00",
+      "note": "The rejected old StarfieldStage visual is not reused. A separate shader-based project scene, spherical bodies, atmosphere/rings and 3D spiral particles are implemented and rendered in the browser.",
+      "nextAction": "Apply the latest UR-275 to UR-277 material, galactic-core and motion corrections; do not treat earlier visual receipts as acceptance of the current appearance."
+    },
+    "UR-274": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-STELLAR-SOURCE-20260906",
+        "RCP-PAWOS-STELLAR-TESTS-20260906",
+        "RCP-PAWOS-STELLAR-BUILD-20260906",
+        "RCP-PAWOS-STELLAR-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-05T16:10:49.792010+00:00",
+      "note": "Generic text span styles were overriding the planet mark layout. Centering is fixed; source pending-strip markup measured a center offset of about 0.0142px on each axis.",
+      "nextAction": "Continue the remaining installed/native and full-OS acceptance in the owning continuation record; retain the newest visual corrections and do not promote source checks into broader completion."
+    },
+    "UR-275": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-SOURCE-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-TESTS-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-BUILD-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T00:18:37.737343+00:00",
+      "note": "The photographed and dark-smoke experiments were rejected. The later controlling direction is a pure-code artistic spiral with beauty first and utility secondary; see UR-282 and PAINTED_GALAXY_CONTINUATION_20260906.md. No visual acceptance is inferred from tests.",
+      "nextAction": "Follow the later user-directed artistic spiral in UR-282; preserve the complete rejection history and keep source checks separate from visual acceptance."
+    },
+    "UR-276": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-SOURCE-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-TESTS-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-BUILD-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T00:18:37.737343+00:00",
+      "note": "The visible solar sphere is removed; a diffuse galactic nucleus retains the project docs action. Navigation body sizes are not galactic-scale measurements.",
+      "nextAction": "Retain current source result and obtain actual visual feedback; keep native installation, full Browser foreground and full-OS acceptance separate."
+    },
+    "UR-277": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-SOURCE-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-TESTS-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-BUILD-20260906",
+        "RCP-PAWOS-GALAXY-MATERIAL-MOTION-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T00:18:37.737343+00:00",
+      "note": "Fixed-axis spin and smooth-field test-particle orbits are separate from Runtime busy; pause/speed are real controls. A persistent arm pattern avoids long-duration winding. No N-body or scientific ephemeris claim.",
+      "nextAction": "Retain current source result and obtain actual visual feedback; keep native installation, full Browser foreground and full-OS acceptance separate."
+    },
+    "UR-278": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-CAPABILITY-MODES-SOURCE-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-TESTS-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-BUILD-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T01:34:59.794518+00:00",
+      "note": "Window model reads its own Session and rejects wrong parent identity; independent bound model tests pass. Real concurrent planet/satellite model switching remains unverified.",
+      "nextAction": "Continue the exact unverified foreground or installed boundary in the owner document; for the rejected visuals settle the reference direction before another replacement."
+    },
+    "UR-279": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-CAPABILITY-MODES-SOURCE-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-TESTS-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-BUILD-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T01:34:59.794518+00:00",
+      "note": "Transient network recovery preserves history and drafts and clears on restore without replaying prompts; structural workspace and operation failures remain distinct. Installed screenshot root cause is not fully reproduced.",
+      "nextAction": "Continue the exact unverified foreground or installed boundary in the owner document; for the rejected visuals settle the reference direction before another replacement."
+    },
+    "UR-280": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-CAPABILITY-MODES-SOURCE-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-TESTS-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-BUILD-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T01:34:59.794518+00:00",
+      "note": "Studio prepares native Skill/Prompt packages or an App-builder Session draft; authorized Agent apply reaches the same preview-bound lifecycle. Real new App build/install and native installation are not claimed.",
+      "nextAction": "Continue the exact unverified foreground or installed boundary in the owner document; for the rejected visuals settle the reference direction before another replacement."
+    },
+    "UR-281": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-CAPABILITY-MODES-SOURCE-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-TESTS-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-BUILD-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T01:34:59.794518+00:00",
+      "note": "Scene Skill choice reuses configuration, changes new Session allowlists without restarting active Pi and preserves existing resource snapshots. It does not provide a dynamic unloader for every extension resource.",
+      "nextAction": "Continue the exact unverified foreground or installed boundary in the owner document; for the rejected visuals settle the reference direction before another replacement."
+    },
+    "UR-282": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-CAPABILITY-MODES-SOURCE-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-TESTS-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-BUILD-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T03:41:10.024446+00:00",
+      "note": "The user kept the soft, cool flow but said the material was wrong and particles too sparse. The source now adds 152,000 layered dust particles in two draws and reduces continuous paint. Current 58 focused checks, build and desktop/narrow visual captures are recorded in PAINTED_GALAXY_CONTINUATION_20260906.md. Earlier rejection and review history remains separate; no generated image, App installation or user visual acceptance is inferred.",
+      "nextAction": "Continue from the visible artistic source result and user feedback. Do not ask the settled style question again, reintroduce generated images, or treat automated review as user acceptance. App installation remains outside this source-only change."
+    },
+    "UR-283": {
+      "assessment": "complete",
+      "runsVerdict": "passed",
+      "requirementVerdict": "satisfied",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-CAPABILITY-MODES-SOURCE-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-TESTS-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-BUILD-20260906",
+        "RCP-PAWOS-CAPABILITY-MODES-FOREGROUND-20260906"
+      ],
+      "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
+      "updatedAt": "2026-09-06T01:34:59.794518+00:00",
+      "note": "Both project display modes are present; actual four-record source project switched galaxy/list/galaxy and the full-screen button remained horizontal. No new execution identity is created."
+    }
   }
 }
 ```

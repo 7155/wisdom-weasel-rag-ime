@@ -10,6 +10,7 @@ from typing import Any, Callable, Iterator, Literal
 
 from .anti_echo import candidate_echoes_text, candidate_has_keyword_echo, candidate_has_self_repetition, repeat_norm
 from .input_event_assembly import tail_for_token_budget
+from .input_task import preserve_document_layout, selection_source, selection_task_instruction, selection_task_policy
 from .deepseek_config import DeepSeekConfig
 from .runtime_flags import assert_deepseek_scene_allowed
 from .text_utils import compact_whitespace, truncate_text
@@ -166,7 +167,8 @@ class DeepSeekV4FlashCompletionProvider:
                         content_buffer += delta
                         content_chars += len(delta)
                         had_content = True
-                        content_buffer = content_buffer.replace("\\n", "\n").replace("\\r", "\r")
+                        if request.scene != "active_rag" or (0 < request.max_chars < 80 and not selection_task_policy(request.context_packet)):
+                            content_buffer = content_buffer.replace("\\n", "\n").replace("\\r", "\r")
                         if request.scene == "active_rag":
                             stream_candidate = _active_rag_stream_candidate_text(content_buffer, request=request)
                             if stream_candidate:
@@ -228,6 +230,18 @@ class DeepSeekV4FlashCompletionProvider:
             except (TimeoutError, urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
                 fallback_reason = _exception_fallback_reason(exc)
                 break
+        policy = selection_task_policy(request.context_packet)
+        if policy:
+            text = preserve_document_layout(content_buffer)
+            settled = finish_reason in {"stop", "end_turn"} or (done_marker_seen and not finish_reason)
+            if not text.strip() or not settled or budget_elapsed:
+                raise DeepSeekCompletionError("selection_task_output_incomplete")
+            yield CompletionCandidateDelta(text=text, insert_text=text, done=True, metadata={
+                "inputTaskOperation": policy["operation"], "outputComplete": True,
+                "finishReason": finish_reason, "elapsedMs": int((time.perf_counter() - started) * 1000),
+                **transport_metadata,
+            })
+            return
         while (
             continuation_rounds < 2
             and request.scene == "active_rag"
@@ -525,6 +539,20 @@ def build_deepseek_completion_messages(request: DeepSeekCompletionRequest) -> li
 
 
 def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) -> list[dict[str, str]]:
+    policy = selection_task_policy(request.context_packet)
+    if policy:
+        return [
+            {"role": "system", "content": selection_task_instruction(policy)},
+            {"role": "user", "content": json.dumps({
+                "taskPolicy": policy,
+                "selectedText": selection_source(request.selected_text),
+                "currentRequest": selection_source(request.selected_text),
+                "currentContext": request.current_context[-2000:],
+                "placement": _context_packet_string(request.context_packet or {}, "placement") or "show_only",
+                "recoveryMode": request.recovery_mode,
+                "taskMode": policy["operation"],
+            }, ensure_ascii=False)},
+        ]
     context_packet = _compact_active_rag_context_packet(request.context_packet)
     recent_complete_inputs = context_packet.get("recentCompleteInputs")
     has_recent_history = isinstance(recent_complete_inputs, list) and bool(recent_complete_inputs)
@@ -689,6 +717,8 @@ def _active_rag_task_mode(request: DeepSeekCompletionRequest) -> str:
 
 
 def _active_rag_current_request(request: DeepSeekCompletionRequest, *, current_context: str) -> str:
+    if selection_task_policy(request.context_packet):
+        return selection_source(request.selected_text)
     selected = compact_whitespace(request.selected_text)
     placement = _context_packet_string(request.context_packet or {}, "placement")
     if placement == "replace_selection" and selected:
@@ -926,6 +956,8 @@ def _active_rag_partial_candidate_text(content: str, *, request: DeepSeekComplet
 
 
 def _active_rag_stream_candidate_text(content: str, *, request: DeepSeekCompletionRequest) -> str:
+    if selection_task_policy(request.context_packet):
+        return preserve_document_layout(content)
     value = _active_rag_full_candidate_text(content)
     value = _normalize_candidate_for_request(value, request=request)
     if not value or not _candidate_allowed(value, request=request, seen=set()):
@@ -1112,11 +1144,11 @@ def _sanitize_active_rag_visible_text(text: str) -> str:
 
 def _active_rag_paragraph_output(request: DeepSeekCompletionRequest) -> bool:
     max_chars = int(request.max_chars or 0)
-    return request.scene == "active_rag" and (max_chars == 0 or max_chars >= 80)
+    return request.scene == "active_rag" and (max_chars == 0 or max_chars >= 80 or bool(selection_task_policy(request.context_packet)))
 
 
 def _active_rag_full_candidate_text(text: str) -> str:
-    stripped = _strip_markdown_fence(str(text or "").replace("\\n", "\n").replace("\\r", "\r"))
+    stripped = _strip_markdown_fence(str(text or ""))
     payload = _json_loads_or_none(stripped)
     if payload is not None:
         candidates = _candidate_texts_from_payload(payload)
@@ -1132,18 +1164,7 @@ def _active_rag_full_candidate_text(text: str) -> str:
 
 
 def _preserve_paragraph_layout(text: str) -> str:
-    value = str(text or "").replace("\\n", "\n").replace("\\r", "\r").replace("\r\n", "\n").replace("\r", "\n")
-    lines = [compact_whitespace(line) for line in value.split("\n")]
-    while lines and not lines[0]:
-        lines.pop(0)
-    while lines and not lines[-1]:
-        lines.pop()
-    result: list[str] = []
-    for line in lines:
-        if not line and result and not result[-1]:
-            continue
-        result.append(line)
-    return "\n".join(result).strip()
+    return preserve_document_layout(text)
 
 
 def _placeholder_candidate(text: str) -> bool:

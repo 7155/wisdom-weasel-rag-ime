@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from .agent_room_turn_registry import (
-    RoomSessionBusyError,
-    RoomTurnRegistry,
-)
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Protocol
+
+from .agent_command_receipts import AgentCommandReceiptFailed
+from .agent_room_turn_registry import RoomSessionBusyError, RoomTurnRegistry
 
 
 ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
@@ -241,19 +240,32 @@ class RoomSessionDispatchService:
             )
         except RoomSessionBusyError as busy:
             target = target_by_session_id[busy.session_id]
-            raise ValueError(
+            raise AgentCommandReceiptFailed(
                 f"{target.get('displayName') or 'selected Room participant'} "
-                "is currently busy"
+                "is currently busy",
+                client_message_id=client_message_id,
+                cause_code="ROOM_PARTICIPANT_BUSY",
             ) from None
-        busy_targets = [
-            target
-            for target, session_id in zip(targets, target_session_ids, strict=True)
-            if not self.host._room_target_idle(session_id, allow_user_priority=True)
-        ]
+        try:
+            busy_targets = [
+                target
+                for target, session_id in zip(targets, target_session_ids, strict=True)
+                if not self.host._room_target_idle(session_id, allow_user_priority=True)
+            ]
+        except Exception:
+            # Status reads can fail before any Root/event is published. Only
+            # this request's reservation is ours to release; otherwise every
+            # later manual send would mistake the abandoned claim for work.
+            self.host.room_turns.release_priority(target_session_ids)
+            raise
         if busy_targets:
             self.host.room_turns.release_priority(target_session_ids)
             names = "、".join(str(item.get("displayName") or "Agent") for item in busy_targets)
-            raise ValueError(f"Room participants are currently busy: {names}")
+            raise AgentCommandReceiptFailed(
+                f"Room participants are currently busy: {names}",
+                client_message_id=client_message_id,
+                cause_code="ROOM_PARTICIPANT_BUSY",
+            )
 
         room_turn_id = f"room-turn:{uuid.uuid4()}"
         topic_id = str(room.get("activeTopicId") or "")
@@ -409,33 +421,48 @@ class RoomSessionDispatchService:
             raise
 
         dispatch_results: list[dict[str, object]] = []
-        with ThreadPoolExecutor(
-            max_workers=len(targets),
-            thread_name_prefix="room-user-dispatch",
-        ) as executor:
-            futures = {
-                executor.submit(
-                    self.host._dispatch_room_target,
-                    room=room,
-                    target=target,
-                    decision=decision,
-                    message=message,
-                    room_turn_id=room_turn_id,
-                    topic_id=topic_id,
-                    unread=unread_by_participant[str(target["id"])],
-                    work_item=work_item,
-                    attachment_ids=attachment_ids,
-                ): index
-                for index, (decision, target) in enumerate(
-                    zip(decisions, targets, strict=True)
-                )
-            }
-            indexed_results: dict[int, dict[str, object]] = {}
-            for future in as_completed(futures):
-                indexed_results[futures[future]] = future.result()
-            dispatch_results = [
-                indexed_results[index] for index in range(len(indexed_results))
-            ]
+        try:
+            with ThreadPoolExecutor(
+                max_workers=len(targets),
+                thread_name_prefix="room-user-dispatch",
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        self.host._dispatch_room_target,
+                        room=room,
+                        target=target,
+                        decision=decision,
+                        message=message,
+                        room_turn_id=room_turn_id,
+                        topic_id=topic_id,
+                        unread=unread_by_participant[str(target["id"])],
+                        work_item=work_item,
+                        attachment_ids=attachment_ids,
+                    ): index
+                    for index, (decision, target) in enumerate(
+                        zip(decisions, targets, strict=True)
+                    )
+                }
+                indexed_results: dict[int, dict[str, object]] = {}
+                for future in as_completed(futures):
+                    index = futures[future]
+                    try:
+                        indexed_results[index] = future.result()
+                    except Exception as exc:
+                        # One worker cannot revoke another participant's accepted
+                        # Pi turn. Convert only this target into the same typed
+                        # rejection as dispatch_target, then settle the batch.
+                        indexed_results[index] = self._failed_dispatch(
+                            room=room, target=targets[index], decision=decisions[index],
+                            room_turn_id=room_turn_id, topic_id=topic_id, error=exc,
+                        )
+                dispatch_results = [
+                    indexed_results[index] for index in range(len(indexed_results))
+                ]
+        finally:
+            # Admission priority is only a short-lived reservation. Release it
+            # even if publishing an individual failure receipt also fails.
+            self.host.room_turns.release_priority(target_session_ids)
 
         successful = [result for result in dispatch_results if result["accepted"] is True]
         if retry_dispatch_id and successful:
@@ -637,13 +664,23 @@ class RoomSessionDispatchService:
                 session_turn_id,
                 room_turn_id,
             )
-            self.host.rooms.advance_delivery_cursor(
-                str(room["id"]),
-                participant_id,
-                topic_id=topic_id,
-                through_sequence=int(unread["throughSequence"]),
-            )
-            self.host.rooms.commit_route(str(room["id"]), decision)
+            # Pi has already admitted this exact turn. A failed projection
+            # write cannot revoke that admission or make a client retry run
+            # it again. Retain the accepted receipt and name pending metadata.
+            failed_operations: list[str] = []
+            try:
+                self.host.rooms.advance_delivery_cursor(
+                    str(room["id"]),
+                    participant_id,
+                    topic_id=topic_id,
+                    through_sequence=int(unread["throughSequence"]),
+                )
+            except Exception:
+                failed_operations.append("advance_delivery_cursor")
+            try:
+                self.host.rooms.commit_route(str(room["id"]), decision)
+            except Exception:
+                failed_operations.append("commit_route")
             return {
                 "participantId": participant_id,
                 "sessionId": session_id,
@@ -653,11 +690,30 @@ class RoomSessionDispatchService:
                 "status": "accepted",
                 "sessionTurnId": session_turn_id,
                 "error": "",
+                **({"projectionSync": {
+                    "state": "pending", "failedOperations": failed_operations,
+                }} if failed_operations else {}),
             }
         except Exception as exc:
+            return self._failed_dispatch(
+                room=room, target=target, decision=decision,
+                room_turn_id=room_turn_id, topic_id=topic_id, error=exc,
+            )
+        finally:
+            self.host.room_turns.release_priority_session(session_id)
+
+    def _failed_dispatch(
+        self, *, room: Mapping[str, object], target: Mapping[str, object],
+        decision: Mapping[str, object], room_turn_id: str, topic_id: str,
+        error: Exception,
+    ) -> dict[str, object]:
+        session_id = str(target["sessionId"])
+        participant_id = str(target["id"])
+        dispatch_id = str(decision["dispatchId"])
+        try:
             self.host._cancel_room_turn(session_id, room_turn_id)
             child = decision.get("child") is True
-            cause_code = _error_cause_code(exc)
+            cause_code = _error_cause_code(error)
             self.host.room_events.publish(
                 room_id=str(room["id"]),
                 event_type=(
@@ -674,14 +730,14 @@ class RoomSessionDispatchService:
                         "parentDispatchId": str(
                             decision.get("parentDispatchId") or ""
                         ),
-                        "error": _public_error(exc),
+                        "error": _public_error(error),
                         **({"causeCode": cause_code} if cause_code else {}),
                     }
                     if child
                     else {
                         "rootId": room_turn_id,
                         "dispatchId": dispatch_id,
-                        "error": _public_error(exc),
+                        "error": _public_error(error),
                         **({"causeCode": cause_code} if cause_code else {}),
                     }
                 ),
@@ -698,11 +754,12 @@ class RoomSessionDispatchService:
                 "cancelled": False,
                 "status": "failed",
                 "sessionTurnId": "",
-                "error": _public_error(exc),
-                "_exception": exc,
+                "error": _public_error(error),
+                "_exception": error,
             }
         finally:
             self.host.room_turns.release_priority_session(session_id)
+
 
 def _public_error(error: BaseException) -> str:
     text = " ".join(str(error).split())

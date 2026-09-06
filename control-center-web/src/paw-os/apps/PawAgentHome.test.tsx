@@ -21,7 +21,7 @@ describe('PAWOS Agent Home 首屏合同', () => {
   it('completes the new-work composer and 继续工作 on one fixed surface without a galaxy landing section', async () => {
     const { container } = renderHome();
 
-    expect(await screen.findByRole('heading', { name: '交给 Agent 一件事。' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '今天想完成什么？' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '描述你想完成的工作' })).toBeInTheDocument();
 
     const recent = (screen.getByRole('heading', { name: '继续工作' })).parentElement!;
@@ -43,8 +43,54 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(agentNextCss).toMatch(/\.an-home-recents \.an-recent-list\s*\{[^}]*overflow:\s*hidden auto;/s);
     // 页脚是钉在底部的状态条，不是文章末尾。
     expect(agentNextCss).toMatch(/\.an-home-foot\s*\{[^}]*margin-top:\s*auto;/s);
-    // 固定表面上 Composer 靠近上沿，锚定菜单必须向下展开，避免被表面上缘裁掉。
-    expect(agentNextCss).toMatch(/\.an-menu\s*\{[^}]*top:\s*calc\(100% \+ 8px\);/s);
+  });
+
+  it('changes work mode with arrow keys without losing the draft or starting work', async () => {
+    const user = userEvent.setup();
+    const { transport } = renderHome();
+    const composer = screen.getByRole('textbox', { name: '描述你想完成的工作' });
+    await user.type(composer, '先保留这个目标');
+    const session = screen.getByRole('radio', { name: 'Session' });
+    const room = screen.getByRole('radio', { name: 'Room' });
+    session.focus();
+
+    await user.keyboard('{ArrowRight}');
+    expect(room).toHaveFocus();
+    expect(room).toBeChecked();
+    expect(session).toHaveAttribute('tabindex', '-1');
+    expect(composer).toHaveValue('先保留这个目标');
+    await user.keyboard('{Home}');
+    expect(session).toHaveFocus();
+    expect(session).toBeChecked();
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.sessions.create' || request.pathId === 'agent.rooms.create')).toBe(false);
+  });
+
+  it('opens permission and project menus outside the clipped Home surface and restores keyboard focus', async () => {
+    const user = userEvent.setup();
+    renderHome();
+    const permission = await screen.findByRole('button', { name: /权限 · 全权限/ });
+    permission.focus();
+    await user.keyboard('{Enter}');
+    const permissions = await screen.findByRole('menu');
+    expect(permissions.closest('.an-home')).toBeNull();
+    await user.keyboard('{End}');
+    expect(within(permissions).getByRole('menuitemradio', { name: /^全自动/ })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(permission).toHaveFocus());
+
+    const project = screen.getByRole('button', { name: /起始项目/ });
+    await user.click(project);
+    expect(screen.getByRole('menu').closest('.an-home')).toBeNull();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(project).toHaveFocus());
+
+    await user.click(screen.getByRole('radio', { name: 'Room' }));
+    const roomPermission = screen.getByRole('button', { name: /权限/ });
+    await user.click(roomPermission);
+    const policy = screen.getByRole('dialog', { name: 'Room 三层权限' });
+    expect(policy.closest('.an-home')).toBeNull();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(roomPermission).toHaveFocus());
   });
 
   it('collapses home composer chips to semantic marks before words vanish from the accessibility tree', async () => {
@@ -60,33 +106,29 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(agentNextCss).toMatch(/\.an-chip-text/);
   });
 
-  it('merges model and thinking into one chip whose menu carries both sections', async () => {
+  it('uses the shared compact model control, with reasoning visible before the searchable catalog', async () => {
     const user = userEvent.setup();
-    renderHome({
-      modelReference: 'gpt/gpt-5.6-luna',
-      models: [model('gpt-5.6-luna', 'GPT-5.6 Luna')],
-    });
-
-    const trigger = await screen.findByRole('button', { name: '模型与推理 · GPT-5.6 Luna · 高' });
-    expect(screen.queryByRole('button', { name: /^模型 ·/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^推理强度 ·/ })).not.toBeInTheDocument();
-
+    renderHome({ modelReference: 'gpt/gpt-5.6-luna', models: [model('gpt-5.6-luna', 'GPT-5.6 Luna')] });
+    const trigger = await screen.findByRole('button', { name: /模型与推理：GPT-5.6 Luna.*高/ });
     await user.click(trigger);
-    const menu = screen.getByRole('menu', { name: '选择模型与推理强度' });
-    expect(within(menu).getByRole('group', { name: '模型' })).toBeInTheDocument();
-    expect(within(menu).getByRole('menuitemradio', { name: 'GPT-5.6 Luna' })).toBeChecked();
-    const thinkingSection = within(menu).getByRole('group', { name: '推理强度' });
-    await user.click(within(thinkingSection).getByRole('menuitemradio', { name: '中' }));
-
-    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
-    const updated = screen.getByRole('button', { name: '模型与推理 · GPT-5.6 Luna · 中' });
-    expect(updated).toBeInTheDocument();
-
+    let picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    expect(within(picker).queryByRole('listbox')).not.toBeInTheDocument();
+    await user.click(within(picker).getByRole('radio', { name: '中' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    const updated = screen.getByRole('button', { name: /模型与推理：GPT-5.6 Luna.*中/ });
     await user.click(updated);
-    expect(within(screen.getByRole('menu', { name: '选择模型与推理强度' }))
-      .getByRole('menuitemradio', { name: '中' })).toBeChecked();
+    picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    expect(within(picker).getByRole('radio', { name: '中' })).toBeChecked();
+    await user.click(within(picker).getByRole('button', { name: /更换模型/ }));
+    expect(within(picker).getByRole('searchbox', { name: '搜索模型' })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: '选择模型 GPT-5.6 Luna' })).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{Escape}');
-    expect(updated).toHaveFocus();
+    await waitFor(() => expect(updated).toHaveFocus());
+  });
+
+  it('does not animate an active Room record as a running turn on the home list', () => {
+    const { container } = renderHome();
+    expect(container.querySelector('.an-recent-card.is-room .is-run')).toBeNull();
   });
 
   it('restores all four Session permission modes and submits the managed project scope', async () => {
@@ -454,6 +496,36 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(create?.body).not.toHaveProperty('executionMode');
   });
 
+  it('explains the default full permissions and starts Room without a project or another approval step', async () => {
+    const user = userEvent.setup();
+    const { transport } = renderHome({
+      personas: [persona('partner-1', '伙伴 1'), persona('partner-2', '伙伴 2')],
+      projectRoots: [],
+    });
+
+    await user.click(screen.getByRole('radio', { name: 'Room' }));
+    expect(screen.getByLabelText('Room 执行权限')).toHaveTextContent(
+      'Room、伙伴和 Tool Agent 均为全权限，开始后无需逐项批准。',
+    );
+    await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '直接协作完成任务');
+    await user.click(screen.getByRole('button', { name: '开始 Room' }));
+
+    await waitFor(() => expect(transport.requests.filter(
+      ({ request }) => request.pathId === 'agent.rooms.create',
+    )).toHaveLength(1));
+    expect(transport.requests.find(({ request }) => request.pathId === 'agent.rooms.create')?.request.body)
+      .toMatchObject({
+        workspaceRoots: ['/'],
+        permissionPolicy: {
+          room: { executionMode: 'full_trust' },
+          partner: { executionMode: 'inherit' },
+          toolAgent: { executionMode: 'inherit' },
+        },
+        dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+      });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('shows and submits all Room permission layers while allowing explicit child narrowing', async () => {
     const user = userEvent.setup();
     const { transport } = renderHome({
@@ -481,6 +553,11 @@ describe('PAWOS Agent Home 首屏合同', () => {
       screen.getByRole('combobox', { name: '卫星 / Tool Agent配置模式' }),
       'read_only',
     );
+    expect(screen.getByRole('button', { name: '权限 · 自定义 · 分层' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Room 执行权限')).toHaveTextContent(
+      'Room 全自动 · 伙伴 全权限 · Tool Agent 只读',
+    );
+    expect(screen.getByLabelText('Room 执行权限')).not.toHaveTextContent('均为全权限');
     await user.type(
       screen.getByRole('textbox', { name: '描述你想完成的工作' }),
       '按分层边界完成任务',
@@ -509,6 +586,7 @@ function renderHome({
   modelReference = 'inherit',
   models = [],
   personas = [],
+  projectRoots = ['/work/paw'],
   imagePaste,
   onCreated = vi.fn(),
   promptRoute = { ok: true },
@@ -516,6 +594,7 @@ function renderHome({
   modelReference?: string;
   models?: PiModelOption[];
   personas?: AgentPersonaV1[];
+  projectRoots?: string[];
   imagePaste?: (input: AgentImagePasteOptions) => PickedFile[] | Promise<PickedFile[]>;
   onCreated?: Parameters<typeof PawAgentHome>[0]['onCreated'];
   promptRoute?: MockRouteHandler;
@@ -559,7 +638,7 @@ function renderHome({
             defaultModel="gpt/gpt-5.6-luna"
             models={models}
             personas={personas}
-            projectRoots={['/work/paw']}
+            projectRoots={projectRoots}
             rooms={[room()]}
             sessions={[session()]}
             onCreated={onCreated}

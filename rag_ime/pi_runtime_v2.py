@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import queue
@@ -18,6 +19,7 @@ from pathlib import Path
 
 from .agent_events import AgentEventHub
 from .agent_plugin_usage import AgentPluginUsageStore
+from .agent_prompt_settings import normalize_prompt_settings
 from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_failure import classify_runtime_failure
 from .agent_tool_block_bridge import AgentToolBlockBuffer
@@ -64,6 +66,7 @@ from .pi_runtime_public import (
 from .pi_runtime_values import (
     PiRuntimeCommandAcceptanceUnknown,
     PiRuntimeCommandRejected,
+    PiRuntimeSettlementLookupTimeout,
     PiRuntimeTurnConflict,
     effective_thinking_level,
     as_integer,
@@ -127,11 +130,14 @@ def _bound_session_resource_snapshot(
         or (policy == "all_enabled" and refs)
     ):
         return None
-    return {
+    result: dict[str, object] = {
         "schemaVersion": _SESSION_RESOURCE_SNAPSHOT_SCHEMA,
         "skillPolicy": policy,
         "skillRefs": list(refs),
     }
+    if "promptSettings" in snapshot:
+        result["promptSettings"] = normalize_prompt_settings(snapshot["promptSettings"])
+    return result
 
 
 def _record_plugin_usage_notice(
@@ -461,9 +467,13 @@ class PiRuntimeHostClient:
         process = self._process
         if process is None or process.stdout is None:
             return
+        # stdin stays unbuffered for immediate control dispatch, but a raw
+        # FileIO.readline() reads large JSONL replies one byte at a time and
+        # holds every following command response behind optional inspection.
+        stdout = io.BufferedReader(process.stdout, buffer_size=64 * 1024)
         protocol_error = ""
         while True:
-            raw = process.stdout.readline()
+            raw = stdout.readline()
             if not raw:
                 break
             try:
@@ -597,6 +607,7 @@ class PiRuntimeHostManager:
         tool_manifest_provider: Callable[[Mapping[str, object]], list[Mapping[str, object]]] | None = None,
         skill_allowlist_provider: SkillAllowlistProvider | None = None,
         compaction_observer: CompactionObserver | None = None,
+        prompt_settings_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
@@ -608,6 +619,7 @@ class PiRuntimeHostManager:
         self._tool_manifest_provider = tool_manifest_provider
         self._skill_allowlist_provider = skill_allowlist_provider
         self._compaction_observer = compaction_observer
+        self._prompt_settings_provider = prompt_settings_provider
         self._lifecycle_lock = threading.RLock()
         self._model_catalog_lock = threading.Lock()
         self._lock = threading.RLock()
@@ -854,7 +866,12 @@ class PiRuntimeHostManager:
             normalized.append(skill_id)
         return normalized
 
-    def ensure(self, session_id: str) -> dict[str, object]:
+    def ensure(
+        self,
+        session_id: str,
+        *,
+        retire_recovered_turn: bool = True,
+    ) -> dict[str, object]:
         with self._lifecycle_lock:
             if not self.config.model_configured:
                 raise PiRuntimeError(
@@ -937,8 +954,20 @@ class PiRuntimeHostManager:
                 )
             else:
                 skill_allowlist = self._session_skill_allowlist(session)
+            prompt_settings: Mapping[str, object] | None = None
+            specialized_session = str(session.get("toolProfileVersion") or "") in {
+                "ime-surface-v1", "voice-refinement-v1", MEMORY_CURATION_TOOL_PROFILE,
+            }
+            if not specialized_session:
+                if resource_snapshot is not None:
+                    # A pre-existing binding without prompt settings keeps its original policy.
+                    prompt_settings = as_mapping(resource_snapshot.get("promptSettings")) or None
+                elif self._prompt_settings_provider is not None:
+                    prompt_settings = normalize_prompt_settings(self._prompt_settings_provider(session))
             if resource_snapshot is None:
                 resource_snapshot = _session_resource_snapshot(skill_allowlist)
+                if prompt_settings is not None:
+                    resource_snapshot["promptSettings"] = dict(prompt_settings)
             if (
                 skill_allowlist is not None
                 and not bool(self._host_capabilities.get("sessionSkillAllowlist"))
@@ -962,7 +991,7 @@ class PiRuntimeHostManager:
             params: dict[str, object] = {
                 "sessionId": session_id,
                 "cwd": cwd,
-                "systemPrompt": self.config.system_prompt_for_session(session),
+                "systemPrompt": self.config.system_prompt_for_session(session, prompt_settings=prompt_settings),
                 "toolManifest": (
                     []
                     if memory_curation_session
@@ -990,6 +1019,11 @@ class PiRuntimeHostManager:
             }
             if skill_allowlist is not None:
                 params["skillAllowlist"] = skill_allowlist
+            compaction_instructions = str((prompt_settings or {}).get("compactionInstructions") or "")
+            if prompt_settings is not None:
+                if not self._host_capabilities.get("sessionPromptSettings"):
+                    raise PiRuntimeError("Pi Runtime Host does not support prompt settings; update the managed Runtime before opening this Session")
+                params["compactionInstructions"] = compaction_instructions
             session_context = str(session.get("sessionContext") or "").strip()
             if session_context:
                 params["sessionContext"] = session_context
@@ -1079,7 +1113,8 @@ class PiRuntimeHostManager:
                 restored_turn.get("turnId") or ""
             ).strip()
             if (
-                snapshot.get("isIdle") is True
+                retire_recovered_turn
+                and snapshot.get("isIdle") is True
                 and restored_turn_id
             ):
                 # A restarted Host can restore Pi's durable turn binding after
@@ -1682,7 +1717,23 @@ class PiRuntimeHostManager:
             raise ValueError("client_message_id is required")
         bounded_timeout = max(1.0, min(3_600.0, float(timeout_seconds)))
         deadline = time.monotonic() + bounded_timeout
-        client = self._require_client()
+        with self._lifecycle_lock:
+            with self._lock:
+                resident = (
+                    normalized_session_id in self._open_sessions
+                    and self._client is not None
+                    and self._client.running
+                )
+            if not resident:
+                # Pi loads durable settlements when the original transcript
+                # is opened. Reading an accepted turn must not use admission's
+                # idle-turn retirement: an absent receipt remains unresolved.
+                self.ensure(normalized_session_id, retire_recovered_turn=False)
+            client = self._require_client()
+        if time.monotonic() >= deadline:
+            raise PiRuntimeSettlementLookupTimeout(
+                "Pi Session settlement restore timed out"
+            )
         settlement_get_timeout_retries = 0
         while True:
             remaining = deadline - time.monotonic()
@@ -1719,7 +1770,7 @@ class PiRuntimeHostManager:
                     settlement_get_timeout_retries += 1
                     continue
                 if lookup_timed_out:
-                    raise TimeoutError(
+                    raise PiRuntimeSettlementLookupTimeout(
                         "Pi Session settlement lookup timed out"
                     ) from exc
                 raise
@@ -1775,14 +1826,14 @@ class PiRuntimeHostManager:
                     ) from exc
                 raise
             except PiRuntimeError as exc:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        "Pi Session turn settlement timed out"
-                    ) from exc
                 if str(exc) == (
                     "Pi Runtime Host command timed out: "
                     "session.await_settled"
                 ):
+                    if time.monotonic() >= deadline:
+                        raise PiRuntimeSettlementLookupTimeout(
+                            "Pi Session settlement lookup timed out"
+                        ) from exc
                     continue
                 raise
 
@@ -1879,9 +1930,11 @@ class PiRuntimeHostManager:
             ):
                 return
             if state is None or state.turn_id != turn_id:
-                raise PiRuntimeError(
-                    "Pi settlement no longer matches the active product turn"
-                )
+                # An exact, validated durable receipt outlives the in-memory
+                # projection, and can be read while a later turn is active.
+                # Its consumer may recover the result without recreating old
+                # live events or changing that later turn's state.
+                return
             prior_messages = list(state.last_agent_messages)
             messages = prior_messages or (
                 [dict(final_message)] if final_message else []
@@ -3168,6 +3221,22 @@ class PiRuntimeHostManager:
             "message": normalized_message[:64_000],
             "timeoutMs": int(bounded_timeout * 1000),
         }
+        # Responses can overtake the secondary event-projection lane. Keep a
+        # request-local stream fence so the authoritative result can deliver
+        # its remaining suffix before cleanup, without draining unrelated
+        # Session events or blocking the stdout response reader.
+        stream_lock = threading.RLock()
+        streamed: list[str] = []
+        stream_finished = False
+
+        def deliver_delta(delta: str) -> None:
+            with stream_lock:
+                if stream_finished:
+                    return
+                streamed.append(delta)
+                if on_text_delta is not None:
+                    on_text_delta(delta)
+
         with self._lifecycle_lock:
             client = self._host()
             with self._lock:
@@ -3176,7 +3245,7 @@ class PiRuntimeHostManager:
                 self._cancel_idle_locked()
                 self._active_completion_ids.add(normalized_request_id)
                 if on_text_delta is not None:
-                    self._completion_sinks[normalized_request_id] = on_text_delta
+                    self._completion_sinks[normalized_request_id] = deliver_delta
                 self._status = "busy"
         try:
             result = client.send(
@@ -3184,6 +3253,17 @@ class PiRuntimeHostManager:
                 params,
                 timeout=bounded_timeout + 5.0,
             )
+            with stream_lock:
+                stream_finished = True
+                prefix = "".join(streamed)
+                final_text = str(result.get("text") or "")
+                if on_text_delta is not None and final_text.startswith(prefix):
+                    suffix = final_text[len(prefix):]
+                    if suffix:
+                        try:
+                            on_text_delta(suffix)
+                        except Exception:
+                            pass
             return result
         except PiRuntimeError as exc:
             if str(exc) == "Pi Runtime Host command timed out: completion.once":
@@ -3194,6 +3274,8 @@ class PiRuntimeHostManager:
                 )
             raise
         finally:
+            with stream_lock:
+                stream_finished = True
             with self._lock:
                 self._active_completion_ids.discard(normalized_request_id)
                 self._completion_sinks.pop(normalized_request_id, None)
@@ -4152,37 +4234,54 @@ class PiRuntimeHostManager:
                 and (session_id, turn_id) in self._retired_host_turns
             ):
                 return
-            state = self._states.setdefault(session_id, _HostedSessionState())
+            state = self._states.get(session_id)
             if (
                 turn_id
                 and not allow_retired_turn
+                and state is not None
                 and turn_id in state.retired_turn_ids
             ):
                 return
-            if turn_id:
-                state.turn_id = turn_id
-                if state.abort_pending_admission:
-                    # Stop can reach Pi before PAW receives prompt's turnId.
-                    # Fence the first Host event for that admission as aborted
-                    # so an early agent_settled cannot be projected completed.
-                    state.abort_requested_turn_id = turn_id
-            if client_message_id:
-                state.client_message_id = client_message_id
-            if (
-                turn_id
-                and client_message_id
-                and state.prompt_admission_in_flight
-                and state.admission_client_message_id == client_message_id
-            ):
-                # Any correlated Host event is durable acceptance evidence.
-                # This also closes an admission whose command ACK was lost,
-                # without waiting for an HTTP retry or guessing by text/time.
-                state.prompt_admission_in_flight = False
-                state.admission_client_message_id = ""
-                state.abort_pending_admission = False
-                state.admission_abort_dispatched = False
-                state.prompt_dispatched = False
-                state.prompt_dispatch_signal.set()
+            # Queue notifications are observations, including after opening a
+            # historical Session. Their correlation ids cannot admit a prompt
+            # or reopen/replace a live turn; terminal fences still apply.
+            if event_type != "queue_update":
+                state = self._states.setdefault(session_id, _HostedSessionState())
+                if turn_id:
+                    state.turn_id = turn_id
+                    if state.abort_pending_admission:
+                        # Stop can reach Pi before PAW receives prompt's turnId.
+                        # Fence the first Host event for that admission as aborted
+                        # so an early agent_settled cannot be projected completed.
+                        state.abort_requested_turn_id = turn_id
+                if client_message_id:
+                    state.client_message_id = client_message_id
+                if (
+                    turn_id
+                    and client_message_id
+                    and state.prompt_admission_in_flight
+                    and state.admission_client_message_id == client_message_id
+                ):
+                    # A correlated execution event is durable acceptance evidence.
+                    # This also closes an admission whose command ACK was lost,
+                    # without waiting for an HTTP retry or guessing by text/time.
+                    state.prompt_admission_in_flight = False
+                    state.admission_client_message_id = ""
+                    state.abort_pending_admission = False
+                    state.admission_abort_dispatched = False
+                    state.prompt_dispatched = False
+                    state.prompt_dispatch_signal.set()
+        if event_type == "queue_update":
+            self.events.publish(
+                session_id,
+                "message_queue_updated",
+                {
+                    "steering": public_message_queue(raw.get("steering")),
+                    "followUp": public_message_queue(raw.get("followUp")),
+                },
+                turn_id=turn_id,
+            )
+            return
         if event_type == "message_start":
             raw_message = as_mapping(raw.get("message"))
             if str(raw_message.get("role") or "").lower() == "assistant":
@@ -4332,17 +4431,6 @@ class PiRuntimeHostManager:
                         if state.source_loop_id
                         else {}
                     ),
-                },
-                turn_id=turn_id,
-            )
-            return
-        if event_type == "queue_update":
-            self.events.publish(
-                session_id,
-                "message_queue_updated",
-                {
-                    "steering": public_message_queue(raw.get("steering")),
-                    "followUp": public_message_queue(raw.get("followUp")),
                 },
                 turn_id=turn_id,
             )

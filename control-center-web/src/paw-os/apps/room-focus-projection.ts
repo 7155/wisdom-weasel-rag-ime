@@ -137,6 +137,15 @@ export interface RoomFocusPacket {
   /** Present on real routing decisions: how this assignment was made. */
   dispatchPlan?: RoomDispatchPlan;
   refs: string[];
+  /** Durable direct-message identity; multiple delivery events are one message. */
+  intercomId?: string;
+  replyToPacketId?: string;
+  receiptIds?: string[];
+  deliveredAtMs?: number;
+  repliedAtMs?: number;
+  updatedAtMs?: number;
+  error?: string;
+  scope?: 'recent-room';
 }
 
 export interface RoomFocusProjection {
@@ -511,8 +520,33 @@ function focusFlowPackets(
     [participant.id, roomFocusCelestialName(participant.ordinal)]
   )));
   for (const activity of activities) {
-    const kind = roomActivityFlowKind(activity);
+    // The reducer groups intercom activities under kind=dispatch for legacy
+    // activity presentation; the producer's activityKind is more specific.
+    const kind = stringValue(activity.payload.activityKind) === 'intercom' ? 'intercom' : roomActivityFlowKind(activity);
     if (!kind) continue;
+    /* Production intercom events keep the endpoints/content inside message.
+       Never turn a real partner-to-partner delivery into root -> recipient. */
+    const direct = kind === 'intercom' ? recordValue(activity.payload.message) : {};
+    if (stringValue(direct.id) && stringValue(direct.sourceParticipantId) && stringValue(direct.targetParticipantId)) {
+      packets.push({
+        id: `intercom:${stringValue(direct.id)}`,
+        intercomId: stringValue(direct.id),
+        sourceParticipantId: stringValue(direct.sourceParticipantId),
+        targetParticipantIds: [stringValue(direct.targetParticipantId)],
+        kind: direct.kind === 'ask' ? 'question' : direct.kind === 'reply' ? 'answer' : 'intercom',
+        summary: stringValue(direct.content) || activity.summary,
+        status: stringValue(direct.status) || stringValue(activity.payload.phase) || activity.status,
+        createdAtMs: activity.createdAtMs,
+        updatedAtMs: activity.updatedAtMs ?? activity.createdAtMs,
+        sequence: activity.sequence ?? activity.createdAtMs,
+        ...(stringValue(direct.replyTo) ? { replyToPacketId: `intercom:${stringValue(direct.replyTo)}` } : {}),
+        ...(stringValue(direct.workItemId) ? { workItemId: stringValue(direct.workItemId) } : {}),
+        ...(stringValue(direct.error) ? { error: stringValue(direct.error) } : {}),
+        receiptIds: [activity.id],
+        refs: roomFlowRefs(activity.payload),
+      });
+      continue;
+    }
     const review = kind === 'review' ? roomWorkReviewFlow(activity) : undefined;
     const plan = kind === 'dispatch' ? roomDispatchPlanFromActivity(activity) : undefined;
     const isApproval = kind === 'approval';
@@ -559,9 +593,17 @@ function focusFlowPackets(
     const packet = packetFromMessage(message, projection);
     if (packet) packets.push(packet);
   }
-  return packets
-    .sort((left, right) => left.sequence - right.sequence || left.createdAtMs - right.createdAtMs)
-    .filter((packet, index, all) => all.findIndex((candidate) => candidate.id === packet.id) === index);
+  const unique = new Map<string, RoomFocusPacket>();
+  for (const packet of packets.sort((left, right) => left.sequence - right.sequence || left.createdAtMs - right.createdAtMs)) {
+    const previous = unique.get(packet.id);
+    unique.set(packet.id, previous?.intercomId ? {
+      ...packet,
+      createdAtMs: previous.createdAtMs,
+      sequence: previous.sequence,
+      receiptIds: [...new Set([...(previous.receiptIds ?? []), ...(packet.receiptIds ?? [])])],
+    } : packet);
+  }
+  return [...unique.values()];
 }
 
 /** A review relation must name its counterpart in a bounded event field. Do
@@ -605,6 +647,7 @@ function packetFromMessage(
     createdAtMs: message.createdAtMs,
     sequence: message.sequence ?? message.createdAtMs,
     dispatchId: message.dispatchId,
+    ...(message.answerToPostId ? { replyToPacketId: `message:${message.answerToPostId}` } : {}),
     refs: messagePacketRefs(message),
   };
 }

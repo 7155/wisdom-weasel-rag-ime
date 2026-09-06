@@ -5,6 +5,8 @@ import json
 import unittest
 from pathlib import Path
 
+from tests.frozen_rag_replay import frozen_source_sha256
+
 from scripts.run_rag_agent_ablation import (
     _LUNA_PROMPT_ONLY_V4_PROFILE,
     _LUNA_PROMPT_ONLY_V5_PROFILE,
@@ -116,8 +118,10 @@ class EnterpriseRagLunaPromptV5Tests(unittest.TestCase):
             hashlib.sha256(_LUNA_PROMPT_ONLY_V5_RULE.encode("utf-8")).hexdigest(),
             receipt["candidate"]["ruleSha256"],
         )
+        # This historical preflight binds its original runtime contract, not
+        # future edits to the Runner or Host. Keep the receipt immutable.
         runtime_files = {
-            str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+            str(path.relative_to(ROOT)): frozen_source_sha256(str(path.relative_to(ROOT)))
             for path in _RUNTIME_CONTRACT_PATHS
         }
         self.assertEqual(runtime_files, receipt["frozenInputs"]["runtimeContractFiles"])

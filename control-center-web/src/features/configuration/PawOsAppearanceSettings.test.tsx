@@ -3,30 +3,61 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MotionProvider } from '@/design/motion';
 import { PAW_OS_THEME_STORAGE_KEY, PawOsAppearanceProvider } from '@/design/paw-os-themes';
+import { ThemeProvider } from '@/design/themes';
 import { pawOsAppRegistry } from '@/features/paw-os/model/app-registry';
 import { PawOsAppearanceSettings } from './PawOsAppearanceSettings';
 
 function renderAppearance() {
   return render(
-    <PawOsAppearanceProvider>
-      <MotionProvider>
-        <PawOsAppearanceSettings />
-      </MotionProvider>
-    </PawOsAppearanceProvider>,
+    <ThemeProvider>
+      <PawOsAppearanceProvider>
+        <MotionProvider>
+          <PawOsAppearanceSettings />
+        </MotionProvider>
+      </PawOsAppearanceProvider>
+    </ThemeProvider>,
   );
 }
 
 describe('PAWOS appearance settings', () => {
   beforeEach(() => window.localStorage.clear());
-  afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  afterEach(() => {
+    cleanup();
+    delete document.documentElement.dataset.theme;
+    document.documentElement.style.removeProperty('color-scheme');
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
-  it('presents the single bright theme without inventing deferred variants', () => {
+  it('offers system, light, and dark choices and reflects the resolved theme', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem('rag-ime-control-theme', 'dark');
+    renderAppearance();
+
+    const themes = screen.getByRole('radiogroup', { name: 'PAWOS 主题' });
+    expect(within(themes).getAllByRole('radio')).toHaveLength(3);
+    expect(within(themes).getByDisplayValue('dark')).toBeChecked();
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    expect(screen.getByText('当前生效：深色')).toBeInTheDocument();
+
+    await user.click(within(themes).getByDisplayValue('light'));
+
+    expect(within(themes).getByDisplayValue('light')).toBeChecked();
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    expect(window.localStorage.getItem('rag-ime-control-theme')).toBe('light');
+
+    await user.click(within(themes).getByDisplayValue('system'));
+    expect(window.localStorage.getItem('rag-ime-control-theme')).toBe('system');
+    expect(screen.getByText('当前生效：浅色（跟随系统设置）')).toBeInTheDocument();
+  });
+
+  it('keeps the PAWOS appearance identity storage independent from the global theme', () => {
     window.localStorage.setItem(PAW_OS_THEME_STORAGE_KEY, 'ink-paper');
     renderAppearance();
 
     const themes = screen.getByRole('radiogroup', { name: 'PAWOS 主题' });
-    expect(within(themes).getAllByRole('radio')).toHaveLength(1);
-    expect(within(themes).getByRole('radio', { name: /默认明亮/ })).toBeChecked();
+    expect(within(themes).getByDisplayValue('system')).toBeChecked();
+    expect(window.localStorage.getItem(PAW_OS_THEME_STORAGE_KEY)).toBe('ink-paper');
     expect(screen.queryByRole('radio', { name: /墨纸工作台|蓝图系统|冰川玻璃/ })).not.toBeInTheDocument();
   });
 
@@ -37,13 +68,13 @@ describe('PAWOS appearance settings', () => {
     const motion = screen.getByRole('radiogroup', { name: '界面动效' });
     expect(within(motion).getAllByRole('radio')).toHaveLength(3);
     expect(within(motion).getByRole('radio', { name: /跟随系统/ })).toBeChecked();
-    expect(screen.getByRole('status')).toHaveTextContent('当前生效：完整动效（跟随系统设置）');
+    expect(screen.getByText('当前生效：完整动效（跟随系统设置）')).toBeInTheDocument();
 
     await user.click(within(motion).getByRole('radio', { name: /减少动效/ }));
 
     expect(within(motion).getByRole('radio', { name: /减少动效/ })).toBeChecked();
     expect(window.localStorage.getItem('rag-ime-control-motion')).toBe('reduce');
-    expect(screen.getByRole('status')).toHaveTextContent('当前生效：减少动效');
+    expect(screen.getByText('当前生效：减少动效')).toBeInTheDocument();
   });
 
   it('keeps the system reduce-motion request effective when full motion is selected', async () => {
@@ -64,7 +95,7 @@ describe('PAWOS appearance settings', () => {
     await user.click(within(motion).getByRole('radio', { name: /完整动效/ }));
 
     expect(within(motion).getByRole('radio', { name: /完整动效/ })).toBeChecked();
-    expect(screen.getByRole('status')).toHaveTextContent('当前生效：减少动效（系统设置优先）');
+    expect(screen.getByText('当前生效：减少动效（系统设置优先）')).toBeInTheDocument();
     expect(document.documentElement).toHaveAttribute('data-reduce-motion', 'true');
   });
 

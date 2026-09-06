@@ -55,17 +55,8 @@
    an-home 的 min-height 生效，整块表面作为兜底通过 an-home-root 整体滚动。 */
 .an-home-root { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: auto; background: var(--an-paper); }
 .an-home { position: relative; width: 100%; height: 100%; min-height: 520px; flex: 1; overflow: hidden; }
-.an-home-geo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-/* 装饰虚线环极缓慢地行进：桌面在呼吸，但不与任何真实状态混淆。 */
-.an-home-geo .an-geo-orbit { animation: an-orbit-march 90s linear infinite; }
-/* 装饰环只在获得焦点的窗口里花帧：失焦的 Agent 首页保持画面、停住动画。 */
-.paw-window-shell:not([data-active]) .an-home-geo .an-geo-orbit { animation-play-state: paused; }
 .an-home-wrap { position: relative; display: flex; width: min(780px, 100%); height: 100%; min-height: 0; margin: 0 auto; flex-direction: column; padding: 26px 32px 14px; }
-/* 开场编排：问候、标题、Composer、事实行依次落定，一次入场，不重播。 */
-.an-home-greet { display: flex; flex: none; align-items: center; gap: 10px; color: var(--an-ink-3); font-size: 12px; font-weight: 650; letter-spacing: .065em; animation: an-rise 400ms var(--an-ease-out) both; }
-.an-home-greet::before { width: 22px; height: 2px; background: var(--an-cobalt); content: ""; }
 .an-home-title { margin: 8px 0 18px; flex: none; font-size: clamp(24px, 3.4cqw, 30px); font-weight: 720; letter-spacing: -.03em; line-height: 1.16; animation: an-rise 440ms var(--an-ease-out) 45ms both; }
-.an-home-title em { color: var(--an-cobalt); font-style: normal; }
 .an-composer { position: relative; z-index: 4; flex: none; background: var(--an-paper-bright); border: 1px solid var(--an-rule); border-radius: 14px; box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 12px 30px rgba(24, 32, 43, .07); transition: border-color 160ms ease, box-shadow 180ms ease, transform 220ms var(--an-ease-out); animation: an-rise 480ms var(--an-ease-out) 90ms both; }
 .an-composer:focus-within { border-color: color-mix(in srgb, var(--an-cobalt) 64%, var(--an-rule)); box-shadow: 0 1px 2px rgba(24, 32, 43, .04), 0 14px 34px rgba(24, 32, 43, .09); }
 .an-composer textarea { display: block; width: 100%; min-height: 64px; max-height: 148px; padding: 13px 17px 9px; overflow-y: auto; field-sizing: content; resize: none; border: 0; outline: 0; background: transparent; color: var(--an-ink); font-size: 15px; line-height: 1.6; }
@@ -75,12 +66,12 @@
 .an-composer-foot {
   container: an-home-composer / inline-size;
   display: grid;
-  grid-template-columns: max-content repeat(3, minmax(0, 1fr)) 32px;
+  grid-template-columns: max-content max-content minmax(0, 1.5fr) minmax(0, 1fr) 32px;
   align-items: center;
   gap: 8px;
   min-height: 49px;
   padding: 8px 10px;
-  border-top: 1px solid var(--an-hairline);
+  border-top: 0;
 }
 .an-mode-seg,
 .an-seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--an-hairline); border-radius: 8px; background: var(--an-paper-soft); }
@@ -100,8 +91,8 @@
   height: 30px;
   padding: 0 10px;
   overflow: hidden;
-  border: 1px solid var(--an-hairline);
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: var(--an-paper);
   color: var(--an-ink-2);
   font-size: 12.5px;
@@ -122,18 +113,28 @@
 .an-send:hover:not(:disabled) { background: var(--an-cobalt); transform: translateY(-2px); }
 .an-send:active:not(:disabled) { transform: translateY(0) scale(.96); }
 .an-send:disabled { opacity: .34; }
-/* 锚定菜单向下展开：固定表面不滚动，Composer 靠近首屏上沿，向上弹出会被
-   表面上缘裁掉；向下是桌面菜单的自然方向，空间也真实存在。 */
-.an-menu { position: absolute; z-index: 40; top: calc(100% + 8px); left: 0; width: min(330px, calc(100cqw - 32px)); max-height: min(330px, 46cqh); overflow: auto; padding: 7px; border: 1px solid var(--an-rule); border-radius: 10px; background: var(--an-paper-bright); box-shadow: 0 18px 42px rgba(24, 32, 43, .15); animation: an-menu-in 180ms var(--an-ease-out) both; }
-.an-anchor:nth-last-of-type(-n + 2) .an-menu { right: 0; left: auto; }
-.an-menu-title,
-.an-menu-group { padding: 6px 9px 5px; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .07em; }
-.an-menu-item { display: flex; width: 100%; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; transition: background 120ms ease; }
-.an-menu-item:hover:not(:disabled) { background: var(--an-paper-soft); }
-.an-menu-item:disabled { opacity: .46; }
-.an-menu-item .mi-tt { display: block; color: var(--an-ink); font-size: 12.5px; font-weight: 650; }
-.an-menu-item .mi-sub { display: block; margin-top: 2px; overflow: hidden; color: var(--an-ink-3); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.an-menu-sep { height: 1px; margin: 6px 2px; background: var(--an-hairline); }
+/* Shared Radix portals escape the fixed Home surface. Collision-aware available
+   height keeps every permission and project reachable after a window resize. */
+.an-home-menu {
+  width: min(330px, calc(100vw - 16px));
+  max-height: min(440px, var(--radix-popper-available-height, calc(100vh - 16px)));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 7px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--an-paper-bright);
+  box-shadow: 0 12px 36px rgba(24, 32, 43, .18);
+}
+.an-home-menu__title { margin: 0; padding: 7px 9px; color: var(--an-ink-2); font-size: 12px; font-weight: 650; }
+.an-home-menu .an-home-menu__item { min-height: 34px; align-items: flex-start; gap: 8px; padding: 8px; white-space: normal; }
+.an-home-menu .an-home-menu__item:has(.ui-menu__indicator) { padding-left: 30px; }
+.an-home-menu__item > span:not(.ui-menu__indicator) { min-width: 0; }
+.an-home-menu__item .ui-menu__indicator { flex: none; margin-top: 2px; }
+.an-home-menu__item strong { display: block; color: var(--an-ink); font-size: 13px; font-weight: 650; }
+.an-home-menu__item small { display: block; margin-top: 3px; color: var(--an-ink-2); font-size: 12px; line-height: 1.5; }
+.an-home-menu__path { overflow-wrap: anywhere; }
+.an-home-menu__empty { margin: 4px 9px 10px; color: var(--an-ink-2); font-size: 12px; line-height: 1.5; }
 /* 快速开始：三枚可点的开场白，只预填输入框，绝不代发。 */
 .an-starters { display: flex; flex: none; flex-wrap: wrap; gap: 7px; margin: 11px 2px 0; animation: an-rise 420ms var(--an-ease-out) 140ms both; }
 .an-starter { display: inline-flex; align-items: center; min-height: 28px; padding: 3px 12px; border: 1px solid var(--an-hairline); border-radius: 999px; background: var(--an-paper-bright); color: var(--an-ink-2); font-size: 12.5px; font-weight: 600; transition: border-color 140ms ease, color 140ms ease, background 140ms ease, transform 160ms var(--an-spring); }
@@ -317,7 +318,7 @@
 .an-node > summary:hover,
 .an-node[data-expanded='true'] > summary { background: var(--an-paper-soft); }
 .an-node > summary:focus-visible { outline: 2px solid var(--an-cobalt); outline-offset: -3px; }
-.an-node .n-ord { min-width: 18px; flex: none; color: var(--an-ink-3); font-family: var(--an-mono); font-size: 11.5px; font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+.an-node .n-ord { min-width: 18px; flex: none; color: var(--an-ink-3); font-family: var(--an-mono); font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
 .an-disp { width: 10px; height: 10px; flex: none; border-radius: 2px; background: var(--an-ink); }
 .an-disp.is-omitted { border: 1px solid var(--an-ink-3); background: transparent; }
 .an-disp.is-redacted { border: 2px solid var(--an-yellow); border-radius: 50%; background: transparent; }
@@ -387,7 +388,6 @@
 .paw-agent-next *::-webkit-scrollbar { width: 9px; height: 9px; }
 .paw-agent-next *::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 9px; background: var(--an-rule-strong); background-clip: padding-box; }
 
-@keyframes an-menu-in { from { opacity: 0; transform: translateY(-5px) scale(.985); } to { opacity: 1; transform: none; } }
 @keyframes an-pulse { 50% { opacity: .34; transform: scale(.82); } }
 @keyframes an-spin { to { transform: rotate(360deg); } }
 @keyframes an-rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
@@ -483,14 +483,12 @@
 }
 
 :root[data-reduce-motion='true'] .paw-agent-next :is(
-  .an-home-greet,
   .an-home-title,
   .an-composer,
   .an-starters,
   .an-mode-brief,
   .an-home-section,
-  .an-home-foot,
-  .an-home-geo .an-geo-orbit
+  .an-home-foot
 ) { animation: none; }
 
 /* 证据复制：核对后的原文可以直接带走，不必全选整段可滚动 pre。
@@ -514,3 +512,26 @@
 .an-evidence-copy:hover { border-color: var(--an-rule-strong); color: var(--an-ink); }
 .an-evidence-copy[data-copied] { border-color: var(--an-teal); background: rgba(18, 138, 82, .08); color: var(--an-teal); }
 .an-evidence-actions { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+
+/* The Home and Session use one model control; its popover portals outside the
+   resizable window so the reasoning rail cannot be clipped by the composer. */
+.an-model-chip .agent-composer__picker-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-model-chip .agent-composer__picker-thinking { flex: none; color: var(--an-ink-3); font-size: 12px; }
+.an-home-shortcuts { margin-left: auto; color: #8c929b; font-size: 12px; }
+.an-home-shortcuts kbd { font: inherit; }
+.an-home-foot { border-top: 0; }
+.an-home-section h2::after { display: none; }
+.an-mode-brief { font-size: 12px; }
+.an-starters { gap: 4px; }
+.an-starter { border: 0; padding-inline: 10px; font-size: 12px; font-weight: 450; }
+.an-starter::before { display: none; }
+@container an-home-composer (max-width: 560px) {
+  .an-model-chip { max-width: none; }
+  .an-model-chip .agent-composer__picker-thinking { display: none; }
+}
+@container an-home-composer (max-width: 420px) {
+  .an-model-chip .agent-composer__picker-text { display: none; }
+}
+
+.an-model-chip .ui-button__label { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.an-composer textarea { font-size: 15px; }

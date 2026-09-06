@@ -33,6 +33,8 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { parsePiModelCatalogOptions, type PiModelOption } from '@/features/agent/model-catalog-options';
 import { roleItems, sessionItems, type SessionSummary } from '@/features/agent/types';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
+import { useRoomLiveStore } from '@/features/rooms/state/live-store';
+import { selectActivePublicRoomTurn, selectPublicRoomTurnOrder } from '@/features/rooms/runtime/room-execution-lanes';
 import { publicAgentErrorText } from '@/features/agent/public-error';
 import { evidenceEchoFocusFromRoute } from '@/features/evidence-echo/evidence-echo';
 import type { RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
@@ -551,12 +553,11 @@ function ProjectFolder({
         </WorkGroup> : null}
         {group.rooms.length ? <WorkGroup label="Room">
           {group.rooms.map((room) => (
-            <WorkRow
+            <RoomWorkRow
               active={selection.kind === 'room' && selection.id === room.id}
               key={room.id}
-              projection={roomFileProjection(room)}
+              room={room}
               onClick={() => onOpenRoom(room.id)}
-              title={room.title}
             />
           ))}
         </WorkGroup> : null}
@@ -570,6 +571,27 @@ type WorkFileProjection = {
   meta: string;
   state: 'attention' | 'complete' | 'neutral' | 'working';
 };
+
+function RoomWorkRow({ active, onClick, room }: { active: boolean; onClick: () => void; room: RoomSummary }) {
+  const live = useRoomLiveStore((state) => state.projections[room.id]);
+  const projection = roomFileProjection(room);
+  const latest = live && !live.needsSnapshot
+    ? live.turnsById[selectPublicRoomTurnOrder(live).at(-1) ?? '']
+    : undefined;
+  if (live && latest && room.status !== 'archived') {
+    const running = Boolean(selectActivePublicRoomTurn(live));
+    const status = running ? '协作中'
+      : latest.status === 'aborted' ? '本轮已停止'
+      : latest.status === 'failed' ? '本轮失败'
+      : latest.status === 'completed' ? '本轮已完成'
+      : latest.status === 'queued' ? '等待启动'
+      : '等待汇合';
+    projection.meta = `${status} · ${room.participants.length} 位伙伴 · ${relativeTime(room.updatedAtMs)}`;
+    projection.state = running ? 'working' : latest.status === 'failed' ? 'attention'
+      : ['completed', 'aborted'].includes(latest.status) ? 'complete' : 'neutral';
+  }
+  return <WorkRow active={active} onClick={onClick} projection={projection} title={room.title} />;
+}
 
 function WorkRow({ active, onClick, projection, title, trailing }: { active: boolean; onClick: () => void; projection: WorkFileProjection; title: string; trailing?: ReactNode }) {
   return <div className="paw-agent-row-shell" data-active={active || undefined} data-work-state={projection.state}><button aria-current={active ? 'page' : undefined} className="paw-agent-row" onClick={onClick} title={title} type="button"><FileText aria-hidden="true" size={15} /><span><strong>{title}</strong><small>{projection.meta}</small><small className="paw-agent-row__detail">{projection.detail}</small></span></button>{trailing}</div>;
@@ -720,14 +742,15 @@ function roomFileProjection(room: RoomSummary): WorkFileProjection {
   const progress = activeWork ? ` · ${activeWork} 项任务` : '';
   const focus = workItems?.slice().sort(compareWorkFilePriority)[0];
   const state = focus?.state === 'blocked' || focus?.state === 'failed' ? 'attention'
-    : focus && ['queued', 'active', 'review'].includes(focus.state) ? 'working'
     : focus?.state === 'done' || room.status === 'archived' ? 'complete'
     : 'neutral';
+  // A WorkItem records delivery, not Pi execution. Only a hydrated Room
+  // projection above can claim that a Root is running or terminal.
   const status = room.status === 'archived' ? '已归档'
     : state === 'attention' ? '需要处理'
-    : state === 'working' ? '进行中'
-    : state === 'complete' ? '已完成'
-    : focus?.state === 'cancelled' ? '已停止'
+    : activeWork ? '有待办'
+    : state === 'complete' ? '已有交付'
+    : focus?.state === 'cancelled' ? '任务已取消'
     : '就绪';
   const detail = workItems === undefined ? '任务进度不可用'
     : !focus ? '尚无任务'

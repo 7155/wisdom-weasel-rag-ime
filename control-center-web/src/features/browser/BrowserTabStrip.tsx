@@ -47,6 +47,8 @@ export function BrowserTabStrip({
   tabs: BrowserTabItem[];
 }) {
   const tabButtons = useRef(new Map<string, HTMLButtonElement>());
+  const newTabRef = useRef<HTMLButtonElement>(null);
+  const closingFocusedTabRef = useRef('');
   const activeTabId = tabs.find((tab) => tab.active)?.id ?? '';
 
   useEffect(() => {
@@ -55,6 +57,23 @@ export function BrowserTabStrip({
       active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
   }, [activeTabId]);
+
+  useEffect(() => {
+    const closingId = closingFocusedTabRef.current;
+    if (!closingId || tabs.some((tab) => tab.id === closingId)) return;
+    closingFocusedTabRef.current = '';
+    // An asynchronous close must not take focus back after the user has
+    // already moved elsewhere. Removed focused tabs leave focus on body.
+    if (document.activeElement !== document.body) return;
+    const nextTabId = activeTabId || tabs[0]?.id;
+    const nextTab = nextTabId ? tabButtons.current.get(nextTabId) : undefined;
+    (nextTab ?? newTabRef.current)?.focus();
+  }, [activeTabId, tabs]);
+
+  const requestClose = (tabId: string) => {
+    if (document.activeElement === tabButtons.current.get(tabId)) closingFocusedTabRef.current = tabId;
+    onClose(tabId);
+  };
 
   const selectByOffset = (index: number, key: string) => {
     const target = key === 'Home'
@@ -70,7 +89,7 @@ export function BrowserTabStrip({
   const tabKeyDown = (index: number) => (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'Delete') {
       event.preventDefault();
-      onClose(tabs[index].id);
+      requestClose(tabs[index].id);
       return;
     }
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -81,7 +100,7 @@ export function BrowserTabStrip({
   const middleClickClose = (tabId: string) => (event: MouseEvent<HTMLButtonElement>) => {
     if (event.button !== 1) return;
     event.preventDefault();
-    onClose(tabId);
+    requestClose(tabId);
   };
 
   return (
@@ -122,7 +141,7 @@ export function BrowserTabStrip({
               data-tab-close-label={tab.active ? '关闭标签页' : tab.title || '新标签页'}
               onClick={(event) => {
                 event.stopPropagation();
-                onClose(tab.id);
+                requestClose(tab.id);
               }}
               title={tab.active ? '关闭标签页（Delete）' : `关闭标签页：${tab.title || '新标签页'}`}
             >
@@ -136,6 +155,7 @@ export function BrowserTabStrip({
         className="paw-browser-new-tab"
         disabled={newTabDisabled}
         onClick={onNewTab}
+        ref={newTabRef}
         title="新建标签页"
         type="button"
       >

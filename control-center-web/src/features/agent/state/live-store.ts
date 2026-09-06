@@ -97,17 +97,12 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
           ...snapshot,
           messages: current.messageOrder
             .map((messageId) => current.messagesById[messageId])
-            .filter((message): message is NonNullable<typeof message> => Boolean(message)),
+            .filter((message): message is NonNullable<typeof message> => Boolean(message) && !message.id.startsWith('local:')),
         }
       : snapshot;
-    let projection = applyAgentSnapshot(current, normalizeLegacyHistoryTurns(hydratedSnapshot));
-    if (preserveHistory) {
-      projection = preserveConfirmedActivities(
-        current,
-        projection,
-        ['idle', 'ready', 'stopped', 'active'].includes(snapshot.status ?? ''),
-      );
-    }
+    const projection = applyAgentSnapshot(current, normalizeLegacyHistoryTurns(hydratedSnapshot), {
+      preserveConfirmedActivities: preserveHistory,
+    });
     // Several call sites can request a snapshot outside the shared live owner.
     // A response captured before an SSE terminal may therefore arrive later
     // with the same durable cursor but an older busy/live tail. Sequence
@@ -253,41 +248,6 @@ function normalizeLegacyHistoryTurns(snapshot: AgentSnapshot): AgentSnapshot {
   return changed ? { ...snapshot, messages } : snapshot;
 }
 
-function preserveConfirmedActivities(
-  current: AgentProjectionState,
-  projection: AgentProjectionState,
-  settleActive: boolean,
-): AgentProjectionState {
-  const next = {
-    ...projection,
-    turnsById: { ...projection.turnsById },
-    turnOrder: [...projection.turnOrder],
-    activitiesById: { ...projection.activitiesById },
-    activityOrder: [...projection.activityOrder],
-  };
-  for (const activityId of current.activityOrder) {
-    const activity = current.activitiesById[activityId];
-    if (!activity || next.activitiesById[activityId]) continue;
-    next.activitiesById[activityId] = settleActive && ['running', 'waiting'].includes(activity.status)
-      ? { ...activity, status: 'completed' }
-      : activity;
-    next.activityOrder.push(activityId);
-    let turn = next.turnsById[activity.turnId];
-    if (!turn) {
-      const previousTurn = current.turnsById[activity.turnId];
-      if (!previousTurn) continue;
-      turn = {
-        ...previousTurn,
-        messageIds: previousTurn.messageIds.filter((messageId) => Boolean(next.messagesById[messageId])),
-        activityIds: [],
-      };
-      next.turnsById[activity.turnId] = turn;
-      next.turnOrder.push(activity.turnId);
-    }
-    if (!turn.activityIds.includes(activityId)) turn.activityIds.push(activityId);
-  }
-  return next;
-}
 
 function isTerminalProjection(projection: AgentProjectionState): boolean {
   if (!['idle', 'ready', 'stopped', 'active', 'failed', 'faulted'].includes(projection.status)) {

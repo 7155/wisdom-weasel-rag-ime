@@ -5,7 +5,7 @@ import re
 import sqlite3
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date
@@ -4157,29 +4157,6 @@ def _session_payload(
         "surfaceKey": str(row["surface_key"]),
         "roleId": canonical_agent_role_id(row["role_id"]),
         "roleVersion": str(row["role_version"]),
-        "modelProfile": str(row["model_profile"] or "").strip() or "pi/default",
-        "thinkingLevel": str(row["thinking_level"] or ""),
-        "toolProfileVersion": str(row["tool_profile_version"]),
-        "executionMode": normalize_execution_mode(
-            row["execution_mode"],
-            tool_profile_version=row["tool_profile_version"],
-        ),
-        "roomExecutionMode": _normalize_room_execution_mode(row["room_execution_mode"]),
-        "workspaceScopeGranted": workspace_scope_is_granted(
-            {
-                "workspaceRoots": [str(value) for value in roots if str(value).strip()],
-                "toolProfileVersion": str(row["tool_profile_version"]),
-                "executionMode": normalize_execution_mode(
-                    row["execution_mode"],
-                    tool_profile_version=row["tool_profile_version"],
-                ),
-                "workspaceScopeSha256": str(row["workspace_scope_sha256"] or ""),
-                "workspaceScopeGrantedAtMs": int(row["workspace_scope_granted_at_ms"] or 0),
-            }
-        ),
-        "projectContextEnabled": bool(row["project_context_enabled"]),
-        "piSkillsEnabled": bool(row["pi_skills_enabled"]),
-        "codexSkillsEnabled": bool(row["codex_skills_enabled"]),
         "roleBookRevisionId": canonical_role_book_revision_id(
             row["role_book_revision_id"]
         ),

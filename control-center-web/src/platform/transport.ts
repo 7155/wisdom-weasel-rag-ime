@@ -243,6 +243,8 @@ export interface ExternalActionReceipt {
 
 export interface ControlTransport {
   readonly kind: ControlTransportKind;
+  /** Stable, non-secret endpoint identity for connection-scoped UI recovery. */
+  readonly connectionIdentity?: string;
   capabilities(): Promise<FrontendCapabilities>;
   request<Response = unknown>(request: ControlRequest): Promise<Response>;
   browserSnapshotImageUrl?(snapshotId: string): string;

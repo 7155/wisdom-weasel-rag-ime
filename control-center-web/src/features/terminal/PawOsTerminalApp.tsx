@@ -368,6 +368,7 @@ export function PawOsTerminalApp() {
     });
     terminal.open(host);
     terminalRef.current = terminal;
+    let current = true;
     let pendingInput = '';
     let inputTimer = 0;
     let lastSize = '';
@@ -378,12 +379,12 @@ export function PawOsTerminalApp() {
       pendingInput = '';
       if (!text) return;
       if (selectedStatusRef.current !== 'running') {
-        setInteractionError('这个终端已退出，输入没有发送。');
+        if (current) setInteractionError('这个终端已退出，输入没有发送。');
         return;
       }
       void transport.request({ pathId: 'terminal.session.write', body: { terminalId: selectedId, text } })
-        .then(() => setInteractionError(''))
-        .catch((error: unknown) => setInteractionError(publicError(error)));
+        .then(() => { if (current) setInteractionError(''); })
+        .catch((error: unknown) => { if (current) setInteractionError(publicError(error)); });
     };
     const dataSubscription = terminal.onData((data) => {
       pendingInput += data;
@@ -395,7 +396,7 @@ export function PawOsTerminalApp() {
       if (size === lastSize) return;
       lastSize = size;
       void transport.request({ pathId: 'terminal.session.resize', body: { terminalId: selectedId, cols: terminal.cols, rows: terminal.rows } })
-        .catch((error: unknown) => setInteractionError(publicError(error)));
+        .catch((error: unknown) => { if (current) setInteractionError(publicError(error)); });
     };
     const observer = new ResizeObserver(fitTerminal);
     observer.observe(host);
@@ -406,6 +407,9 @@ export function PawOsTerminalApp() {
     });
 
     return () => {
+      // Input belongs to its original PTY. Its late write/resize outcome must
+      // not replace an error or create a warning on the next selected tab.
+      current = false;
       if (inputTimer) window.clearTimeout(inputTimer);
       flushInput();
       window.cancelAnimationFrame(frame);
@@ -801,6 +805,12 @@ export function PawOsTerminalApp() {
             ) : null}
             {sessionsQuery.isPending ? (
               <div className="paw-terminal-console__empty" data-loading role="status"><LoaderCircle className="ui-spin" size={15} /><p>正在读取终端会话…</p></div>
+            ) : sessionsQuery.error && !sessionsQuery.data ? (
+              <div className="paw-terminal-console__empty">
+                <TriangleAlert aria-hidden="true" size={24} />
+                <p>终端会话暂时不可用</p>
+                <p className="paw-terminal-console__empty-hint">使用上方的重试读取已有会话，再继续查看输出。</p>
+              </div>
             ) : selected ? (
               <div aria-label="终端输入输出" className="paw-terminal-xterm" onClick={() => terminalRef.current?.focus()} ref={terminalHostRef} />
             ) : (

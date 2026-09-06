@@ -33,6 +33,11 @@ knowledge-ann = [
   "usearch>=2.23,<3",
 ]
 
+[dependency-groups]
+dev = [
+  "jsonschema>=4.0,<5",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

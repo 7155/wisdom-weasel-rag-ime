@@ -2249,11 +2249,16 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "act": "R2",
             },
         )
+        plugins = next(manifest for manifest in manifests if manifest["id"] == "plugins")
+        self.assertEqual(plugins["riskLevel"], "R2")
+        self.assertEqual(plugins["operationRisks"]["apply"], "R2")
+        self.assertEqual(plugins["operationRisks"]["catalog"], "R0")
         self.assertTrue(
             all(
                 manifest["riskLevel"] == "R0"
                 for manifest in manifests
                 if manifest["id"] not in {
+                    "plugins",
                     "input",
                     "voice",
                     "planning",
@@ -3773,7 +3778,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 )
                 auto_calls: list[dict[str, object]] = []
                 gateway.bind_auto_approval_executor(
-                    lambda approval: auto_calls.append(dict(approval)) or {}
+                    lambda approval, auto_calls=auto_calls: auto_calls.append(dict(approval)) or {}
                 )
 
                 with self.assertRaisesRegex(
@@ -5580,7 +5585,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                     )
         self.assertEqual(calls, [])
 
-    def test_agent_can_search_create_validate_and_propose_but_cannot_apply_a_package(self) -> None:
+    def test_agent_can_search_create_validate_and_propose_a_package(self) -> None:
         calls: list[tuple[str, object]] = []
 
         class _Extensions:
@@ -5639,6 +5644,14 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(calls[0], ("catalog", {}))
         self.assertEqual(calls[1][0], "create_package")
         self.assertEqual(
+            calls[1][1]["packageJson"],
+            {
+                "name": "@paw/log-helper",
+                "version": "1.0.0",
+                "pi": {"skills": ["skills/log-helper/SKILL.md"]},
+            },
+        )
+        self.assertEqual(
             calls[2][1]["packageSource"],
             "/managed/inbox/package-1",
         )
@@ -5649,7 +5662,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         plugin_manifest = next(
             item for item in self.gateway.manifests()["items"] if item["id"] == "plugins"
         )
-        self.assertNotIn("apply", plugin_manifest["operations"])
+        self.assertIn("apply", plugin_manifest["operations"])
         self.assertEqual(
             plugin_manifest["operations"],
             [
@@ -5663,6 +5676,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "propose_update",
                 "propose_rollback",
                 "propose_uninstall",
+                "apply",
             ],
         )
         runtime_plugin = next(
@@ -5682,6 +5696,61 @@ class ControlToolGatewayTests(unittest.TestCase):
             runtime_branches["propose_update"]["required"],
             ["op", "validationToken"],
         )
+        schema = runtime_plugin["parameters"]
+        for arguments in (
+            {"op": "validate", "packageSource": "npm:pi-web-search@1.4.0"},
+            {"op": "validate", "packageSource": "git:https://example.com/pi-package.git"},
+            {"op": "validate", "packageSource": "/managed/inbox/package-1"},
+            {"op": "validate", "catalogId": "@paw/session-workflow", "catalogVersion": "1.0.0"},
+            {"op": "validate", "sourcePath": "/managed/inbox/legacy-plugin"},
+            {
+                "op": "create_package", "draftId": "package-1",
+                "packageJson": {"name": "@paw/log-helper", "version": "1.0.0"},
+                "files": {"skills/log-helper/SKILL.md": "Help inspect logs."},
+            },
+        ):
+            with self.subTest(arguments=arguments):
+                validate_contract(arguments, schema)
+        for arguments in (
+            {"op": "validate"},
+            {"op": "validate", "packageSource": ""},
+            {"op": "validate", "sourcePath": "/legacy", "packageSource": "npm:pi-web-search@1.4.0"},
+            {"op": "validate", "packageSource": "npm:pi-web-search@1.4.0", "catalogId": "@paw/session-workflow"},
+            {"op": "create_package", "draftId": "package-1", "files": {}},
+            {"op": "validate", "packageSource": "npm:pi-web-search@1.4.0", "unknownSource": "ignored"},
+        ):
+            with self.subTest(invalid_arguments=arguments), self.assertRaises(ValueError):
+                validate_contract(arguments, schema)
+
+    def test_agent_applies_exact_plugin_preview_through_existing_session_authority(self) -> None:
+        applied = []
+
+        class _Extensions:
+            def inspect_preview(self, payload):
+                return {"action": "uninstall", "pluginId": "example.plugin", "displayName": "Example"}
+
+            def apply(self, payload):
+                applied.append(dict(payload))
+                return {"ok": True, "receipt": {"action": "uninstall", "receiptId": "plugin:uninstall:1"}}
+
+        self.gateway.extensions = _Extensions()
+        prepared = self.gateway.execute(self._tool_call(
+            "plugins", "apply", previewToken="preview-exact", payloadSha256="a" * 64,
+        ))["result"]
+        self.assertEqual(applied, [])
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"], approved=True, payload_sha256=approval["payloadSha256"],
+        )
+        result = self.gateway.apply_approval(decided)
+        self.assertEqual(result["receipt"]["action"], "uninstall")
+        self.assertEqual(applied, [{"previewToken": "preview-exact", "payloadSha256": "a" * 64, "confirmText": "apply"}])
+        readonly = self.store.create(title="Read only", execution_mode="read_only", created_at_ms=3)
+        with self.assertRaises(ValueError):
+            self.gateway.execute({**self._tool_call(
+                "plugins", "apply", previewToken="preview-exact", payloadSha256="a" * 64,
+            ), "sessionId": readonly["id"]})
+        self.assertEqual(len(applied), 1)
 
     def test_agent_can_propose_plugin_lifecycle_previews_without_applying_them(self) -> None:
         calls: list[dict[str, object]] = []

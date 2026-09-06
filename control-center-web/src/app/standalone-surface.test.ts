@@ -5,6 +5,11 @@ import {
 } from './standalone-surface';
 
 describe('standaloneSurfaceForPath', () => {
+  it('opens a compact screen conversation without creating another desktop', () => {
+    expect(standaloneSurfaceForPath('/screen-assistant')).toBe('screen-assistant');
+    expect(standaloneSurfaceForPath('/screen-assistant/')).toBe('screen-assistant');
+    expect(standaloneSurfaceForPath('/screen-assistant-extra')).toBeNull();
+  });
   it('owns the Evolution Report as a document path outside the PAWOS desktop', () => {
     expect(EVOLUTION_REPORT_PATH).toBe('/evolution-report');
     expect(standaloneSurfaceForPath('/evolution-report')).toBe('evolution-report');

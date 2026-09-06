@@ -368,16 +368,14 @@ describe('PluginsFeature', () => {
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.tools.list')).toHaveLength(before + 1));
   });
 
-  it('opens the project Pi skill with a search-first create-if-missing request', async () => {
+  it('opens the in-OS studio from the installed capability page', async () => {
     const user = userEvent.setup();
     renderPlugins();
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
     await user.click(await screen.findByRole('button', { name: '获取或制作能力' }));
 
-    expect(screen.getByTestId('test-location')).toHaveTextContent('/agent?draft=');
-    expect(screen.getByTestId('test-location')).toHaveTextContent('%2Fskill%3Aplugin-creator');
-    expect(screen.getByTestId('test-location')).toHaveTextContent('%E5%85%88%E6%90%9C%E7%B4%A2%E5%B8%82%E5%9C%BA');
-    expect(screen.getByTestId('test-location')).toHaveTextContent('%E4%B8%8D%E8%A6%81%E5%A3%B0%E7%A7%B0%E5%B7%B2%E7%BB%8F%E5%AE%89%E8%A3%85');
+    expect(screen.getByTestId('test-location')).toHaveTextContent('/plugins?view=studio');
+    expect(screen.getByRole('region', { name: '制作 App 与插件' })).toBeInTheDocument();
   });
 
   it('resolves an npm Pi Package and stops at the product confirmation card', async () => {

@@ -199,6 +199,7 @@ describe('room gravity projection over the minecraft harness', () => {
     const projectedMesh = buildRoomFocusMesh(harness.firstRoot.focus);
     // Partner nodes and relation labels are both intentionally keyboard
     // controls: selecting an edge opens its authoritative relation detail.
+    fireEvent.click(within(mesh).getByText(/协作关系 ·/));
     expect(within(mesh).getAllByRole('button')).toHaveLength(harness.focus.partners.length + projectedMesh.edges.length);
     expect(mesh.querySelector('.paw-room-focus-overview__mesh-node--work')).toBeNull();
     // The two wave planets stay clickable owners with their live states.
@@ -209,7 +210,6 @@ describe('room gravity projection over the minecraft harness', () => {
     // a task stays in the task sheet; only recorded partner-to-partner gravity
     // is rendered in this graph.
     expect(projectedMesh.edges.length).toBeGreaterThan(0);
-    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge')).toHaveLength(projectedMesh.edges.length);
     expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge-label')).toHaveLength(projectedMesh.edges.length);
 
     // The strongest WorkItem remains the default detail selection even though

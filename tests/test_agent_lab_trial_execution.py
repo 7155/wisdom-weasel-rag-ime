@@ -236,11 +236,11 @@ class AgentLabTrialExecutionTests(unittest.TestCase):
     def test_failed_abort_or_cleanup_timeout_stays_interrupted_not_cancelled(self):
         for index, hook_fails in enumerate((True, False)):
             entered, finish_allowed = threading.Event(), threading.Event()
-            def abort():
+            def abort(finish_allowed=finish_allowed, hook_fails=hook_fails):
                 finish_allowed.set()
                 if hook_fails:
                     raise RuntimeError("private-sentinel")
-            def execute(_, observer, cancelled):
+            def execute(_, observer, cancelled, entered=entered, finish_allowed=finish_allowed, hook_fails=hook_fails, abort=abort):
                 observer.bind_session("uncertain-session", cancel=abort)
                 entered.set()
                 self.assertTrue(finish_allowed.wait(3))

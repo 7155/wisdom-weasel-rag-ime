@@ -80,15 +80,18 @@ describe('PawWorkDirectoryProvider', () => {
     await flushRequests();
     expect(requestCount(transport, 'agent.sessions.list')).toBe(1);
 
-    setDocumentVisibility('hidden');
+    act(() => setDocumentVisibility('hidden'));
+    expect(screen.getByTestId('directory-state')).toHaveTextContent('stale:');
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(requestCount(transport, 'agent.sessions.list')).toBe(1);
     fireEvent.click(screen.getByRole('button', { name: '刷新目录状态' }));
     await flushRequests();
     expect(requestCount(transport, 'agent.sessions.list')).toBe(1);
 
-    setDocumentVisibility('visible');
+    act(() => setDocumentVisibility('visible'));
+    expect(screen.getByTestId('directory-state')).toHaveTextContent('stale:');
     await flushRequests();
+    expect(screen.getByTestId('directory-state')).toHaveTextContent('fresh:');
     expect(requestCount(transport, 'agent.sessions.list')).toBe(2);
     expect(requestCount(transport, 'agent.rooms.list')).toBe(2);
     await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });

@@ -24,13 +24,14 @@ that lose attribution, verifier authority, or proof boundaries.
   },
   "candidateChange": {
     "summary": "One bounded candidate change.",
+    "targetObject": "prompt",
     "candidateType": "single_factor",
     "effectStatus": "improved",
     "targetMetric": "verifier_pass_rate",
     "expectedDirection": "max",
-    "validationSplitRef": "validation:new-split",
+    "validationSplitRef": "validation:same-frozen-case-set",
     "sandboxRef": "sandbox:fresh-run",
-    "authorizationStatus": "explicit_approval_required"
+    "authorizationStatus": "bound_user_dispatch"
   },
   "after": {
     "runRef": "eval-run:after",
@@ -88,6 +89,13 @@ that lose attribution, verifier authority, or proof boundaries.
 When no after run is authorized, leave the candidate unapplied, keep after and
 delta unverified in the product projection, and write the STAR result as a
 diagnosis/proposal rather than a completed optimization.
+
+For an App-supplied `agentLabDispatch`, preserve its objective, scope, budget,
+stop conditions, selected repair operator and counterfactual probe identity in
+the candidate receipt. Record all tried candidate numbers, cumulative actual
+usage and the terminal reason. `no_improvement` is a completed search outcome;
+it does not promote a rejected candidate. `agent_observed` budget compliance
+must not be described as a Host-enforced cumulative cost ceiling.
 
 Keep `regressed`, `not_run`, and `unverified` candidates visible as rejected or
 pending evidence, but do not count them in a scene's successful optimization

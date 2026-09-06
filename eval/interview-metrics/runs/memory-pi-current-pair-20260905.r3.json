@@ -1,0 +1,403 @@
+{
+  "schemaVersion": "paw.memory-pi-trial-pair-evidence.v1",
+  "runId": "memory-pi-current-pair-20260905-r3",
+  "scope": "current-runtime synthetic validation through Pi Sessions",
+  "publicSafe": true,
+  "sourceFiles": [
+    {
+      "file": "pair-receipts.json",
+      "sha256": "afedb857a349c0f380b34b36f44b37af1a350afe1b47361559e0f8907fcb6b0d"
+    },
+    {
+      "file": "baseline-receipt.json",
+      "sha256": "4a77ba5eabb83c6b4889ff1065fe5a5abd70c5a2b2e17634d67180901e1ce2e6"
+    },
+    {
+      "file": "candidate-receipt.json",
+      "sha256": "db98c0a4689a0ccb573b115848bb51222205330dcded6856200b45521575baab"
+    },
+    {
+      "file": "reconciled-runtime-cost.json",
+      "sha256": "694b20a3435f8344aa10e84c50e1e8081ab9b68c3233e194e67e4986c0aa1192"
+    },
+    {
+      "file": "source-hashes.json",
+      "sha256": "04fbac6e5895cb087c5ff570171d2565f844fb35f29af590555f6ef855cfccb6"
+    },
+    {
+      "file": "model-catalog-pricing.json",
+      "sha256": "3814d435568c3a857c90cfbf20372adc335aac128b58147c26174031611fd5a2"
+    }
+  ],
+  "sourceCodeSha256": {
+    "rag_ime/agent_lab_memory_trial.py": "6a965e3c1689d98e6e6de22c4346f1308b202de537b92c689918a123adfc1e39",
+    "rag_ime/agent_lab_memory_pi.py": "5d88d3813678149f93f51c56f8ccab3c0a51c7ca634329c05b351fbfad8319eb",
+    "rag_ime/agent_lab_golden_pi.py": "ca6ddf5120262d7493739bb9b2e7e0c4c625eb348e5c6286cf5405f997801b4a",
+    "scripts/eval_personal_memory_luna.py": "9c51cfb5d27d0ceaf19c36b7093dfb9c24aa52a18c9ff8259fe2d0e4017d2b25",
+    "rag_ime/personal_memory_luna_evaluation.py": "61422542d509a0237a96308c3d7818ce656b9773c7c827b832d93cf0dfb5f620"
+  },
+  "fixture": {
+    "caseCount": 5,
+    "durableCaseCount": 4,
+    "nonMemoryControlCount": 1,
+    "sha256": "c0cfdaf2429d6e1ac82847ed9efc8dc04fc33611082e8d03e4de7fbb77282fff",
+    "hashEncoding": "Trial prepare canonical UTF-8 JSON of SYNTHETIC_PERSONAL_MEMORY_RAG_CASES; sorted keys; compact separators; ensure_ascii=false"
+  },
+  "frozenControls": {
+    "contextProfile": "full-json-v1",
+    "embeddingMode": "local-hashing",
+    "evaluationMode": "synthetic-fixture",
+    "fixtureCaseCount": 5,
+    "personalMemoryQualityMeasured": false,
+    "promptContract": "standard-v1",
+    "provider": "openai-codex",
+    "sourceAssetId": "",
+    "thinkingLevel": "max"
+  },
+  "baseline": {
+    "model": "gpt-5.6-sol",
+    "trialId": "lab-trial:02764c0929934acb9f51e29855810a9d",
+    "reportRef": "memory-trial:348506b636e911047d1b5d925d6de8833fe9a19e2259b5f6743591a216477a61:report",
+    "sourceReceipt": "baseline-receipt.json",
+    "publicSpec": {
+      "contextProfile": "full-json-v1",
+      "embeddingMode": "local-hashing",
+      "evaluationMode": "synthetic-fixture",
+      "fixtureCaseCount": 5,
+      "model": "gpt-5.6-sol",
+      "personalMemoryQualityMeasured": false,
+      "promptContract": "standard-v1",
+      "provider": "openai-codex",
+      "sourceAssetId": "",
+      "thinkingLevel": "max"
+    },
+    "configSha256": "d88202c33893686a619a2a463ae14e3ddae1c5cf88a4b4179f25da5ad869ddf5",
+    "state": "completed",
+    "qualityVerdict": "pass",
+    "createdAtMs": 1788603849006,
+    "completedAtMs": 1788604014565,
+    "caseCount": 5,
+    "metrics": {
+      "curation": {
+        "sourceCount": 5,
+        "modelDecisionCount": 5,
+        "ok": true,
+        "currentAtomCount": 6,
+        "governedCurrentAtomCount": 6,
+        "legalLineageCurrentAtomCount": 6
+      },
+      "retrieval": {
+        "caseCount": 5,
+        "durableCaseCount": 4,
+        "passed": true,
+        "projectionFresh": true
+      },
+      "recovery": {
+        "rollbackPassed": true,
+        "rollbackRestoredBaseline": true,
+        "replayAttempted": true,
+        "replayPassed": true,
+        "replayReusedModelRequests": true
+      }
+    },
+    "runtimeRequestCount": 2,
+    "failedRequestCount": 0,
+    "sessionBindingsSha256": "8482b45ebeb5236b2fd89fd00a2f806d6607bd8070202432592ad2ce1c8fa13d",
+    "runtimeCostReceiptSha256": "3e2c529a7e8e69925ed53f671db02bb306323f2045352ae4a7053051bc263a7c",
+    "estimatedCostUsd": "0.163425"
+  },
+  "candidate": {
+    "model": "gpt-5.6-luna",
+    "trialId": "lab-trial:a7f5cc0651ba4707bb59abfce766972b",
+    "reportRef": "memory-trial:bd6260cfdfa02ef70b2ce6ff2f4093c8ea149db1d36f00c0ea60f8a1da9fa79f:report",
+    "sourceReceipt": "candidate-receipt.json",
+    "publicSpec": {
+      "contextProfile": "full-json-v1",
+      "embeddingMode": "local-hashing",
+      "evaluationMode": "synthetic-fixture",
+      "fixtureCaseCount": 5,
+      "model": "gpt-5.6-luna",
+      "personalMemoryQualityMeasured": false,
+      "promptContract": "standard-v1",
+      "provider": "openai-codex",
+      "sourceAssetId": "",
+      "thinkingLevel": "max"
+    },
+    "configSha256": "c6b682763a9470f0059a5838b51fb89563e0a5c2329bddc901f8fd537a649636",
+    "state": "completed",
+    "qualityVerdict": "pass",
+    "createdAtMs": 1788604015755,
+    "completedAtMs": 1788604098032,
+    "caseCount": 5,
+    "metrics": {
+      "curation": {
+        "sourceCount": 5,
+        "modelDecisionCount": 5,
+        "ok": true,
+        "currentAtomCount": 6,
+        "governedCurrentAtomCount": 6,
+        "legalLineageCurrentAtomCount": 6
+      },
+      "retrieval": {
+        "caseCount": 5,
+        "durableCaseCount": 4,
+        "passed": true,
+        "projectionFresh": true
+      },
+      "recovery": {
+        "rollbackPassed": true,
+        "rollbackRestoredBaseline": true,
+        "replayAttempted": true,
+        "replayPassed": true,
+        "replayReusedModelRequests": true
+      }
+    },
+    "runtimeRequestCount": 2,
+    "failedRequestCount": 0,
+    "sessionBindingsSha256": "896dcf63e58fcdf5838713e8060dabfddc0c98ebcebcb2f1596a209adb487f40",
+    "runtimeCostReceiptSha256": "8c56c6f9407ecc6d913741c520216d659a557224ed1d53304f20c11a0d94e6fb",
+    "estimatedCostUsd": "0.0071846"
+  },
+  "runtimeCostReceipt": {
+    "aggregate": {
+      "currency": "USD",
+      "failedRequestCount": 0,
+      "modelCount": 2,
+      "requestCount": 4,
+      "totalCostUsd": "0.1706096"
+    },
+    "authority": "runtime_cost_reconciled_estimate",
+    "boundary": "Sum of model-specific Runtime-reconciled estimates, including failed attempts; not a Provider bill. DB usage differences remain explicit.",
+    "perModel": [
+      {
+        "authority": "runtime_cost_reconciled",
+        "billing": {
+          "status": "not_provided"
+        },
+        "boundaries": [
+          "The estimate was recomputed from the hashed pricing source and reconciled to retained per-request Runtime cost receipts; it is not a provider bill.",
+          "No billed receipt was supplied; billing status remains not_provided.",
+          "No savings amount is inferred by this receipt."
+        ],
+        "estimate": {
+          "cachedInputCostUsd": "0",
+          "outputCostUsd": "0.0050028",
+          "totalCostUsd": "0.0071846",
+          "uncachedInputCostUsd": "0.0021818"
+        },
+        "pricingIdentity": {
+          "currency": "USD",
+          "model": "gpt-5.6-luna",
+          "pricingId": "pricing:sha256:c90db9955a6c0eac75e3b8f409aba6d9e7f91d194e51ee8659ec3a32864d32d3",
+          "provider": "openai-codex",
+          "publishedDate": "2026-09-05",
+          "rates": {
+            "cachedInputUsd": "0.02",
+            "outputUsd": "1.2",
+            "uncachedInputUsd": "0.2"
+          },
+          "sourceSha256": "3814d435568c3a857c90cfbf20372adc335aac128b58147c26174031611fd5a2",
+          "sourceUrl": "https://platform.openai.com/docs/pricing",
+          "unit": "per_million_tokens"
+        },
+        "receiptSha256": "8c56c6f9407ecc6d913741c520216d659a557224ed1d53304f20c11a0d94e6fb",
+        "runtimeCostReceipt": {
+          "databaseUsage": {
+            "cachedInputTokens": 0,
+            "outputTokens": 4169,
+            "uncachedInputTokens": 10909
+          },
+          "reportedCostUsd": {
+            "cacheRead": "0",
+            "input": "0.0021818",
+            "output": "0.0050028",
+            "total": "0.0071846"
+          },
+          "requestCount": 2,
+          "runtimeDbSha256": "9ac34983d75998810861ad590a2ceb92d3b33768f09ab9db7f4fcac6bbf60105",
+          "sourceSha256": "ab5502dc66bf35501c284e7d13afb9937f8203d675ee30076f46a233a6c95444",
+          "transcriptSha256s": [
+            "649ea3bfbc03336c42dc39644f550ea94539ed99d5a4a7c8d76799e0722d69fb",
+            "e4d896f887c7fe2b1174ec26e2957d86d1ddacd40dee01501534a6c3dce35ac3",
+            "5d412d2225fa193b9d4b62c3ce54f989df12255d00352e009d23536cf784dcfe",
+            "fe51b99657975845b0573613065257cb37706f44ff6f987a4aae3facb83afc35"
+          ]
+        },
+        "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+        "usage": {
+          "available": true,
+          "cachedInputTokens": 0,
+          "outputTokens": 4169,
+          "sourceRef": "runtime-cost:memory-pi-current-pair-20260905",
+          "sourceSha256": "ab5502dc66bf35501c284e7d13afb9937f8203d675ee30076f46a233a6c95444",
+          "uncachedInputTokens": 10909
+        }
+      },
+      {
+        "authority": "runtime_cost_reconciled",
+        "billing": {
+          "status": "not_provided"
+        },
+        "boundaries": [
+          "The estimate was recomputed from the hashed pricing source and reconciled to retained per-request Runtime cost receipts; it is not a provider bill.",
+          "No billed receipt was supplied; billing status remains not_provided.",
+          "No savings amount is inferred by this receipt."
+        ],
+        "estimate": {
+          "cachedInputCostUsd": "0",
+          "outputCostUsd": "0.10941",
+          "totalCostUsd": "0.163425",
+          "uncachedInputCostUsd": "0.054015"
+        },
+        "pricingIdentity": {
+          "currency": "USD",
+          "model": "gpt-5.6-sol",
+          "pricingId": "pricing:sha256:be688bbdfe45ea7092a118090ef1981ac57de631385e399be0158ca7bc1cd695",
+          "provider": "openai-codex",
+          "publishedDate": "2026-09-05",
+          "rates": {
+            "cachedInputUsd": "0.5",
+            "outputUsd": "30",
+            "uncachedInputUsd": "5"
+          },
+          "sourceSha256": "3814d435568c3a857c90cfbf20372adc335aac128b58147c26174031611fd5a2",
+          "sourceUrl": "https://platform.openai.com/docs/pricing",
+          "unit": "per_million_tokens"
+        },
+        "receiptSha256": "3e2c529a7e8e69925ed53f671db02bb306323f2045352ae4a7053051bc263a7c",
+        "runtimeCostReceipt": {
+          "databaseUsage": {
+            "cachedInputTokens": 0,
+            "outputTokens": 3647,
+            "uncachedInputTokens": 10803
+          },
+          "reportedCostUsd": {
+            "cacheRead": "0",
+            "input": "0.054015",
+            "output": "0.10941",
+            "total": "0.163425"
+          },
+          "requestCount": 2,
+          "runtimeDbSha256": "9ac34983d75998810861ad590a2ceb92d3b33768f09ab9db7f4fcac6bbf60105",
+          "sourceSha256": "35eb37acc92abf6eaa1c89b0ec2be92270641c8f6f386c3707e84b8a9caa9309",
+          "transcriptSha256s": [
+            "649ea3bfbc03336c42dc39644f550ea94539ed99d5a4a7c8d76799e0722d69fb",
+            "e4d896f887c7fe2b1174ec26e2957d86d1ddacd40dee01501534a6c3dce35ac3",
+            "5d412d2225fa193b9d4b62c3ce54f989df12255d00352e009d23536cf784dcfe",
+            "fe51b99657975845b0573613065257cb37706f44ff6f987a4aae3facb83afc35"
+          ]
+        },
+        "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+        "usage": {
+          "available": true,
+          "cachedInputTokens": 0,
+          "outputTokens": 3647,
+          "sourceRef": "runtime-cost:memory-pi-current-pair-20260905",
+          "sourceSha256": "35eb37acc92abf6eaa1c89b0ec2be92270641c8f6f386c3707e84b8a9caa9309",
+          "uncachedInputTokens": 10803
+        }
+      }
+    ],
+    "providerBillAvailable": false,
+    "reconciliation": [
+      {
+        "authority": "retained_transcript_per_request_cost",
+        "databaseUsage": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 10909,
+          "output": 4169
+        },
+        "failedRequestCount": 0,
+        "model": "gpt-5.6-luna",
+        "provider": "openai-codex",
+        "requestCount": 2,
+        "transcriptUsage": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 10909,
+          "output": 4169
+        },
+        "usageStatus": "matched"
+      },
+      {
+        "authority": "retained_transcript_per_request_cost",
+        "databaseUsage": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 10803,
+          "output": 3647
+        },
+        "failedRequestCount": 0,
+        "model": "gpt-5.6-sol",
+        "provider": "openai-codex",
+        "requestCount": 2,
+        "transcriptUsage": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 10803,
+          "output": 3647
+        },
+        "usageStatus": "matched"
+      }
+    ],
+    "runId": "memory-pi-current-pair-20260905",
+    "schemaVersion": "rag-ime.agent-lab-multi-model-cost-receipt.v1"
+  },
+  "pricingCatalog": {
+    "source": "Pi frozen build catalog",
+    "sourceSha256": "2712c2924a4a75213dddc743c0e5f08d50a781fe807f16d5afb5fb65b41c64c7",
+    "models": [
+      {
+        "id": "gpt-5.6-luna",
+        "provider": "openai-codex",
+        "cost": {
+          "input": 0.2,
+          "output": 1.2,
+          "cacheRead": 0.02,
+          "cacheWrite": 0.25
+        },
+        "tierInputTokensAbove": [
+          272000
+        ]
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "provider": "openai-codex",
+        "cost": {
+          "input": 5,
+          "output": 30,
+          "cacheRead": 0.5,
+          "cacheWrite": 6.25
+        },
+        "tierInputTokensAbove": [
+          272000
+        ]
+      }
+    ]
+  },
+  "comparison": {
+    "changedFactor": "model",
+    "qualityGatesEqual": true,
+    "estimatedCostUsdBefore": "0.163425",
+    "estimatedCostUsdAfter": "0.0071846",
+    "estimatedCostUsdDelta": "-0.1562404",
+    "costDecreasePercent": "95.60373259905155270001529754"
+  },
+  "boundaries": {
+    "syntheticFixture": true,
+    "heldOutEvaluated": false,
+    "personalMemoryQualityMeasured": false,
+    "productionMutationPerformed": false,
+    "installedAcceptanceEvaluated": false,
+    "providerBillAvailable": false,
+    "oldCliPairReproduced": false,
+    "latencyIsKeepGate": false,
+    "repeatedTrialsPerModel": 1
+  },
+  "notes": [
+    "A new Pi / standard-v1 pair; the retained CLI / concise-json-v1 pair is a different experiment.",
+    "Counts, aggregate lifecycle gates and pricing estimates are retained; no per-case answers or personal memory bodies are exported.",
+    "Pricing originates in the frozen Pi build catalog; the pricing URL in its receipt is a source label, not an independently verified provider bill."
+  ]
+}

@@ -1,9 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createPortal } from 'react-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { GlobalFeedbackProvider } from '@/components/feedback';
 import { MotionProvider } from '@/design/motion';
+import { ThemeProvider } from '@/design/themes';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawDesktopProvider } from '../runtime/desktop-context';
 import { pawApps, type PawAppId } from '../runtime/app-registry';
@@ -13,10 +15,26 @@ import { PawDesktop } from './PawDesktop';
 import desktopSource from './PawDesktop.tsx?raw';
 import wayfinderWorkSource from './PawWayfinderWork.tsx?raw';
 
+const pointerFixture = vi.hoisted(() => ({ role: undefined as string | undefined, portalled: false }));
+
+vi.mock('./PawWindowLayer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./PawWindowLayer')>();
+  const ActualPawWindowLayer = actual.PawWindowLayer;
+  return {
+    ...actual,
+    PawWindowLayer: () => {
+      const target = pointerFixture.role ? <div aria-label="Desktop pointer regression" role={pointerFixture.role}><span>Pointer target</span></div> : null;
+      return <><ActualPawWindowLayer />{target && pointerFixture.portalled ? createPortal(target, document.body) : target}</>;
+    },
+  };
+});
+
 const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate');
 const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, 'getAnimations');
 
 beforeEach(() => {
+  pointerFixture.role = undefined;
+  pointerFixture.portalled = false;
   window.localStorage.clear();
   Object.defineProperty(Element.prototype, 'animate', { configurable: true, value: vi.fn(() => ({ cancel: vi.fn() })) });
   Object.defineProperty(Element.prototype, 'getAnimations', { configurable: true, value: vi.fn(() => []) });
@@ -191,8 +209,9 @@ describe('PAWOS desktop', () => {
     }
     expect([...bands.keys()]).toEqual(['工作', '记忆与知识', '工具', '系统']);
     expect(bands.get('工作')).toEqual([
-      'project-workbench',
       'agent',
+      'eval-lab',
+      'project-workbench',
       ...pawApps.filter((app) => isPawExtensionAppId(app.id)).map((app) => app.id),
     ]);
     expect(bands.get('记忆与知识')).toEqual(['memory', 'knowledge']);
@@ -741,6 +760,7 @@ describe('PAWOS desktop', () => {
       return element!;
     }, { timeout: 2_500 });
     fireEvent.doubleClick(folder);
+    fireEvent.click(await screen.findByRole('button', { name: '文字列表' }, { timeout: 5000 }));
     const row = await waitFor(() => {
       const element = document.querySelector<HTMLButtonElement>('button[data-wayfinder-row]');
       expect(element).toBeTruthy();
@@ -926,6 +946,40 @@ describe('PAWOS desktop', () => {
     setItem.mockRestore();
   });
 
+  it.each(['menuitem', 'presentation'])('does not prevent or capture pointer presses from a body Portal (%s) in the desktop React tree', (role) => {
+    pointerFixture.role = role;
+    pointerFixture.portalled = true;
+    renderDesktop();
+    const viewport = screen.getByRole('main');
+    const target = screen.getByText('Pointer target');
+    const capture = vi.fn();
+    Object.defineProperty(viewport, 'setPointerCapture', { value: capture });
+    expect(document.body).toContainElement(target);
+    expect(viewport).not.toContainElement(target);
+
+    const accepted = fireEvent.pointerDown(target, { button: 0, pointerId: 8, bubbles: true, cancelable: true });
+    fireEvent.pointerUp(window, { pointerId: 8 });
+
+    expect({ prevented: !accepted, pointerCaptureCalls: capture.mock.calls }).toEqual({ prevented: false, pointerCaptureCalls: [] });
+    expect(screen.queryByTestId('paw-selection-lasso')).not.toBeInTheDocument();
+  });
+
+  it.each(['menuitem', 'listbox', 'dialog'])('does not start a lasso from an inline %s interaction', (role) => {
+    pointerFixture.role = role;
+    renderDesktop();
+    const viewport = screen.getByRole('main');
+    const target = screen.getByText('Pointer target');
+    const capture = vi.fn();
+    Object.defineProperty(viewport, 'setPointerCapture', { value: capture });
+    expect(viewport).toContainElement(target);
+
+    const accepted = fireEvent.pointerDown(target, { button: 0, pointerId: 9, bubbles: true, cancelable: true });
+    fireEvent.pointerUp(window, { pointerId: 9 });
+
+    expect({ prevented: !accepted, pointerCaptureCalls: capture.mock.calls }).toEqual({ prevented: false, pointerCaptureCalls: [] });
+    expect(screen.queryByTestId('paw-selection-lasso')).not.toBeInTheDocument();
+  });
+
   it('selects desktop Apps with a lasso instead of webpage text selection', () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -1030,13 +1084,15 @@ function renderDesktop(initialAppId?: PawAppId, transport = new MockControlTrans
   return render(
     <QueryClientProvider client={queryClient}>
       <ControlTransportProvider transport={transport}>
-        <MotionProvider>
-          <GlobalFeedbackProvider>
-            <PawDesktopProvider initialAppId={initialAppId}>
-              <PawDesktop />
-            </PawDesktopProvider>
-          </GlobalFeedbackProvider>
-        </MotionProvider>
+        <ThemeProvider>
+          <MotionProvider>
+            <GlobalFeedbackProvider>
+              <PawDesktopProvider initialAppId={initialAppId}>
+                <PawDesktop />
+              </PawDesktopProvider>
+            </GlobalFeedbackProvider>
+          </MotionProvider>
+        </ThemeProvider>
       </ControlTransportProvider>
     </QueryClientProvider>,
   );

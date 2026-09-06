@@ -92,6 +92,7 @@ export function PawWorkbenchDocumentLifecycle({
   const [sessionId, setSessionId] = useState('');
   const [sessionsPending, setSessionsPending] = useState(false);
   const [sessionsError, setSessionsError] = useState<unknown>(null);
+  const sessionReadRef = useRef(0);
   const [previewPending, setPreviewPending] = useState(false);
   const [previewError, setPreviewError] = useState<unknown>(null);
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
@@ -113,6 +114,7 @@ export function PawWorkbenchDocumentLifecycle({
     setSessionId('');
     setSessionsPending(false);
     setSessionsError(null);
+    sessionReadRef.current += 1;
     setPreviewPending(false);
     setPreviewError(null);
     setPreviewState(null);
@@ -142,35 +144,43 @@ export function PawWorkbenchDocumentLifecycle({
     }
   };
 
-  const openErase = () => {
+  const readEraseSessions = () => {
     if (!document || !access.erase) return;
-    setEraseOpen(true);
+    const readId = ++sessionReadRef.current;
     setSessionOptions([]);
     setSessionId('');
     setSessionsError(null);
     setPreviewError(null);
     setPreviewState(null);
-    setEraseConfirmation('');
     const capturedFence = fenceRef.current;
     setSessionsPending(true);
     void transport.request<AgentSessionListResponse>({
       pathId: 'agent.sessions.list',
       query: { limit: 200 },
     }).then((response) => {
-      if (!isCurrent(capturedFence)) return;
+      if (!isCurrent(capturedFence) || sessionReadRef.current !== readId) return;
       const options = conversationOptions(sessionItems(response).filter((item) => item.status !== 'archived'));
       setSessionOptions(options);
       setSessionId(options[0]?.value ?? '');
     }).catch((error: unknown) => {
-      if (isCurrent(capturedFence)) setSessionsError(error);
+      if (isCurrent(capturedFence) && sessionReadRef.current === readId) setSessionsError(error);
     }).finally(() => {
-      if (isCurrent(capturedFence)) setSessionsPending(false);
+      if (isCurrent(capturedFence) && sessionReadRef.current === readId) setSessionsPending(false);
     });
+  };
+
+  const openErase = () => {
+    if (!document || !access.erase) return;
+    setEraseOpen(true);
+    setEraseConfirmation('');
+    readEraseSessions();
   };
 
   const closeErase = (open: boolean) => {
     setEraseOpen(open);
     if (open) return;
+    sessionReadRef.current += 1;
+    setSessionsPending(false);
     setSessionOptions([]);
     setSessionId('');
     setSessionsError(null);
@@ -231,7 +241,6 @@ export function PawWorkbenchDocumentLifecycle({
     <section aria-label="工作文档生命周期" className="paw-wb-document-lifecycle" data-state={document.state}>
       <header className="paw-wb-document-lifecycle__header">
         <div>
-          <span className="paw-wb-document-lifecycle__eyebrow">生命周期</span>
           <h2>归档与恢复</h2>
           <p>每个动作都绑定当前文档、来源版本和 Runtime 收据。</p>
         </div>
@@ -345,7 +354,7 @@ export function PawWorkbenchDocumentLifecycle({
           </DialogHeader>
           <div className="paw-wb-document-lifecycle__erase-form">
             {sessionsError ? (
-              <InlineNotice title="暂时无法读取可用对话" tone="danger">重新读取不会清除任何内容。</InlineNotice>
+              <InlineNotice title="暂时无法读取可用对话" tone="danger"><p>重新读取后可继续选择接收审批的对话。</p><Button onClick={readEraseSessions} size="small" variant="quiet">重新读取可用对话</Button></InlineNotice>
             ) : sessionOptions.length ? (
               <Field
                 description="审批请求会绑定到所选 Agent Session。已归档对话不会出现在这里。"

@@ -1,0 +1,16 @@
+.scene-recipe__current { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; padding-top: 14px; }
+.scene-recipe__current > span:first-child { color: var(--lab-muted); font-size: 12px; }
+.scene-recipe__current > strong { font-size: 18px; font-weight: 600; }
+.scene-recipe__current > span:last-child { font-size: 13px; }
+.scene-recipe .scene-recipe__receipt { margin: 8px 0 28px; font-size: 12px; }
+.scene-recipe h4 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.scene-recipe__diff { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.6; text-align: left; }
+.scene-recipe__diff th, .scene-recipe__diff td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--lab-line); overflow-wrap: anywhere; }
+.scene-recipe__diff th { color: var(--lab-muted); font-weight: 400; }
+.scene-recipe__diff tbody th { width: 24%; }
+.scene-recipe__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.scene-recipe__recovery { margin-block: 12px; }
+.scene-recipe__details { margin-top: 24px; color: var(--lab-muted); font-size: 12px; }
+.scene-recipe__details > summary { width: fit-content; padding-block: 6px; cursor: pointer; }
+.scene-recipe .scene-recipe__details dl { margin-block: 8px; padding-block: 12px; gap: 12px; }
+.scene-recipe .scene-recipe__operation-error { color: var(--color-text); }

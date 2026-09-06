@@ -1887,6 +1887,7 @@ class AgentDelegationCoordinator:
         tool_gateway_url: str = "",
         tool_manifest_provider: ToolManifestProvider | None = None,
         compaction_observer: CompactionObserver | None = None,
+        prompt_settings_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
         artifact_root: str | Path | None = None,
         cancellation_grace_ms: int = _DEFAULT_CANCELLATION_GRACE_MS,
         subagent_session_retention_ms: int | None = None,
@@ -1922,6 +1923,7 @@ class AgentDelegationCoordinator:
             raise ValueError("delegated Tool gateway URL must not be empty")
         self._tool_manifest_provider = tool_manifest_provider
         self._compaction_observer = compaction_observer
+        self._prompt_settings_provider = prompt_settings_provider
         self._room_context_provider = room_context_provider
         self._model_route_provider = model_route_provider
         self._cancellation_grace_ms = max(10, min(int(cancellation_grace_ms), 30_000))
@@ -2088,18 +2090,36 @@ class AgentDelegationCoordinator:
         room_context: Mapping[str, object] | None = None
         room_permission_policy = None
         if self._room_context_provider is not None:
-            candidate_room_context = self._room_context_provider(parent_session_id)
+            # Private children are not Room participants. Resolve the policy
+            # through their owning participant instead of treating a missing
+            # child membership as a return to standalone template defaults.
+            policy_session_id = (
+                self._delegation_root_session_id(parent_session_id)
+                if parent_run is not None
+                else parent_session_id
+            )
+            candidate_room_context = self._room_context_provider(policy_session_id)
             if isinstance(candidate_room_context, Mapping):
                 room_context = candidate_room_context
                 room_permission_policy = _room_permission_policy(
                     room_context.get("permissionPolicy")
                 )
-                causal_metadata = _delegation_causal_metadata(
-                    {**causal_metadata, **room_context}
-                )
+                if parent_run is None:
+                    causal_metadata = _delegation_causal_metadata(
+                        {**causal_metadata, **room_context}
+                    )
+                # A nested child keeps its original dispatch receipt. Current
+                # Room membership/policy must not erase or rotate that identity.
         effective_room_execution_mode = _effective_room_execution_mode(
             room_permission_policy
         )
+        if parent_run is not None and effective_room_execution_mode is not None:
+            parent_mode = str(parent.get("executionMode") or READ_ONLY_EXECUTION_MODE)
+            if (
+                _ROOM_PERMISSION_MODE_RANK[parent_mode]
+                < _ROOM_PERMISSION_MODE_RANK[effective_room_execution_mode]
+            ):
+                effective_room_execution_mode = parent_mode
         if depth > 2:
             raise ValueError("subagent maximum depth is 2")
 
@@ -3667,6 +3687,7 @@ class AgentDelegationCoordinator:
                     tool_gateway_url=self._tool_gateway_url,
                     tool_manifest_provider=self._tool_manifest_provider,
                     compaction_observer=self._compaction_observer,
+                    prompt_settings_provider=self._prompt_settings_provider,
                 ),
                 purpose="delegated",
                 session_context_provider=lambda _session: context,

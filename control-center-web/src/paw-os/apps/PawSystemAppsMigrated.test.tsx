@@ -7,6 +7,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MotionProvider } from '@/design/motion';
 import { PawOsAppearanceProvider } from '@/design/paw-os-themes';
+import { ThemeProvider } from '@/design/themes';
 import { PawOsAppSurfaceProvider, PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
@@ -33,6 +34,8 @@ import {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  delete document.documentElement.dataset.theme;
+  document.documentElement.style.removeProperty('color-scheme');
 });
 
 describe('PawSystemAppsMigrated', () => {
@@ -484,6 +487,70 @@ describe('PawSystemAppsMigrated', () => {
     await user.click(screen.getByRole('button', { name: '全部' }));
     expect(screen.getByText('Current Package')).toBeInTheDocument();
   });
+
+  it('retains the Package filter and cached catalog after a refresh fails', async () => {
+    const user = userEvent.setup();
+    let readFails = false;
+    const transport = baseTransport({
+      'agent.extensions.catalog': () => {
+        if (readFails) throw new Error('catalog unavailable');
+        return { ok: true, items: [catalogItemStub('pkg-fresh', 'Fresh Package', { installed: false, updateAvailable: false })] };
+      },
+    });
+    renderSystemApp('app-center', '/plugins?view=catalog', transport);
+    const search = await screen.findByRole('textbox', { name: '搜索 Package 目录' });
+    await user.type(search, 'Fresh');
+    readFails = true;
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+
+    expect(await screen.findByText('目录未能刷新，已保留上次结果')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '搜索 Package 目录' })).toBe(search);
+    expect(search).toHaveValue('Fresh');
+    expect(screen.getByText('Fresh Package')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看安装内容' })).toBeDisabled();
+
+    readFails = false;
+    await user.click(screen.getByRole('button', { name: '重试读取目录' }));
+    await waitFor(() => expect(screen.queryByText('目录未能刷新，已保留上次结果')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '查看安装内容' })).toBeEnabled();
+    expect(search).toHaveValue('Fresh');
+  });
+
+  it('keeps the successful Package receipt when follow-up catalog reads fail without applying twice', async () => {
+    const user = userEvent.setup();
+    let applied = false;
+    let readFails = true;
+    const transport = baseTransport({
+      'agent.extensions.catalog': () => {
+        if (applied && readFails) throw new Error('catalog unavailable after apply');
+        return { ok: true, items: [catalogItemStub('pkg-fresh', 'Fresh Package', { installed: applied, updateAvailable: false })] };
+      },
+      'agent.extensions.validate': { ok: true, validationToken: 'validated-fresh' },
+      'agent.extensions.preview': {
+        ok: true, previewToken: 'preview-fresh', payloadSha256: 'b'.repeat(64),
+        summary: { action: 'install', pluginId: 'pkg-fresh', displayName: 'Fresh Package', permissions: [] },
+      },
+      'agent.extensions.apply': () => {
+        applied = true;
+        return { ok: true, receipt: { receiptId: 'receipt-fresh', action: 'install' } };
+      },
+    });
+    renderSystemApp('app-center', '/plugins?view=catalog', transport);
+    await user.click(await screen.findByRole('button', { name: '查看安装内容' }));
+    await user.click(await screen.findByRole('button', { name: '确认更改' }));
+
+    expect(await screen.findByText('Package 更改已完成')).toBeInTheDocument();
+    expect(screen.getByText(/receipt-fresh/)).toBeInTheDocument();
+    expect(await screen.findByText('目录未能刷新，已保留上次结果')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认更改' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Package 操作未完成')).not.toBeInTheDocument();
+
+    readFails = false;
+    await user.click(screen.getByRole('button', { name: '重试读取目录' }));
+    expect(await screen.findByRole('button', { name: '已是最新' })).toBeDisabled();
+    expect(screen.getByText('Package 更改已完成')).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.extensions.apply')).toHaveLength(1);
+  });
 });
 
 function renderSystemApp(
@@ -553,15 +620,17 @@ function SystemHarness({
     <TooltipProvider delayDuration={0}>
       <QueryClientProvider client={client}>
         <ControlTransportProvider transport={transport}>
-          <PawOsAppearanceProvider>
-            <MotionProvider>
-              <PawOsDesktopProvider openRoute={setRoute} openWindow={() => undefined}>
-                <PawOsAppSurfaceProvider appId={appId} height={720} width={1_080}>
-                  <PawSystemAppsMigrated appId={appId} initialRoute={route} />
-                </PawOsAppSurfaceProvider>
-              </PawOsDesktopProvider>
-            </MotionProvider>
-          </PawOsAppearanceProvider>
+          <ThemeProvider>
+            <PawOsAppearanceProvider>
+              <MotionProvider>
+                <PawOsDesktopProvider openRoute={setRoute} openWindow={() => undefined}>
+                  <PawOsAppSurfaceProvider appId={appId} height={720} width={1_080}>
+                    <PawSystemAppsMigrated appId={appId} initialRoute={route} />
+                  </PawOsAppSurfaceProvider>
+                </PawOsDesktopProvider>
+              </MotionProvider>
+            </PawOsAppearanceProvider>
+          </ThemeProvider>
         </ControlTransportProvider>
       </QueryClientProvider>
     </TooltipProvider>

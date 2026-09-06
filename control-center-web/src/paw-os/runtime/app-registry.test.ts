@@ -21,8 +21,8 @@ describe('PAWOS App registry', () => {
     expect(pawAppForPath('/not-a-paw-app')).toBeNull();
   });
 
-  it('opens Memory on the timeline steward home', () => {
-    expect(pawApp('memory').route).toBe('/memory?view=timeline');
+  it('opens Memory on its topic library and preserves explicit timeline links', () => {
+    expect(pawApp('memory').route).toBe('/memory');
     expect(pawAppForPath('/memory?view=timeline')?.id).toBe('memory');
   });
 

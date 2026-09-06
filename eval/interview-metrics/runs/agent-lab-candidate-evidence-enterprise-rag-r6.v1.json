@@ -1,0 +1,154 @@
+{
+  "baselineRunId": "enterprise-rag-sol-max-frozen-v19-20260904-r4",
+  "candidateRunId": "enterprise-rag-luna-max-coverage-balanced-v4-20260904-r4",
+  "evidence": {
+    "baselineTrace": {
+      "reason": "原始报告未提供精确 Trace ID；Session/turn 哈希不是 Trace 身份。",
+      "runId": "enterprise-rag-sol-max-frozen-v19-20260904-r4",
+      "status": "unavailable",
+      "traceIds": []
+    },
+    "caseComparisons": [
+      {
+        "after": {
+          "metrics": {
+            "abstentionCorrect": 1,
+            "abstentionExpected": 0,
+            "agentSuccess": 1,
+            "answerJudgeCorrect": 1,
+            "citationFactCoverage": 1.0,
+            "toolSuccess": 1
+          },
+          "status": "passed"
+        },
+        "before": {
+          "metrics": {
+            "abstentionCorrect": 1,
+            "abstentionExpected": 0,
+            "agentSuccess": 0,
+            "answerJudgeCorrect": 0,
+            "citationFactCoverage": 0.6,
+            "toolSuccess": 1
+          },
+          "status": "failed"
+        },
+        "caseId": "case-01"
+      },
+      {
+        "after": {
+          "metrics": {
+            "abstentionCorrect": 1,
+            "abstentionExpected": 0,
+            "agentSuccess": 1,
+            "answerJudgeCorrect": 1,
+            "citationFactCoverage": 1.0,
+            "toolSuccess": 1
+          },
+          "status": "passed"
+        },
+        "before": {
+          "metrics": {
+            "abstentionCorrect": 1,
+            "abstentionExpected": 0,
+            "agentSuccess": 1,
+            "answerJudgeCorrect": 1,
+            "citationFactCoverage": 1.0,
+            "toolSuccess": 1
+          },
+          "status": "passed"
+        },
+        "caseId": "case-02"
+      },
+      {
+        "after": {
+          "metrics": {
+            "abstentionCorrect": 1,
+            "abstentionExpected": 1,
+            "agentSuccess": 1,
+            "answerJudgeCorrect": 1,
+            "toolSuccess": 1
+          },
+          "status": "passed"
+        },
+        "before": {
+          "metrics": {
+            "abstentionCorrect": 1,
+            "abstentionExpected": 1,
+            "agentSuccess": 1,
+            "answerJudgeCorrect": 1,
+            "toolSuccess": 1
+          },
+          "status": "passed"
+        },
+        "caseId": "case-03"
+      },
+      {
+        "after": {
+          "metrics": {
+            "abstentionCorrect": 1,
+            "abstentionExpected": 1,
+            "agentSuccess": 1,
+            "answerJudgeCorrect": 1,
+            "toolSuccess": 1
+          },
+          "status": "passed"
+        },
+        "before": {
+          "metrics": {
+            "abstentionCorrect": 1,
+            "abstentionExpected": 1,
+            "agentSuccess": 1,
+            "answerJudgeCorrect": 1,
+            "toolSuccess": 1
+          },
+          "status": "passed"
+        },
+        "caseId": "case-04"
+      }
+    ],
+    "gaps": [
+      "冻结报告只有 Session/turn 哈希，未保留可回跳的精确 Baseline Trace ID。"
+    ],
+    "patch": {
+      "afterRef": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-coverage-balanced-v4-r4-20260904.json#conditions",
+      "artifactPath": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-coverage-balanced-v4-r4-20260904.json#conditions",
+      "beforeRef": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json#conditions",
+      "kind": "frozen_configuration",
+      "reason": "从两份 hash-bound 冻结 Run 的配置生成实际 diff；这是配置变化，未声称保留了历史源码补丁。",
+      "status": "available",
+      "unifiedDiff": "--- baseline/conditions.json\n+++ candidate/conditions.json\n@@ -1,8 +1,8 @@\n {\n   \"agenticSupplementalLimit\": 6,\n-  \"model\": \"openai-codex/gpt-5.6-sol\",\n+  \"model\": \"openai-codex/gpt-5.6-luna\",\n   \"promptContractVersion\": \"rag-agent-evidence-state-budget-routing-v19\",\n-  \"promptProfile\": \"incumbent\",\n+  \"promptProfile\": \"coverage-balanced-evidence-gate-v4\",\n   \"thinking\": \"max\",\n   \"toolTransport\": \"loopback-http-v1\"\n }"
+    },
+    "provenance": "existing_run_artifacts",
+    "status": "partial",
+    "validationBoundary": {
+      "candidateAware": true,
+      "candidateBlind": false,
+      "costAuthority": "runtime_cost_reconciled",
+      "heldOutOpened": false,
+      "unbiasedPromotionClaimAllowed": false
+    }
+  },
+  "experimentId": "enterprise-rag.luna-prompt-v4-standard-r6.v1",
+  "experimentRevisionSha256": "74d387050e4a7226b7d5f8ea8c21599af2c7704c6f0e41848170d705293fd6d5",
+  "manifestSha256": "6a4f6e35dbc0987a346649a19a48de5938f1b06e9c60e9be7dd2d4a2f6466c3e",
+  "receiptSha256": "04f4e6753e9b0879020d0ef9f318588eea686e21fc641035ee13eb9d57fd53ac",
+  "schemaVersion": "rag-ime.agent-lab-candidate-evidence.v1",
+  "sourceReceipts": [
+    {
+      "fileSha256": "f1665186295a1958f335162997f986f027d56a9542708e49bd44e396438b472e",
+      "ref": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-coverage-balanced-v4-20260904.r4.v1.json"
+    },
+    {
+      "fileSha256": "efb49554a3d5840ea824f9bbbb70edeffce0a8f9a55205fdc0c78e8b2dc2b0ae",
+      "ref": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json"
+    },
+    {
+      "fileSha256": "f1f9c643d0fc17a5c8738b6e68faad65c107b919c2b4a4f15f496e19481ce0a1",
+      "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-coverage-balanced-v4-r4-attention-r6-exact-offline-rescore-20260905.v1.json"
+    },
+    {
+      "fileSha256": "1ef90fc42ffa05fc0f8550a49165965b2871169aadde951e12b22defd9191ae9",
+      "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json"
+    }
+  ]
+}

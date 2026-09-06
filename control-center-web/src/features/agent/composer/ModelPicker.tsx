@@ -1,4 +1,4 @@
-import { LoaderCircle, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, LoaderCircle, Search } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -17,22 +17,27 @@ import {
 } from '@/components/primitives';
 import { ProviderMark } from '../marks/ConversationMarks';
 import { modelSelectionFromCatalog } from '../model-selection';
+import { supportedPiThinkingLevels, type PiModelOption } from '../model-catalog-options';
 import type { ModelCatalog, ThinkingLevel } from '../types';
 import { ModelChoiceList, moveButtonFocus } from './ModelChoiceList';
 import {
   filterModelChoiceGroups,
   modelChoiceGroupsFromCatalog,
+  modelChoiceGroupsFromPiOptions,
   modelChoiceKey,
 } from './model-choice';
 
 /**
  * Model and reasoning commit through the same Pi selection contract, so the
  * composer carries them as one control: a single trigger naming both facts,
- * opening one popover with a searchable catalog section and the current
- * model's discrete reasoning levels side by side.
+ * opening a compact reasoning control. Model search is disclosed on request;
+ * the same component serves both new work and the live Session composer.
  */
 export function ModelPicker({
   catalog,
+  options,
+  className,
+  onOpen,
   disabled,
   pending,
   requestOpen,
@@ -40,6 +45,9 @@ export function ModelPicker({
   onChange,
 }: {
   catalog?: ModelCatalog;
+  options?: { models: PiModelOption[]; modelReference: string; thinking: string };
+  className?: string;
+  onOpen?: () => void;
   disabled: boolean;
   pending: boolean;
   requestOpen: number;
@@ -47,42 +55,49 @@ export function ModelPicker({
   onChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [focusSection, setFocusSection] = useState<'model' | 'thinking'>('model');
+  const [focusSection, setFocusSection] = useState<'model' | 'thinking'>('thinking');
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const reasoningRef = useRef<HTMLDivElement>(null);
-  const selection = catalog ? modelSelectionFromCatalog(catalog) : undefined;
+  const optionModel = options?.models.find((model) => model.reference === options.modelReference);
+  const selection = options
+    ? optionModel && { provider: optionModel.provider, modelId: optionModel.id, level: options.thinking }
+    : catalog ? modelSelectionFromCatalog(catalog) : undefined;
   const selectedProvider = catalog?.providers.find(
     (item) => item.id === selection?.provider,
   );
-  const selectedModel = selectedProvider?.models.find(
+  const selectedModel = optionModel ?? selectedProvider?.models.find(
     (item) => item.id === selection?.modelId,
   );
-  const thinking = selection?.level ?? catalog?.thinkingLevel ?? 'off';
   const providerName = selectedProvider?.displayName || selectedModel?.provider || '';
   const selectedLabel = selectedModel
     ? `${selectedModel.name} · ${providerName}`
     : '未选择';
-  const levels = selectedModel?.thinkingLevels ?? [];
-  const groups = useMemo(() => modelChoiceGroupsFromCatalog(catalog), [catalog]);
+  const levels = supportedPiThinkingLevels(selectedModel ? {
+    ...selectedModel, reference: '',
+  } : undefined, { includeOff: true }) as ThinkingLevel[];
+  const thinking = preferredThinkingLevel(levels, (selection?.level ?? catalog?.thinkingLevel ?? 'off') as ThinkingLevel);
+  const groups = useMemo(() => options ? modelChoiceGroupsFromPiOptions(options.models) : modelChoiceGroupsFromCatalog(catalog), [catalog, options?.models]);
   const filteredGroups = useMemo(
     () => filterModelChoiceGroups(groups, query),
     [groups, query],
   );
-  const selectedKey = selection
-    ? modelChoiceKey(selection.provider, selection.modelId)
-    : '';
+  const selectedKey = options?.modelReference ?? (selection ? modelChoiceKey(selection.provider, selection.modelId) : '');
+  const modelRequestRef = useRef(0);
+  const thinkingRequestRef = useRef(0);
 
   useEffect(() => {
-    if (requestOpen <= 0 || !catalog || disabled) return;
+    if (requestOpen <= modelRequestRef.current || (!catalog && !options) || disabled) return;
+    modelRequestRef.current = requestOpen;
     setQuery('');
     setFocusSection('model');
     setOpen(true);
   }, [catalog, disabled, requestOpen]);
 
   useEffect(() => {
-    if (thinkingRequestOpen <= 0 || !catalog || disabled || levels.length === 0) return;
+    if (thinkingRequestOpen <= thinkingRequestRef.current || (!catalog && !options) || disabled || levels.length === 0) return;
+    thinkingRequestRef.current = thinkingRequestOpen;
     setFocusSection('thinking');
     setOpen(true);
   }, [catalog, disabled, levels.length, thinkingRequestOpen]);
@@ -111,7 +126,8 @@ export function ModelPicker({
         setOpen(nextOpen);
         if (nextOpen) {
           setQuery('');
-          setFocusSection('model');
+          setFocusSection(selectedModel && levels.length ? 'thinking' : 'model');
+          onOpen?.();
         }
       }}
     >
@@ -119,8 +135,8 @@ export function ModelPicker({
         <Button
           aria-busy={pending || undefined}
           aria-label={`模型与推理：${selectedLabel} · ${thinkingLabel(thinking)}`}
-          className="agent-composer__picker"
-          disabled={!catalog || disabled}
+          className={className ?? "agent-composer__picker"}
+          disabled={(!catalog && !options) || disabled}
           leadingIcon={pending
             ? <LoaderCircle className="ui-spin" size={15} />
             : (
@@ -137,17 +153,34 @@ export function ModelPicker({
           <span className="agent-composer__picker-text">
             {selectedModel ? selectedModel.name : '选择模型'}
           </span>
-          {selectedModel && providerName ? (
-            <span className="agent-composer__picker-detail"> · {providerName}</span>
-          ) : null}
-          <strong className="agent-composer__picker-thinking"> · {compactThinkingLabel(thinking)}</strong>
+          <span className="agent-composer__picker-thinking">{compactThinkingLabel(thinking)}</span>
+          <ChevronDown className="caret" size={12} aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
         align="start"
         aria-label="选择模型与推理强度"
         className="agent-model-picker"
+        data-catalog-open={focusSection === 'model' || undefined}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          if (focusSection === 'model') searchRef.current?.focus();
+          else reasoningRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+        }}
       >
+        <button
+          aria-label={`更换模型 · ${selectedModel?.name ?? '选择模型'}`}
+          aria-expanded={focusSection === 'model'}
+          className="agent-model-picker__current"
+          onClick={() => setFocusSection(focusSection === 'model' && levels.length ? 'thinking' : 'model')}
+          type="button"
+        >
+          <ProviderMark providerId={selection?.provider} size={20} />
+          <span><strong>{selectedModel?.name ?? '选择模型'}</strong><small>{providerName}</small></span>
+          <ChevronRight size={15} aria-hidden="true" />
+        </button>
+        {focusSection === 'model' ? <>
+
         <label className="agent-model-picker__search">
           <Search aria-hidden="true" size={15} />
           <Input
@@ -176,17 +209,19 @@ export function ModelPicker({
           onChoose={(option) => {
             setOpen(false);
             if (option.key === selectedKey) return;
-            const model = catalog?.providers
+            const model = options?.models.find((item) => item.reference === option.key) ?? catalog?.providers
               .find((item) => item.id === option.providerId)
               ?.models.find((item) => item.id === option.modelId);
             onChange(
               option.providerId,
               option.modelId,
-              preferredThinkingLevel(model?.thinkingLevels ?? [], thinking),
+              preferredThinkingLevel((model?.thinkingLevels ?? []) as ThinkingLevel[], thinking),
             );
           }}
           selectedKey={selectedKey}
+          emptyLabel={query ? '没有找到匹配的模型' : '当前没有可用模型'}
         />
+        </> : null}
         {levels.length > 0 ? (
           <div className="agent-model-picker__thinking">
             <p className="agent-thinking-picker__heading">
@@ -247,11 +282,12 @@ function ReasoningRail({
             event.preventDefault();
             onChoose(level);
           }}
+          title={thinkingLabel(level)}
           role="radio"
           tabIndex={level === selected ? 0 : -1}
           type="button"
         >
-          {compactThinkingLabel(level)}
+          <span aria-hidden="true" className="agent-model-picker__reasoning-dot" />
         </button>
       ))}
     </div>
@@ -261,12 +297,12 @@ function ReasoningRail({
 function thinkingLabel(value: string): string {
   return ({
     off: '不启用推理',
-    minimal: '最小',
+    minimal: '轻量',
     low: '低',
     medium: '中',
     high: '高',
     xhigh: '极高',
-    max: 'Max',
+    max: '最高',
   } as Record<string, string>)[value] ?? value;
 }
 

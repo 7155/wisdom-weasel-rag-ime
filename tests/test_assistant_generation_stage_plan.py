@@ -88,17 +88,17 @@ class AssistantGenerationStagePlanTests(unittest.TestCase):
             planner,
         )
 
-    def test_done_rows_never_keep_the_active_shimmer(self) -> None:
+    def test_done_or_hidden_rows_never_keep_an_active_indicator(self) -> None:
         # resolve() gives failed > done > active priority, so a completed row
         # can never render as in-flight again.
         planner = self._planner_block()
         self.assertIn("if failed { return .failed }", planner)
         self.assertIn("if done { return .done }", planner)
         self.assertIn("if active { return .active }", planner)
-        self.assertIn(
-            "updateShimmer(active: model.state == .active && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)",
-            self.card_text,
-        )
+        self.assertIn("active = model.state == .active", self.card_text)
+        self.assertIn("let animate = active && visible", self.card_text)
+        self.assertIn("progressRows.forEach { $0.stopActivity() }", self.card_text)
+        self.assertNotIn("CAGradientLayer", self.card_text)
 
     def test_card_delegates_rows_to_the_planner_with_stable_stage_titles(self) -> None:
         self.assertIn("let plan = RagImeGenerationStagePlanner.plan(input)", self.card_text)

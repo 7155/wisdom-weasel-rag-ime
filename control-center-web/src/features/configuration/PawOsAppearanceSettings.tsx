@@ -1,5 +1,6 @@
 import { Check, Leaf, Monitor, Sparkles } from 'lucide-react';
 import { useMotionPreference, type MotionPreference } from '@/design/motion';
+import { useTheme, type ThemePreference } from '@/design/themes';
 import { ManagementSection } from '@/features/overview/management-ui';
 import { pawOsAppRegistry } from '@/features/paw-os/model/app-registry';
 import './paw-os-appearance.css';
@@ -15,18 +16,30 @@ const motionChoices: ReadonlyArray<{
   { value: 'reduce', label: '减少动效', detail: '减少晃动和过渡，界面更安静。', icon: Leaf },
 ];
 
+const themeChoices: ReadonlyArray<{
+  value: ThemePreference;
+  label: string;
+  detail: string;
+}> = [
+  { value: 'system', label: '跟随系统', detail: '根据系统当前的浅色或深色设置切换。' },
+  { value: 'light', label: '浅色', detail: '清透的冷色桌面与明亮内容层级。' },
+  { value: 'dark', label: '深色', detail: '深蓝星空桌面与低眩光内容层级。' },
+];
+
 /* The mini desktop preview borrows real App identity colors for its Dock
    dots via [data-app] custom properties instead of hard-coding a palette. */
 const previewDockApps = ['project-workbench', 'agent', 'memory', 'files', 'browser'] as const;
 
 export function PawOsAppearanceSettings() {
+  const theme = useTheme();
   const motion = useMotionPreference();
   const effectiveMotion = motion.reduceMotion ? '减少动效' : '完整动效';
+  const effectiveTheme = theme.resolvedTheme === 'dark' ? '深色' : '浅色';
 
   return (
     <>
       <ManagementSection
-        description="桌面、窗口和所有 App 使用同一套明亮外观。"
+        description="桌面、窗口和所有 App 使用同一套主题外观，更改立即生效。"
         title="主题"
       >
         <div className="paw-os-appearance-theme">
@@ -42,16 +55,31 @@ export function PawOsAppearanceSettings() {
             </span>
           </figure>
           <div aria-label="PAWOS 主题" className="paw-os-theme-settings" role="radiogroup">
-            <label className="paw-os-theme-option" data-selected="true">
-              <input checked name="paw-os-theme" readOnly type="radio" value="bright" />
-              <span className="paw-os-theme-option__copy">
-                <strong>默认明亮</strong>
-                <small>清透的冷色桌面、白色窗口与清晰的内容层级。</small>
-              </span>
-              <Check aria-hidden="true" className="paw-os-theme-option__check" size={17} />
-            </label>
+            {themeChoices.map((choice) => {
+              const selected = theme.preference === choice.value;
+              return (
+                <label className="paw-os-theme-option" data-selected={selected || undefined} key={choice.value}>
+                  <input
+                    checked={selected}
+                    name="paw-os-theme"
+                    onChange={() => theme.setPreference(choice.value)}
+                    type="radio"
+                    value={choice.value}
+                  />
+                  <span className="paw-os-theme-option__copy">
+                    <strong>{choice.label}</strong>
+                    <small>{choice.detail}</small>
+                  </span>
+                  <Check aria-hidden="true" className="paw-os-theme-option__check" size={17} />
+                </label>
+              );
+            })}
           </div>
         </div>
+        <p className="paw-os-theme-state" role="status">
+          当前生效：{effectiveTheme}
+          {theme.preference === 'system' ? '（跟随系统设置）' : ''}
+        </p>
       </ManagementSection>
 
       <ManagementSection

@@ -1,8 +1,10 @@
 import { BarChart3, CircleAlert, CircleCheck, FolderOpen, LoaderCircle, MoreHorizontal, PackageOpen, Send, ShieldCheck } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 
 import { useControlTransport } from '@/app/control-transport';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { agentCommandReceiptFailure, isAgentCommandPending, isAmbiguousAgentPromptFailure, isUnresolvedAgentCommandPending, publicAgentErrorText } from '@/features/agent/public-error';
+import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
 import { PawSessionWorkspace } from '@/paw-os/apps/PawSessionWorkspace';
 import { PawAppIcon } from '@/paw-os/shell/PawAppIcon';
@@ -55,27 +57,51 @@ type SandboxExperimentReceipt = {
   evalRunId?: string;
 };
 
+type SessionPreparation = {
+  session: SessionSummary;
+  modeReady: boolean;
+  sandbox?: {
+    experimentId: string;
+    requestedDecision: 'run' | 'skip';
+    receipt?: SandboxExperimentReceipt;
+  };
+};
+
 export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const [modeId, setModeId] = useState<ModeId>('ask');
   const [sessions, setSessions] = useState<Partial<Record<ModeId, SessionSummary>>>({});
-  const [draft, setDraft] = useState('');
+  const [preparedSessions, setPreparedSessions] = useState<Partial<Record<ModeId, SessionPreparation>>>({});
+  const [drafts, setDrafts] = useState<Partial<Record<ModeId, string>>>({});
   const [workspaceRoot, setWorkspaceRoot] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [sandboxEnabled, setSandboxEnabled] = useState(manifest.sandbox?.default === 'required');
   const [sandboxReceipt, setSandboxReceipt] = useState<SandboxExperimentReceipt | null>(null);
   const [error, setError] = useState('');
+  const [historyError, setHistoryError] = useState('');
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const modeTabsId = useId();
+  const modeTabRefs = useRef(new Map<ModeId, HTMLButtonElement>());
   const activeMode = MODES.find((mode) => mode.id === modeId)!;
   const activeSession = sessions[modeId];
+  const preparedSession = preparedSessions[modeId]?.session;
+  const sandboxDecision = preparedSessions[modeId]?.sandbox?.requestedDecision
+    ?? (manifest.sandbox?.default === 'required' || sandboxEnabled ? 'run' : 'skip');
+  const draft = drafts[modeId] ?? '';
+  const visibleError = error || historyError;
   const managedDataSourceLabel = `${manifest.label}受控数据`;
-  const selectedWorkspaceName = workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? '';
+  const dataWorkspaceRoot = preparedSession ? preparedSession.workspaceRoots[0] ?? '' : workspaceRoot;
+  const selectedWorkspaceName = dataWorkspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? '';
   const dataSourceLabel = selectedWorkspaceName || managedDataSourceLabel;
   const canPickDataWorkspace = typeof transport.pickFiles === 'function';
+  const sourceLocked = sending || Boolean(preparedSession);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setHistoryError('');
     void transport.request({
       pathId: 'agent.sessions.list',
       query: {
@@ -95,16 +121,39 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
           restored[surfaceKey] = session;
         }
         setSessions(restored);
-        setError('');
+        setHistoryError('');
       })
       .catch((reason) => {
-        if (active) setError(publicError(reason, '没有读到掌柜问数的对话记录。'));
+        if (active) setHistoryError(publicError(reason, '没有读到掌柜问数的对话记录。'));
       })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [manifest.id, transport]);
+  }, [historyRevision, manifest.id, transport]);
+
+  function setDraft(value: string): void {
+    setDrafts((current) => ({ ...current, [modeId]: value }));
+  }
+
+  function selectMode(next: ModeId): void {
+    setModeId(next);
+    setError('');
+    setSandboxReceipt(null);
+  }
+
+  function moveModeFocus(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
+    const nextIndex = event.key === 'Home' ? 0
+      : event.key === 'End' ? MODES.length - 1
+        : event.key === 'ArrowRight' ? (index + 1) % MODES.length
+          : event.key === 'ArrowLeft' ? (index - 1 + MODES.length) % MODES.length
+            : -1;
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    const next = MODES[nextIndex].id;
+    selectMode(next);
+    modeTabRefs.current.get(next)?.focus();
+  }
 
   async function startConversation(message: string): Promise<void> {
     const userMessage = message.trim();
@@ -112,82 +161,123 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
     setSending(true);
     setError('');
     try {
-      const created = await transport.request<Record<string, unknown>>({
-        pathId: 'agent.sessions.create',
-        body: {
-          title: `${manifest.label} · ${activeMode.label}`,
-          mode: workspaceRoot ? 'coordinator' : 'assistant',
-          toolProfileVersion: 'control-center-v1',
-          executionMode: 'per_action',
-          workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
-          surfaceKind: 'extension_app',
-          ownerAppId: manifest.id,
-          surfaceKey: modeId,
-        },
-      });
-      const raw = record(record(created).session);
-      const sessionId = text(raw.id);
-      if (!sessionId) throw new Error('服务端没有返回可验证的 Session。');
-      await transport.request({
-        pathId: 'agent.session.mode.update',
-        params: { sessionId },
-        body: {
-          mode: workspaceRoot ? 'coordinator' : 'assistant',
-          executionMode: 'per_action',
-          toolProfileVersion: 'control-center-v1',
-          projectContextEnabled: false,
-          piSkillsEnabled: true,
-          codexSkillsEnabled: false,
-        },
-      });
-      if (manifest.sandbox) {
-        const requestedDecision = manifest.sandbox.default === 'required' || sandboxEnabled ? 'run' : 'skip';
+      let preparation = preparedSessions[modeId];
+      if (!preparation) {
+        const created = await transport.request<Record<string, unknown>>({
+          pathId: 'agent.sessions.create',
+          body: {
+            title: `${manifest.label} · ${activeMode.label}`,
+            mode: workspaceRoot ? 'coordinator' : 'assistant',
+            toolProfileVersion: 'control-center-v1',
+            executionMode: 'per_action',
+            workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
+            surfaceKind: 'extension_app',
+            ownerAppId: manifest.id,
+            surfaceKey: modeId,
+          },
+        });
+        const raw = record(record(created).session);
+        const sessionId = text(raw.id);
+        if (!sessionId) throw new Error('服务端没有返回可验证的 Session。');
+        preparation = {
+          session: sessionSummary(
+            raw, sessionId, `${manifest.label} · ${activeMode.label}`,
+            userMessage, workspaceRoot, manifest.id, modeId,
+          ),
+          modeReady: false,
+          ...(manifest.sandbox ? {
+            sandbox: { experimentId: `experiment:${modeId}:${Date.now()}`, requestedDecision: sandboxDecision },
+          } : {}),
+        };
+        // Creation has already happened. Keep that identity even if the next
+        // preparation step fails; a user retry resumes only unfinished steps.
+        setPreparedSessions((current) => ({ ...current, [modeId]: preparation }));
+      }
+      const session = preparation.session;
+      const sessionId = session.id;
+      if (!preparation.modeReady) {
+        await transport.request({
+          pathId: 'agent.session.mode.update',
+          params: { sessionId },
+          body: {
+            mode: session.workspaceRoots.length ? 'coordinator' : 'assistant',
+            executionMode: 'per_action',
+            toolProfileVersion: 'control-center-v1',
+            projectContextEnabled: false,
+            piSkillsEnabled: true,
+            codexSkillsEnabled: false,
+          },
+        });
+        preparation = { ...preparation, modeReady: true };
+        setPreparedSessions((current) => ({ ...current, [modeId]: preparation }));
+      }
+      if (preparation.sandbox && !preparation.sandbox.receipt) {
+        const sandbox = preparation.sandbox;
         const rawReceipt = await transport.request<unknown>({
           pathId: 'extension.sandbox.experiment.run',
           body: {
             sessionId,
             ownerAppId: manifest.id,
-            experimentId: `experiment:${modeId}:${Date.now()}`,
+            experimentId: sandbox.experimentId,
             candidateBindingSha256: manifest.bindingSha256,
-            requestedDecision,
+            requestedDecision: sandbox.requestedDecision,
           },
         });
         const receipt = requireSandboxExperimentReceipt(rawReceipt, {
           sessionId,
           ownerAppId: manifest.id,
           candidateBindingSha256: manifest.bindingSha256,
-          requestedDecision,
+          requestedDecision: sandbox.requestedDecision,
         });
-        setSandboxReceipt(receipt);
+        preparation = { ...preparation, sandbox: { ...sandbox, receipt } };
+        setPreparedSessions((current) => ({ ...current, [modeId]: preparation }));
       }
-      const session = sessionSummary(
-        raw,
-        sessionId,
-        `${manifest.label} · ${activeMode.label}`,
+      if (preparation.sandbox?.receipt) setSandboxReceipt(preparation.sandbox.receipt);
+      const message = bootstrapPrompt(
+        manifest.skillRef,
+        activeMode,
         userMessage,
-        workspaceRoot,
-        manifest.id,
-        modeId,
+        session.workspaceRoots[0] ?? '',
+        managedDataSourceLabel,
+        manifest.verticalSuiteId,
+        manifest.verticalSuiteRevision,
       );
-      const next = { ...sessions, [modeId]: session };
-      setSessions(next);
-      setDraft('');
-      await transport.request({
-        pathId: 'agent.session.prompt',
-        params: { sessionId },
-        body: {
-          message: bootstrapPrompt(
-            manifest.skillRef,
-            activeMode,
-            userMessage,
-            workspaceRoot,
-            managedDataSourceLabel,
-            manifest.verticalSuiteId,
-            manifest.verticalSuiteRevision,
-          ),
-          clientMessageId: `extension:${manifest.id}:${modeId}:${Date.now()}`,
-          delivery: 'prompt',
-        },
+      const clientMessageId = `extension:${manifest.id}:${modeId}:${crypto.randomUUID()}`;
+      const store = useAgentLiveStore.getState();
+      // Keep the exact App context with the user's question: the existing
+      // Session retry must recover this command, not silently omit the Skill
+      // or source boundaries on its second attempt.
+      store.appendOptimistic(sessionId, { clientMessageId, text: message, nowMs: Date.now() });
+      try {
+        const response = record(await transport.request({
+          pathId: 'agent.session.prompt',
+          params: { sessionId },
+          body: { message, clientMessageId, delivery: 'prompt' },
+        }));
+        if (response.accepted === false && response.cancelled === true && response.admissionCancelled === true) {
+          store.discardOptimistic(sessionId, clientMessageId);
+          setError('这条消息已取消，原问题已保留；可在同一对话中重新发送。');
+          return;
+        }
+        store.acknowledgeOptimistic(sessionId, clientMessageId, Date.now());
+        setDraft('');
+      } catch (reason) {
+        if (agentCommandReceiptFailure(reason)?.code === 'AGENT_COMMAND_CONFLICT') {
+          store.discardOptimistic(sessionId, clientMessageId);
+          setError(publicAgentErrorText(reason));
+          return;
+        }
+        settleFirstPromptFailure(sessionId, clientMessageId, reason);
+      }
+      // The first composer owns the draft until admission settles. Afterwards
+      // the same Session owns its visible pending/failed turn and recovery.
+      // Proven non-admission above leaves the prepared Session in place so an
+      // explicit new send cannot create another Session or rerun its sandbox.
+      setSessions((current) => ({ ...current, [modeId]: session }));
+      setPreparedSessions((current) => {
+        const next = { ...current };
+        delete next[modeId];
+        return next;
       });
     } catch (reason) {
       setError(publicError(reason, '掌柜问数没有开始，请重试。'));
@@ -197,7 +287,7 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
   }
 
   async function pickDataWorkspace(): Promise<void> {
-    if (!transport.pickFiles) return;
+    if (!transport.pickFiles || sourceLocked) return;
     try {
       const selection = await transport.pickFiles({
         purpose: 'workspace-root',
@@ -228,7 +318,7 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
       <header className="zhanggui-app__header">
         <span className="zhanggui-app__identity">
           <PawAppIcon appId={manifest.id} size={34} />
-          <span><small>{activeMode.eyebrow}</small><h1>{manifest.label}</h1></span>
+          <span><h1>{manifest.label}</h1></span>
         </span>
         <span className="zhanggui-app__header-actions">
           <button
@@ -236,15 +326,15 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
               ? `更换数据源，当前 ${dataSourceLabel}`
               : `当前数据源 ${dataSourceLabel}；当前宿主不支持更换`}
             className="zhanggui-app__data-button"
-            disabled={!canPickDataWorkspace}
+            disabled={!canPickDataWorkspace || sourceLocked}
             onClick={() => void pickDataWorkspace()}
-            title={canPickDataWorkspace ? '更换或迁移数据目录' : '当前宿主不支持目录迁移，继续使用 App 受控数据'}
+            title={sourceLocked ? '首条问题会继续使用已准备的数据源' : canPickDataWorkspace ? '更换或迁移数据目录' : '当前宿主不支持目录迁移，继续使用 App 受控数据'}
             type="button"
           >
             <FolderOpen size={15} />
             <span>{dataSourceLabel}</span>
           </button>
-          <span className="zhanggui-app__status" data-status="connected"><i />{workspaceRoot ? '数据目录已连接' : '受控数据已连接'}</span>
+          <span className="zhanggui-app__status" data-status="selected"><i />{dataWorkspaceRoot ? '已选择数据目录' : '已选择受控数据'}</span>
           <details className="zhanggui-app__more">
             <summary aria-label="掌柜问数更多操作"><MoreHorizontal size={18} /></summary>
             <div>
@@ -256,13 +346,22 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
       </header>
 
       <nav aria-label="掌柜问数模式" className="zhanggui-app__modes" role="tablist">
-        {MODES.map((mode) => (
+        {MODES.map((mode, index) => (
           <button
+            aria-controls={`${modeTabsId}-panel`}
             aria-label={mode.label}
             aria-selected={mode.id === modeId}
+            disabled={sending}
+            id={`${modeTabsId}-${mode.id}`}
             key={mode.id}
-            onClick={() => { setModeId(mode.id); setDraft(''); setError(''); setSandboxReceipt(null); }}
+            onClick={() => selectMode(mode.id)}
+            onKeyDown={(event) => moveModeFocus(event, index)}
+            ref={(node) => {
+              if (node) modeTabRefs.current.set(mode.id, node);
+              else modeTabRefs.current.delete(mode.id);
+            }}
             role="tab"
+            tabIndex={mode.id === modeId ? 0 : -1}
             type="button"
           >
             <span>{mode.label}</span>
@@ -271,7 +370,11 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
         ))}
       </nav>
 
-      {error ? <p className="zhanggui-app__error" role="alert"><CircleAlert size={15} />{error}</p> : null}
+      {visibleError ? <p className="zhanggui-app__error" role="alert">
+        <CircleAlert aria-hidden="true" size={15} />
+        <span>{visibleError}</span>
+        {!error && historyError ? <button disabled={loading || sending} onClick={() => setHistoryRevision((current) => current + 1)} type="button">重新读取</button> : null}
+      </p> : null}
       {sandboxReceipt ? (
         <p className="zhanggui-app__sandbox-receipt" role="status">
           <CircleCheck aria-hidden="true" size={15} />
@@ -280,6 +383,7 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
             : '本次已明确跳过沙箱自测'}
         </p>
       ) : null}
+      <div aria-labelledby={`${modeTabsId}-${modeId}`} className="zhanggui-app__content" id={`${modeTabsId}-panel`} role="tabpanel">
       {loading ? <div className="zhanggui-app__loading" role="status"><LoaderCircle className="ui-spin" size={18} />正在恢复问数记录…</div> : activeSession ? (
         <section className="zhanggui-app__session" aria-label={`${activeMode.label}对话`}>
           <div className="zhanggui-app__session-note">
@@ -307,30 +411,30 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
       ) : (
         <section className="zhanggui-app__start">
           <span className="zhanggui-app__mark"><BarChart3 size={24} /></span>
-          <div className="zhanggui-app__start-copy"><small>{activeMode.eyebrow}</small><h2>{activeMode.title}</h2><p>{activeMode.description}</p></div>
+          <div className="zhanggui-app__start-copy"><h2>{activeMode.title}</h2><p>{activeMode.description}</p></div>
           <div className="zhanggui-app__suggestions">
-            {activeMode.suggestions.map((suggestion) => <button key={suggestion} onClick={() => setDraft(suggestion)} type="button">{suggestion}</button>)}
+            {activeMode.suggestions.map((suggestion) => <button disabled={sending} key={suggestion} onClick={() => setDraft(suggestion)} type="button">{suggestion}</button>)}
           </div>
           <div className="zhanggui-app__source">
             <button
               aria-label={canPickDataWorkspace ? undefined : '迁移到数据目录（当前宿主不支持）'}
-              disabled={!canPickDataWorkspace}
+              disabled={!canPickDataWorkspace || sourceLocked}
               onClick={() => void pickDataWorkspace()}
-              title={canPickDataWorkspace ? undefined : '当前宿主不支持目录迁移'}
+              title={sourceLocked ? '首条问题会继续使用已准备的数据源' : canPickDataWorkspace ? undefined : '当前宿主不支持目录迁移'}
               type="button"
             >
-              <FolderOpen size={15} />{workspaceRoot ? '更换数据目录' : '迁移到数据目录'}
+              <FolderOpen size={15} />{dataWorkspaceRoot ? '更换数据目录' : '迁移到数据目录'}
             </button>
-            <span>{workspaceRoot
-              ? workspaceRoot
+            <span>{dataWorkspaceRoot
+              ? dataWorkspaceRoot
               : `默认绑定${managedDataSourceLabel} · ${manifest.verticalSuiteId.toUpperCase()} ${manifest.verticalSuiteRevision} · 只读沙箱，不作为真实经营数据${canPickDataWorkspace ? '' : '；当前宿主不支持目录迁移'}`}</span>
           </div>
           {manifest.sandbox ? (
             <label className="zhanggui-app__sandbox-choice">
               <input
                 aria-label="启动前运行受管沙箱自测"
-                checked={manifest.sandbox.default === 'required' || sandboxEnabled}
-                disabled={manifest.sandbox.default !== 'optional'}
+                checked={sandboxDecision === 'run'}
+                disabled={manifest.sandbox.default !== 'optional' || sourceLocked}
                 onChange={(event) => setSandboxEnabled(event.target.checked)}
                 type="checkbox"
               />
@@ -342,15 +446,31 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
             </label>
           ) : null}
           <form onSubmit={(event) => { event.preventDefault(); void startConversation(draft); }}>
-            <textarea aria-label={`${activeMode.label}问题`} onChange={(event) => setDraft(event.target.value)} placeholder={activeMode.placeholder} rows={3} value={draft} />
-            <button aria-label={sending ? '正在创建对话' : '发送'} disabled={sending || !draft.trim()} type="submit">
+            <textarea aria-label={`${activeMode.label}问题`} onChange={(event) => setDraft(event.target.value)} placeholder={activeMode.placeholder} readOnly={sending} rows={3} value={draft} />
+            <button aria-label={sending ? '正在发送问题' : '发送'} disabled={sending || !draft.trim()} type="submit">
               {sending ? <LoaderCircle className="ui-spin" size={16} /> : <Send size={16} />}
             </button>
           </form>
           <p>使用普通 Pi Session 与专属 {manifest.skillRef} Skill；SGG 仅用于沙盒自测，不会冒充真实经营数据。</p>
         </section>
       )}
+      </div>
     </main>
+  );
+}
+
+function settleFirstPromptFailure(sessionId: string, clientMessageId: string, reason: unknown): void {
+  const admissionState = isAgentCommandPending(reason)
+    ? isUnresolvedAgentCommandPending(reason) ? 'unresolved' : 'pending'
+    : isAmbiguousAgentPromptFailure(reason) ? 'ambiguous' : undefined;
+  useAgentLiveStore.getState().failOptimistic(
+    sessionId,
+    clientMessageId,
+    admissionState === 'ambiguous'
+      ? '暂时无法确认是否已接收。系统不会自动重试；手动重试会核对同一条消息。'
+      : publicAgentErrorText(reason),
+    Date.now(),
+    admissionState,
   );
 }
 

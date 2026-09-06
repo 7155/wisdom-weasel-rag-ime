@@ -562,6 +562,10 @@ export function useKnowledgeDocumentDetail(baseId: string, documentId: string, e
     data: chunkDetail && contentQuery.data ? mergeDocumentContentPages(chunkDetail, contentQuery.data.pages) : chunkDetail,
     error: chunksQuery.error ?? contentQuery.error,
     isPending: chunksQuery.isPending || contentQuery.isPending,
+    isFetching: chunksQuery.isFetching || contentQuery.isFetching,
+    // The reader owns two independent windows. Retry both so a正文 failure
+    // cannot remain stuck behind a successful paragraphs-only refresh.
+    refetch: () => Promise.all([chunksQuery.refetch(), contentQuery.refetch()]),
     fetchNextContentPage: contentQuery.fetchNextPage,
     hasNextContentPage: contentQuery.hasNextPage,
     isFetchingNextContentPage: contentQuery.isFetchingNextPage,

@@ -35,6 +35,8 @@
   grid-template-columns: minmax(184px, .42fr) minmax(360px, 1.58fr);
 }
 
+:is(main, section)[data-route-id='configuration'] .configuration-section-picker { display: none; }
+
 /* The group rail is a set of quiet rounded destinations, not a bordered
    table: the selected group reads as one soft filled pill. */
 :is(main, section)[data-route-id='configuration'] .configuration-section-nav {
@@ -706,9 +708,10 @@
 
 @container paw-window (max-width: 620px) {
   :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-editor { grid-template-columns: minmax(0, 1fr); }
-  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
-  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button { min-height: 44px; align-items: center; border: 1px solid var(--color-border); }
-  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button[aria-current='page'] { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
+  /* Ten navigation cards pushed the actual settings below the window. The
+     same selected group and pending counts fit in one keyboard-ready picker. */
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav { display: none; }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-picker { display: block; }
 
   :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-skill-routing__tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));

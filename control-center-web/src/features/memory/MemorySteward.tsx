@@ -2,7 +2,8 @@ import { BrainCircuit, LoaderCircle, Send, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
-import { publicAgentErrorText } from '@/features/agent/public-error';
+import { agentCommandReceiptFailure, isAgentCommandPending, isAmbiguousAgentPromptFailure, isUnresolvedAgentCommandPending, publicAgentErrorText } from '@/features/agent/public-error';
+import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { PawSessionWorkspace } from '@/paw-os/apps/PawSessionWorkspace';
 import './memory-steward.css';
 
@@ -13,10 +14,19 @@ const STEWARD_QUESTIONS = [
   '你建议我接下来继续做什么？',
 ] as const;
 
-export function MemorySteward({ date, timelineId }: { date: string; timelineId: string }) {
+type MemoryStewardProps = { date: string; timelineId: string };
+
+export function MemorySteward(props: MemoryStewardProps) {
+  // A late receipt may still settle its original Session, but it must never
+  // replace another day's composer, draft, or preparation state.
+  return <MemoryStewardDay key={props.date} {...props} />;
+}
+
+function MemoryStewardDay({ date, timelineId }: MemoryStewardProps) {
   const transport = useControlTransport();
   const surfaceKey = useMemo(() => `journal-${date}`, [date]);
   const [session, setSession] = useState<SessionSummary>();
+  const [preparedSession, setPreparedSession] = useState<SessionSummary>();
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -26,6 +36,7 @@ export function MemorySteward({ date, timelineId }: { date: string; timelineId: 
     let active = true;
     setLoading(true);
     setSession(undefined);
+    setPreparedSession(undefined);
     setDraft('');
     setError('');
     void transport.request({
@@ -54,26 +65,30 @@ export function MemorySteward({ date, timelineId }: { date: string; timelineId: 
 
   async function send(event: FormEvent): Promise<void> {
     event.preventDefault();
-    const message = draft.trim();
-    if (!message || sending) return;
+    const question = draft.trim();
+    if (!question || sending) return;
     setSending(true);
     setError('');
     try {
-      const ensured = record(await transport.request({
-        pathId: 'agent.sessions.surface.ensure',
-        body: {
-          title: `Memory 管家 · ${date}`,
-          mode: 'assistant',
-          toolProfileVersion: 'control-center-v1',
-          executionMode: 'read_only',
-          workspaceRoots: [],
-          surfaceKind: 'builtin_app',
-          ownerAppId: 'memory',
-          surfaceKey,
-        },
-      }));
-      const next = sessionItems({ items: [ensured.session] }, { includeAppOwned: true })[0];
-      if (!next?.id) throw new Error('服务端没有返回可验证的 Memory 管家 Session。');
+      let next = preparedSession;
+      if (!next) {
+        const ensured = record(await transport.request({
+          pathId: 'agent.sessions.surface.ensure',
+          body: {
+            title: `Memory 管家 · ${date}`,
+            mode: 'assistant',
+            toolProfileVersion: 'control-center-v1',
+            executionMode: 'read_only',
+            workspaceRoots: [],
+            surfaceKind: 'builtin_app',
+            ownerAppId: 'memory',
+            surfaceKey,
+          },
+        }));
+        next = sessionItems({ items: [ensured.session] }, { includeAppOwned: true })[0];
+        if (!next?.id) throw new Error('服务端没有返回可验证的 Memory 管家 Session。');
+        setPreparedSession(next);
+      }
       await transport.request({
         pathId: 'agent.session.mode.update',
         params: { sessionId: next.id },
@@ -86,17 +101,39 @@ export function MemorySteward({ date, timelineId }: { date: string; timelineId: 
           codexSkillsEnabled: false,
         },
       });
+      const sessionId = next.id;
+      const message = stewardPrompt({ date, message: question, timelineId });
+      const clientMessageId = `memory-steward:${surfaceKey}:${crypto.randomUUID()}`;
+      const store = useAgentLiveStore.getState();
+      // The shared Session must retain the complete command so its normal
+      // recovery keeps this date and timeline boundary with the question.
+      store.appendOptimistic(sessionId, { clientMessageId, text: message, nowMs: Date.now() });
+      try {
+        const response = record(await transport.request({
+          pathId: 'agent.session.prompt',
+          params: { sessionId },
+          body: { message, clientMessageId, delivery: 'prompt' },
+        }));
+        if (response.accepted === false && response.cancelled === true && response.admissionCancelled === true) {
+          store.discardOptimistic(sessionId, clientMessageId);
+          setError('这条消息已取消，原问题已保留；可在同一对话中重新发送。');
+          return;
+        }
+        store.acknowledgeOptimistic(sessionId, clientMessageId, Date.now());
+        setDraft('');
+      } catch (reason) {
+        if (agentCommandReceiptFailure(reason)?.code === 'AGENT_COMMAND_CONFLICT') {
+          store.discardOptimistic(sessionId, clientMessageId);
+          setError(publicAgentErrorText(reason));
+          return;
+        }
+        settleFirstPromptFailure(sessionId, clientMessageId, reason);
+      }
+      // Once the request returns, the same Session owns the visible turn and
+      // its existing confirmation/retry actions. Only confirmed admission
+      // clears the starter draft; conflict/cancellation stays editable above.
       setSession(next);
-      setDraft('');
-      await transport.request({
-        pathId: 'agent.session.prompt',
-        params: { sessionId: next.id },
-        body: {
-          message: stewardPrompt({ date, message, timelineId }),
-          clientMessageId: `memory-steward:${surfaceKey}:${Date.now()}`,
-          delivery: 'prompt',
-        },
-      });
+      setPreparedSession(undefined);
     } catch (reason) {
       setError(publicError(reason, '记忆管家没有开始，请稍后重试。'));
     } finally {
@@ -132,7 +169,7 @@ export function MemorySteward({ date, timelineId }: { date: string; timelineId: 
         <div className="memory-steward__start">
           <div className="memory-steward__suggestions" aria-label="可以问记忆管家">
             {STEWARD_QUESTIONS.map((question) => (
-              <button key={question} onClick={() => setDraft(question)} type="button"><Sparkles size={13} />{question}</button>
+              <button disabled={sending} key={question} onClick={() => setDraft(question)} type="button"><Sparkles size={13} />{question}</button>
             ))}
           </div>
           <form onSubmit={(event) => void send(event)}>
@@ -140,6 +177,7 @@ export function MemorySteward({ date, timelineId }: { date: string; timelineId: 
               aria-label="问记忆管家"
               onChange={(event) => setDraft(event.target.value)}
               placeholder="问我最近有哪些 idea、没完成的事、安排，或请我基于证据给建议…"
+              readOnly={sending}
               rows={2}
               value={draft}
             />
@@ -150,6 +188,21 @@ export function MemorySteward({ date, timelineId }: { date: string; timelineId: 
         </div>
       )}
     </section>
+  );
+}
+
+function settleFirstPromptFailure(sessionId: string, clientMessageId: string, reason: unknown): void {
+  const admissionState = isAgentCommandPending(reason)
+    ? isUnresolvedAgentCommandPending(reason) ? 'unresolved' : 'pending'
+    : isAmbiguousAgentPromptFailure(reason) ? 'ambiguous' : undefined;
+  useAgentLiveStore.getState().failOptimistic(
+    sessionId,
+    clientMessageId,
+    admissionState === 'ambiguous'
+      ? '暂时无法确认是否已接收。系统不会自动重试；手动重试会核对同一条消息。'
+      : publicAgentErrorText(reason),
+    Date.now(),
+    admissionState,
   );
 }
 

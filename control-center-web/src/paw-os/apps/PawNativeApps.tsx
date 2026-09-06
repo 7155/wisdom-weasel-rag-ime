@@ -172,7 +172,7 @@ function ProjectWorkbenchSurface({ pageId, route }: { pageId: PawWorkbenchPageId
   }
 
   const primaryAction = pageId === 'overview'
-    ? { label: '新任务', onClick: () => openPawOsRoute(desktop, '/planning') }
+    ? { label: '查看任务', onClick: () => openPawOsRoute(desktop, '/planning') }
     : pageId === 'planning'
       ? { label: '添加任务', onClick: () => setTaskDialogOpen(true) }
       : { label: '登记工作文档', onClick: () => setRegisterDialogOpen(true) };
@@ -232,8 +232,9 @@ function ProjectWorkbenchSurface({ pageId, route }: { pageId: PawWorkbenchPageId
       overview={overview.data}
       pageId={pageId}
       planning={planning.data}
-      planningTools={(
+      planningTools={(selectedTask) => (
         <PawWorkbenchPlanningTools
+          selectedTask={selectedTask}
           date={planningDate}
           onDateChange={setPlanningDate}
           onOpenAgent={(draft) => {

@@ -15,7 +15,11 @@ from typing import Iterator, Protocol
 
 from .agent_sessions import AgentSessionNotFound, AgentSessionStore
 from .agent_tool_ids import MEMORY_CURATION_TOOL_PROFILE
-from .pi_runtime_values import PiRuntimeCommandRejected, PiRuntimeTurnConflict
+from .pi_runtime_values import (
+    PiRuntimeCommandRejected,
+    PiRuntimeSettlementLookupTimeout,
+    PiRuntimeTurnConflict,
+)
 
 
 MEMORY_CURATION_PROFILE = "MEMORY_CURATION"
@@ -507,6 +511,23 @@ class GovernedMemoryModelExecutor:
                 )
                 self._accepted_requests.pop(request_id, None)
                 return self._response_from_request(completed)
+            except PiRuntimeSettlementLookupTimeout as exc:
+                # A failed receipt read says nothing about the accepted
+                # model turn's outcome. Preserve its identity for recovery
+                # without cancelling a potentially healthy Provider run.
+                self._mark_request_resumable(
+                    request_id=request_id,
+                    turn_id=accepted_turn_id,
+                    error="memory_settlement_lookup_timeout",
+                    receipt=resumable_receipt({
+                        "requested": False,
+                        "reason": "settlement_lookup_timeout",
+                    }),
+                )
+                raise MemoryModelUnavailable(
+                    "Memory Session settlement lookup timed out; "
+                    "the accepted turn remains unresolved and was not replayed"
+                ) from exc
             except TimeoutError as exc:
                 cancellation = self._cancel_request_session(session_id)
                 self._mark_request_resumable(
@@ -791,6 +812,17 @@ class GovernedMemoryModelExecutor:
                 turn_id=turn_id,
                 client_message_id=request_id,
             )
+        except PiRuntimeSettlementLookupTimeout as exc:
+            self._mark_request_resumable(
+                request_id=request_id,
+                turn_id=turn_id,
+                error="memory_settlement_lookup_timeout",
+                receipt=_json_object(row["receipt_json"]),
+            )
+            raise MemoryModelUnavailable(
+                "previously accepted Memory Session settlement lookup timed out; "
+                "the turn remains unresolved and the request was not replayed"
+            ) from exc
         except TimeoutError as exc:
             raise MemoryModelTimeout(
                 "previously accepted Memory Session turn remains unresolved; "

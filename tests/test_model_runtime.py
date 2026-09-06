@@ -578,7 +578,12 @@ class ModelRuntimePlanTests(unittest.TestCase):
                     ROOT / "eval" / "interview-metrics" / "agent-experiments.v1.json",
                     eval_metrics / "agent-experiments.v1.json",
                 )
+                from scripts.list_agent_lab_install_receipts import required_receipts
+                (eval_metrics / "runs").mkdir()
+                for receipt in required_receipts(ROOT / "eval/interview-metrics/agent-experiments.v1.json"):
+                    shutil.copy2(receipt, eval_metrics / "runs" / receipt.name)
                 for name in (
+                    "list_agent_lab_install_receipts.py",
                     "restart_rag_ime_runtime.sh",
                     "install_sidecar_launch_agent.sh",
                     "import_agent_lab_experiments.py",

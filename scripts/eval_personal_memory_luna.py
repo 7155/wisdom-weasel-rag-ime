@@ -16,7 +16,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -320,7 +320,8 @@ def build_parser() -> argparse.ArgumentParser:
             "verified private shadow. Production SQLite is never opened."
         )
     )
-    parser.add_argument("--shadow-db", type=Path, required=True)
+    parser.add_argument("--shadow-db", type=Path,
+        help="Verified host recovery shadow; optional only for a clean synthetic fixture evaluation.")
     parser.add_argument("--private-dir", type=Path, required=True)
     parser.add_argument("--public-report", type=Path)
     parser.add_argument("--project", default="wisdom-weasel-rag-ime")
@@ -394,14 +395,141 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def _create_evaluation_executor(args: argparse.Namespace, artifact_root: Path, *,
+                                audit_db_path: Path | None = None,
+                                executor_factory: Callable[..., object] | None = None,
+                                control: _EvaluationControl | None = None):
+    options = dict(audit_db_path=audit_db_path, timeout_seconds=float(args.timeout_seconds),
+                   model_id=str(args.model), context_profile=str(args.context_profile),
+                   prompt_contract=str(args.prompt_contract))
+    if executor_factory is not None:
+        if control is not None:
+            options.update(cancelled=control.is_cancelled, receipt_observer=control.receipt)
+        executor = executor_factory(artifact_root, **options)
+        if control is not None:
+            control.executor = executor
+        if (executor.model_id != str(args.model) or executor.thinking_level != "max"
+                or executor.context_profile != str(args.context_profile)
+                or executor.prompt_contract != str(args.prompt_contract)):
+            raise ValueError("injected Memory executor does not match frozen run controls")
+        return executor
+    executor = PrivateCodexLunaMemoryExecutor(
+        artifact_root, **options, codex_bin=str(args.codex_bin),
+        structured_runner=lambda **kwargs: _run_codex_structured(**kwargs, model=str(args.model), thinking="max"),
+        structured_loader=lambda directory, *, phase: _load_codex_structured_run(directory, phase=phase, model=str(args.model), thinking="max"),
+    )
+    if control is not None:
+        control.executor = executor
+    return executor
+
+
+class _EvaluationCancelled(Exception):
+    pass
+
+
+class _EvaluationControl:
+    def __init__(self, progress, cancelled):
+        self.progress = progress
+        self.cancelled = cancelled or (lambda: False)
+        self.cancel_seen = False
+        self.current_stage = "preparation"
+        self.executor = None
+        self.private_root: Path | None = None
+        self.details: dict[str, object] = {}
+
+    def is_cancelled(self) -> bool:
+        self.cancel_seen = self.cancel_seen or bool(self.cancelled())
+        return self.cancel_seen
+
+    def emit(self, event: Mapping[str, object]) -> None:
+        if self.progress is not None:
+            self.progress(dict(event))
+
+    def receipt(self, receipt: Mapping[str, object]) -> None:
+        self.emit({"type": "model_receipt", "receipt": dict(receipt)})
+
+    def stage(self, name: str, *, cleanup: bool = False) -> None:
+        self.current_stage = name
+        self.emit({"type": "stage", "stage": name, "necessaryCleanup": cleanup})
+        if self.is_cancelled() and not cleanup:
+            raise _EvaluationCancelled()
+
+
+def run_evaluation(args: argparse.Namespace, *, executor_factory: Callable[..., object] | None = None,
+                   progress: Callable[[Mapping[str, object]], None] | None = None,
+                   cancelled: Callable[[], bool] | None = None) -> dict[str, object]:
+    """Run one private evaluation, without changing process umask or stdout.
+
+    Progress is private to the embedding owner: model_receipt events contain
+    real Pi request/Session/turn bindings. Pi can recover a model request; this
+    function does not resume an interrupted shadow/rollback/replay pipeline.
+    """
+    control = _EvaluationControl(progress, cancelled)
+    try:
+        summary = _run_evaluation_body(args, executor_factory=executor_factory, control=control)
+    except Exception as exc:
+        if isinstance(exc, OSError) or getattr(exc, "interrupted", False):
+            # A stop request cannot prove a failed transport or cleanup settled.
+            raise
+        if not isinstance(exc, _EvaluationCancelled) and not control.is_cancelled():
+            raise
+        summary = {"schemaVersion": PERSONAL_MEMORY_LUNA_EVALUATION_SCHEMA_VERSION,
+            "status": "cancelled", "passed": False, "runId": str(args.run_id),
+            "model": str(args.model), "thinking": "max", "cancelledAt": control.current_stage,
+            "productionMutationPerformed": False, "pipelineResumeSupported": False, **control.details}
+        if not isinstance(exc, _EvaluationCancelled):
+            summary["interruptedErrorClass"] = type(exc).__name__
+        if control.executor is not None:
+            summary["transport"] = control.executor.transport
+            summary["modelRequests"] = redacted_luna_request_summary(control.executor.receipts)
+        if control.private_root is not None:
+            _write_private_summary(control.private_root / "evaluation-summary.json", summary)
+    finally:
+        try:
+            if control.executor is not None:
+                control.executor.close()
+        finally:
+            # Dependencies create SQLite/temp artifacts under this mode-0700
+            # root. Explicitly secure final files without process-global umask.
+            if control.private_root is not None:
+                for path in control.private_root.rglob("*"):
+                    if not path.is_symlink():
+                        path.chmod(0o700 if path.is_dir() else 0o600)
+    control.emit({"type": "stage", "stage": "cancelled" if summary["status"] == "cancelled" else "completed"})
+    return summary
+
+
+def main(argv: list[str] | None = None, *, executor_factory: Callable[..., object] | None = None) -> int:
     os.umask(0o077)
-    evaluation_started = time.monotonic()
     args = build_parser().parse_args(argv)
+    try:
+        summary = run_evaluation(args, executor_factory=executor_factory)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    common = ("passed", "status", "model", "thinking", "modelRequests", "sourceShadowUnchanged", "productionMutationPerformed")
+    fields = (("recovery", "curation", "legalEvidenceAdmissionPerformed")
+        if summary.get("evaluationKind") == "historical_semantic_quality_only" else
+        ("firstRun", "appliedState", "appliedRag", "rollback", "rollbackRag", "replay", "replayRag", "modelOnlyComparison"))
+    print(json.dumps({key: summary.get(key) for key in (*common, *fields)}, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if summary.get("passed") else 1
+
+
+def _run_evaluation_body(args: argparse.Namespace, *, executor_factory, control: _EvaluationControl) -> dict[str, object]:
+    evaluation_started = time.monotonic()
+    synthetic_only = args.shadow_db is None and bool(args.clean_synthetic_shadow) and bool(args.seed_synthetic_rag_fixture)
+    if args.shadow_db is None and (not synthetic_only or str(args.semantic_timeline_id).strip()):
+        raise ValueError("--shadow-db is required outside a clean synthetic fixture evaluation")
+    source_path = args.shadow_db.expanduser().resolve(strict=True) if args.shadow_db is not None else None
+    production_path = args.production_db.expanduser().resolve(strict=False)
+    if source_path is not None and (source_path == production_path or (
+            production_path.exists() and source_path.samefile(production_path))):
+        raise ValueError("the production database cannot be a Memory evaluation source")
+    if executor_factory is not None and any((args.baseline_report, args.model_only_baseline_report, args.optimization_output)):
+        raise ValueError("injected Memory transport requires a separate evaluation; legacy comparison expects codex CLI receipts")
     if args.optimization_output is not None and args.baseline_report is None:
-        raise SystemExit("--optimization-output requires --baseline-report")
+        raise ValueError("--optimization-output requires --baseline-report")
     if args.model_only_baseline_report is not None and args.baseline_report is not None:
-        raise SystemExit(
+        raise ValueError(
             "--model-only-baseline-report cannot be combined with --baseline-report"
         )
     model_only_baseline: dict[str, object] | None = None
@@ -410,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
         baseline_path = args.model_only_baseline_report.expanduser().resolve(strict=True)
         value = json.loads(baseline_path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
-            raise SystemExit("Memory model-only baseline report must be a JSON object")
+            raise ValueError("Memory model-only baseline report must be a JSON object")
         model_only_baseline = dict(value)
         preflight = _memory_model_only_preflight(
             model_only_baseline,
@@ -424,42 +552,43 @@ def main(argv: list[str] | None = None) -> int:
                 for name, passed in dict(preflight.get("checks") or {}).items()
                 if passed is not True
             )
-            raise SystemExit(
+            raise ValueError(
                 "invalid Memory model-only baseline or candidate controls: " + failed
             )
         model_only_baseline_sha256 = _file_sha256(baseline_path)
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", str(args.run_id)) is None:
-        raise SystemExit("--run-id must be a bounded public identifier")
+        raise ValueError("--run-id must be a bounded public identifier")
     private_root = args.private_dir.expanduser().resolve(strict=False)
     if private_root.is_relative_to(ROOT):
-        raise SystemExit("--private-dir must be outside the Git worktree")
+        raise ValueError("--private-dir must be outside the Git worktree")
     if private_root.exists():
         if not private_root.is_dir() or private_root.stat().st_mode & 0o077:
-            raise SystemExit("existing --private-dir must be a mode-0700 directory")
+            raise ValueError("existing --private-dir must be a mode-0700 directory")
     else:
         private_root.mkdir(parents=True, mode=0o700)
         private_root.chmod(0o700)
+    control.private_root = private_root
+    control.stage("preparation")
 
     if str(args.semantic_timeline_id).strip():
-        return _run_semantic_quality(args, private_root)
+        return _run_semantic_quality(args, private_root, executor_factory=executor_factory, control=control)
 
     if bool(args.clean_synthetic_shadow) and not bool(args.seed_synthetic_rag_fixture):
-        raise SystemExit("--clean-synthetic-shadow requires --seed-synthetic-rag-fixture")
+        raise ValueError("--clean-synthetic-shadow requires --seed-synthetic-rag-fixture")
     embedding_provider = (
         embedding_provider_from_env()
         if bool(args.embedding_from_env)
         else None
     )
     if isinstance(embedding_provider, NullEmbeddingProvider):
-        raise SystemExit("--embedding-from-env resolved to a disabled provider")
+        raise ValueError("--embedding-from-env resolved to a disabled provider")
     rag_core = None
     if bool(args.clean_synthetic_shadow):
-        source = args.shadow_db.expanduser().resolve(strict=True)
-        source_identity = _file_identity(source)
-        verification = verify_recovered_memory_shadow(source)
+        source_identity = _file_identity(source_path) if source_path is not None else None
+        verification = verify_recovered_memory_shadow(source_path) if source_path is not None else {"syntheticOnly": True}
         working_db = private_root / "clean-synthetic-evaluation.sqlite"
         if working_db.exists():
-            raise SystemExit("clean synthetic working database already exists")
+            raise ValueError("clean synthetic working database already exists")
         rag_core = LocalSqliteCoreClient(
             working_db,
             # Keep the default synthetic fixture fully local and deterministic
@@ -471,7 +600,7 @@ def main(argv: list[str] | None = None) -> int:
         prepared = {
             "workingDb": working_db,
             "resumed": False,
-            "sourceFileSha256": _file_sha256(source),
+            "sourceFileSha256": _file_sha256(source_path) if source_path is not None else None,
             "sourceIdentity": source_identity,
             "verification": verification,
         }
@@ -508,26 +637,8 @@ def main(argv: list[str] | None = None) -> int:
         replay_baseline_snapshot = private_root / "pre-run-baseline.sqlite"
         _snapshot_sqlite(working_db, replay_baseline_snapshot)
         replay_baseline_sha256 = _file_sha256(replay_baseline_snapshot)
-    executor = PrivateCodexLunaMemoryExecutor(
-        private_root / "codex",
-        audit_db_path=working_db,
-        timeout_seconds=float(args.timeout_seconds),
-        codex_bin=str(args.codex_bin),
-        model_id=str(args.model),
-        context_profile=str(args.context_profile),
-        prompt_contract=str(args.prompt_contract),
-        structured_runner=lambda **kwargs: _run_codex_structured(
-            **kwargs,
-            model=str(args.model),
-            thinking="max",
-        ),
-        structured_loader=lambda directory, *, phase: _load_codex_structured_run(
-            directory,
-            phase=phase,
-            model=str(args.model),
-            thinking="max",
-        ),
-    )
+    control.stage("curation")
+    executor = _create_evaluation_executor(args, private_root / "codex", audit_db_path=working_db, executor_factory=executor_factory, control=control)
     organizer = ManagedPiMemoryOrganizer(executor)
     curator = OwnerMemoryCurator(
         working_db,
@@ -550,6 +661,8 @@ def main(argv: list[str] | None = None) -> int:
         owner_id="default",
         instruction=ATOM_FIRST_EVALUATION_INSTRUCTION,
     )
+    # Applied shadow changes still need local rollback after cancellation.
+    control.stage("curation_completed", cleanup=True)
     first_state = atom_first_memory_state_summary(working_db)
     first_result = _first_result(first)
     first_request_count = len(executor.receipts)
@@ -561,6 +674,7 @@ def main(argv: list[str] | None = None) -> int:
         rag_core is not None
         and bool(first.get("ok"))
         and str(first_result.get("runStatus") or "") == "applied"
+        and not control.is_cancelled()
     ):
         first_rag_full = evaluate_synthetic_personal_memory_rag(
             rag_core,
@@ -590,10 +704,12 @@ def main(argv: list[str] | None = None) -> int:
     second_state: dict[str, object] = {}
     rollback_rag: dict[str, object] = {}
     replay_rag: dict[str, object] = {}
+    control.details.update(rollback=rollback, replay=replay)
 
     if bool(first.get("ok")) and run_id:
+        control.stage("rollback", cleanup=True)
         rollback["attempted"] = True
-        with sqlite3.connect(working_db) as conn:
+        with closing(sqlite3.connect(working_db)) as conn:
             conn.row_factory = sqlite3.Row
             if str(first_result.get("runStatus") or "") == "applied":
                 rolled = rollback_memory_book_run(conn, run_id=run_id)
@@ -616,7 +732,7 @@ def main(argv: list[str] | None = None) -> int:
             rolled_back_state["logicalStateSha256"]
             == baseline["logicalStateSha256"]
         )
-        if rag_core is not None and seeded_atom_ids:
+        if rag_core is not None and seeded_atom_ids and not control.is_cancelled():
             rollback_rag_full = evaluate_synthetic_personal_memory_rag(
                 rag_core,
                 synthetic_cases,
@@ -631,7 +747,8 @@ def main(argv: list[str] | None = None) -> int:
             rag_core is None or bool(rollback.get("ragCleared"))
         )
 
-        if rollback["ok"] and rollback["kind"] == "memory_book_run":
+        if rollback["ok"] and rollback["kind"] == "memory_book_run" and not control.is_cancelled():
+            control.stage("replay")
             replay["attempted"] = True
             if replay_baseline_snapshot is not None:
                 replay["baselineRestoredForReplay"] = _restore_sqlite_snapshot(
@@ -645,6 +762,7 @@ def main(argv: list[str] | None = None) -> int:
                 replay["baselineRestoredForReplay"] = True
             receipt_count_before = len(executor.receipts)
             if replay.get("baselineRestoredForReplay"):
+                control.stage("replay_curation")
                 second = curator.run_due(
                     manual=True,
                     owner_kind="user",
@@ -652,8 +770,20 @@ def main(argv: list[str] | None = None) -> int:
                     instruction=ATOM_FIRST_EVALUATION_INSTRUCTION,
                     current_ms=int(time.time() * 1_000) + 120_000,
                 )
+                control.stage("replay_completed", cleanup=True)
                 second_state = atom_first_memory_state_summary(working_db)
-                if rag_core is not None:
+                second_result = _first_result(second)
+                if control.is_cancelled() and second.get("ok") and second_result.get("runStatus") == "applied" and second_result.get("runId"):
+                    control.stage("replay_rollback", cleanup=True)
+                    with closing(sqlite3.connect(working_db)) as conn:
+                        conn.row_factory = sqlite3.Row
+                        rolled = rollback_memory_book_run(conn, run_id=str(second_result["runId"]))
+                        conn.commit()
+                    replay["cancelledCleanup"] = {
+                        "attempted": True, "runStatus": str(rolled.get("status") or ""),
+                        "restoredBaseline": atom_first_memory_state_summary(working_db)["logicalStateSha256"] == baseline["logicalStateSha256"],
+                    }
+                if rag_core is not None and not control.is_cancelled():
                     replay_rag_full = evaluate_synthetic_personal_memory_rag(
                         rag_core,
                         synthetic_cases,
@@ -687,8 +817,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
 
-    source_identity_after = _file_identity(args.shadow_db.expanduser().resolve(strict=True))
-    source_unchanged = source_identity_after == prepared["sourceIdentity"]
+    source_unchanged = _file_identity(source_path) == prepared["sourceIdentity"] if source_path is not None else None
     requests = redacted_luna_request_summary(executor.receipts)
     phases = [str(item.get("phase") or "") for item in requests]
     first_ok = bool(first.get("ok"))
@@ -717,14 +846,15 @@ def main(argv: list[str] | None = None) -> int:
     aggregate_usage = _aggregate_model_usage(requests)
     usage_ok = aggregate_usage.get("available") is True
     passed = (
-        first_ok
+        not control.is_cancelled()
+        and first_ok
         and lineage_ok
         and book_ok
         and model_ok
         and (usage_ok or not bool(args.require_usage))
         and bool(rollback.get("ok"))
         and (not replay["attempted"] or bool(replay["ok"]))
-        and source_unchanged
+        and (synthetic_only or source_unchanged)
         and (
             not bool(args.seed_synthetic_rag_fixture)
             or (
@@ -736,18 +866,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     summary: dict[str, object] = {
         "schemaVersion": PERSONAL_MEMORY_LUNA_EVALUATION_SCHEMA_VERSION,
-        "status": "pass" if passed else "iterate",
+        "status": "cancelled" if control.is_cancelled() else ("pass" if passed else "iterate"),
+        "pipelineResumeSupported": False,
+        "cancelledAt": control.current_stage if control.is_cancelled() else None,
         "passed": passed,
         "runId": str(args.run_id),
         "model": str(args.model),
         "provider": "openai-codex",
         "thinking": "max",
-        "transport": "codex_cli_ephemeral",
+        "transport": executor.transport,
         "contextProfile": str(args.context_profile),
         "promptContract": str(args.prompt_contract),
         "gatewayInstalledAcceptance": False,
         "productionDatabaseOpened": False,
         "productionMutationPerformed": False,
+        "sourceShadowEvaluated": source_path is not None,
         "sourceShadowUnchanged": source_unchanged,
         "syntheticRagFixtureEnabled": bool(args.seed_synthetic_rag_fixture),
         "syntheticSeed": synthetic_seed,
@@ -795,7 +928,7 @@ def main(argv: list[str] | None = None) -> int:
         summary["modelOnlyComparison"] = model_only_comparison
         passed = bool(passed and model_only_comparison.get("singleFactorGatePassed"))
         summary["passed"] = passed
-        summary["status"] = "pass" if passed else "iterate"
+        summary["status"] = "cancelled" if control.is_cancelled() else ("pass" if passed else "iterate")
     baseline_report: dict[str, object] | None = None
     if args.baseline_report is not None:
         value = json.loads(
@@ -830,34 +963,10 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 ),
             )
-    print(
-        json.dumps(
-            {
-                "passed": passed,
-                "status": summary["status"],
-                "model": summary["model"],
-                "thinking": summary["thinking"],
-                "firstRun": summary["firstRun"],
-                "appliedState": summary["appliedState"],
-                "appliedRag": first_rag,
-                "rollback": rollback,
-                "rollbackRag": rollback_rag,
-                "replay": replay,
-                "replayRag": replay_rag,
-                "modelRequests": requests,
-                "modelOnlyComparison": summary.get("modelOnlyComparison"),
-                "sourceShadowUnchanged": source_unchanged,
-                "productionMutationPerformed": False,
-            },
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-    )
-    return 0 if passed else 1
+    return summary
 
 
-def _run_semantic_quality(args: argparse.Namespace, private_root: Path) -> int:
+def _run_semantic_quality(args: argparse.Namespace, private_root: Path, *, executor_factory: Callable[..., object] | None = None, control: _EvaluationControl) -> dict[str, object]:
     """Use real Luna to judge recovered history without changing its legal state."""
 
     source_db = args.shadow_db.expanduser().resolve(strict=True)
@@ -870,11 +979,8 @@ def _run_semantic_quality(args: argparse.Namespace, private_root: Path) -> int:
     )
     bundle, recovery = build_personal_memory_semantic_evaluation_bundle(snapshot)
     frozen_sha256 = str(recovery["semanticBundleSha256"])
-    executor = PrivateCodexLunaMemoryExecutor(
-        private_root / "luna",
-        timeout_seconds=float(args.timeout_seconds),
-        codex_bin=str(args.codex_bin),
-    )
+    control.stage("semantic_curation")
+    executor = _create_evaluation_executor(args, private_root / "luna", executor_factory=executor_factory, control=control)
     organizer = ManagedPiMemoryOrganizer(executor)
     run_id = f"semantic-evaluation:{frozen_sha256[:32]}"
     try:
@@ -896,8 +1002,8 @@ def _run_semantic_quality(args: argparse.Namespace, private_root: Path) -> int:
     except BaseException as exc:
         executor.fail_run(exc)
         raise
-    finally:
-        organizer.close()
+    # The embedding body closes the executor on every exit.
+    control.stage("semantic_validation")
 
     expected_refs = [
         str(item.get("sourceRef") or "")
@@ -922,7 +1028,7 @@ def _run_semantic_quality(args: argparse.Namespace, private_root: Path) -> int:
     )
     model_ok = (
         valid_phase_sequence
-        and all(item.get("model") == "gpt-5.6-luna" for item in requests)
+        and all(item.get("model") == executor.model_id for item in requests)
         and all(item.get("thinking") == "max" for item in requests)
         and bool(requests[-1].get("isolated"))
     )
@@ -936,11 +1042,12 @@ def _run_semantic_quality(args: argparse.Namespace, private_root: Path) -> int:
     summary: dict[str, object] = {
         "schemaVersion": PERSONAL_MEMORY_LUNA_EVALUATION_SCHEMA_VERSION,
         "evaluationKind": "historical_semantic_quality_only",
+        "pipelineResumeSupported": False,
         "status": "pass" if passed else "iterate",
         "passed": passed,
-        "model": "gpt-5.6-luna",
+        "model": executor.model_id,
         "thinking": "max",
-        "transport": "codex_cli_ephemeral",
+        "transport": executor.transport,
         "semanticEvaluationOnly": True,
         "legalEvidenceAdmissionPerformed": False,
         "productionDatabaseOpened": False,
@@ -958,26 +1065,7 @@ def _run_semantic_quality(args: argparse.Namespace, private_root: Path) -> int:
     _write_private_summary(private_root / "semantic-evaluation-summary.json", summary)
     if args.public_report is not None:
         _write_semantic_public_report(args.public_report.expanduser(), summary)
-    print(
-        json.dumps(
-            {
-                "passed": passed,
-                "status": summary["status"],
-                "model": summary["model"],
-                "thinking": summary["thinking"],
-                "recovery": recovery,
-                "curation": curation,
-                "modelRequests": requests,
-                "sourceShadowUnchanged": source_unchanged,
-                "legalEvidenceAdmissionPerformed": False,
-                "productionMutationPerformed": False,
-            },
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-    )
-    return 0 if passed else 1
+    return summary
 
 
 def _first_result(report: Mapping[str, object]) -> dict[str, object]:

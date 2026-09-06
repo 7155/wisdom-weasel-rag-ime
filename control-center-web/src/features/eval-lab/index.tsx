@@ -11,12 +11,12 @@ import {
   Scale,
   Users,
 } from 'lucide-react';
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Button, EmptyState } from '@/components/primitives';
 import { useControlTransport } from '@/app/control-transport';
 import { roleItems } from '@/features/agent/types';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
-import { usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { PawRoomWorkspace } from '@/paw-os/apps/PawRoomWorkspace';
 import type { RoomPermissionPolicy, RoomSummary } from '@/features/rooms/room-types';
 import {
@@ -31,12 +31,24 @@ import {
   type EvalLabFailureOwner,
   type EvalLabExperiment,
   type EvalLabPathSearch,
-  type EvalLabRepairPlan,
   type EvalLabRun,
   type EvalLabTask,
 } from './api';
 import { createEvalLabExperimentAuditDownload } from './experiment-audit-html';
 import { LinkedOptimizationWorkbench } from './optimization/OptimizationWorkbench';
+import { ExperimentWorkspace } from './ExperimentWorkspace';
+import { GoldenWorkflow } from './golden/GoldenWorkflow';
+import { ExperimentApplication } from './ExperimentApplication';
+import { ExperimentResultSummary } from './ExperimentResultSummary';
+import { buildExperimentDisplayMetrics } from './experiment-display-metrics';
+import { PAW_METRIC_LABELS, pawSelfbootEfficiency, pawSelfbootQuality, pawSelfbootReliability } from './paw-selfboot-metrics';
+import { PawSelfbootResultsChart } from './PawSelfbootResultsChart';
+import { compileExperimentDispatch, type ExperimentSetup } from './execution-contract';
+import { bindSceneRecipeState, getSceneRecipeState, sceneRecipeIdForExperiment } from './scene-recipes';
+import { TraceLabContext } from './TraceLabContext';
+import { CandidatePatchEvidence } from './CandidatePatchEvidence';
+import { CandidateDispatchRecovery, useCandidateRoomDispatch } from './candidate-room-dispatch';
+import { canonicalEvidenceRunId, evidenceRunMatches, evidenceRunMatchesVersion, evidenceTraceIds, experimentBaselineTraceIds, experimentRunBindings, matchingEvidenceRuns } from './evidence-identity';
 import './eval-lab.css';
 
 /** The Room/Session owner used by the Agent Lab product surface. */
@@ -51,42 +63,61 @@ const EVAL_LAB_READ_ONLY_PERMISSION_POLICY: RoomPermissionPolicy = {
 
 const EVAL_LAB_CANDIDATE_PERMISSION_POLICY: RoomPermissionPolicy = {
   schemaVersion: 'rag-ime.room-permission-policy.v1',
-  room: { executionMode: 'workspace_managed' },
+  room: { executionMode: 'full_trust' },
   partner: { executionMode: 'inherit' },
   toolAgent: { executionMode: 'inherit' },
 };
 
-type EvalLabPage = 'overview' | 'paths' | 'details' | 'sessions';
+type EvalLabPage = 'workspace' | 'overview' | 'paths' | 'details' | 'sessions' | 'golden';
 type ExperimentRecordView = 'task' | 'dataset' | 'baseline' | 'optimization' | 'candidate';
 type RoomAction = { runId: string; state: 'creating' | 'sending' | 'error'; message?: string };
 const EVAL_LAB_PAGES = [
+  ['workspace', '实验工作区'],
   ['overview', '实验结果'],
   ['paths', '方案路径'],
   ['details', '实验详情'],
   ['sessions', '对话与证据'],
 ] as const satisfies readonly (readonly [EvalLabPage, string])[];
 
-export function EvalLabFeature() {
+export function EvalLabFeature({ initialPage = 'workspace' }: { initialPage?: EvalLabPage } = {}) {
+  const id = useId();
   const desktop = usePawOsDesktop();
   const transport = useControlTransport();
   const runs = useEvalLabRuns();
-  const [page, setPage] = useState<EvalLabPage>('overview');
+  const [page, setPage] = useState<EvalLabPage>(() => initialPage === 'workspace' && new URLSearchParams(window.location.hash.split('?')[1]).get('view') === 'golden' ? 'golden' : initialPage);
+  const [goldenStartNew, setGoldenStartNew] = useState(false);
+  const [recordsOpen, setRecordsOpen] = useState(initialPage !== 'workspace');
   const [selectedExperimentId, setSelectedExperimentId] = useState('');
   const [roomAction, setRoomAction] = useState<RoomAction>();
   const [ownedRooms, setOwnedRooms] = useState<RoomSummary[]>([]);
   const [activeRoomId, setActiveRoomId] = useState('');
   const [roomPersonas, setRoomPersonas] = useState<AgentPersonaV1[]>([]);
   const [roomCatalogError, setRoomCatalogError] = useState('');
+  const candidateDispatch = useCandidateRoomDispatch();
+  useEffect(() => {
+    const pendingRooms = Object.values(candidateDispatch.pending).map((item) => item.room);
+    if (!pendingRooms.length) return;
+    setOwnedRooms((current) => mergeAgentLabRooms(pendingRooms, current));
+    setActiveRoomId((current) => current || pendingRooms[0]!.id);
+  }, [candidateDispatch.pending]);
   // The overview itself now reports whether each project is backed by a real
   // transcript, a report-only receipt, or a controlled fixture. Load the
   // bounded catalog up front so that status is not inferred from titles.
   const sourceEvidence = useEvalLabEvidenceCatalog(true);
 
-  const wizardBusy = roomAction?.runId === 'evaluation-wizard'
-    && (roomAction.state === 'creating' || roomAction.state === 'sending');
+  function showGolden(startNew = false) {
+    setGoldenStartNew(startNew);
+    setPage('golden');
+    if (window.location.hash.startsWith('#/eval-lab')) window.history.replaceState(null, '', '#/eval-lab?view=golden');
+  }
+
+  function closeGolden() {
+    setPage('workspace');
+    if (window.location.hash.startsWith('#/eval-lab')) window.history.replaceState(null, '', '#/eval-lab');
+  }
 
   useEffect(() => {
-    if (page !== 'sessions' && page !== 'details') return;
+    if (page !== 'sessions' && page !== 'details' && page !== 'workspace') return;
     let active = true;
     void Promise.all([
       transport.request({ pathId: 'agent.rooms.list', query: { ownerAppId: AGENT_LAB_OWNER_APP_ID, limit: 100 } }),
@@ -105,11 +136,11 @@ export function EvalLabFeature() {
     return () => { active = false; };
   }, [page, transport]);
 
-  function showOwnedRoom(room: RoomSummary, personas: AgentPersonaV1[]): void {
+  function showOwnedRoom(room: RoomSummary, personas: AgentPersonaV1[], targetPage: EvalLabPage = 'sessions'): void {
     setRoomPersonas(personas);
     setOwnedRooms((current) => mergeAgentLabRooms([room], current));
     setActiveRoomId(room.id);
-    setPage('sessions');
+    setPage(targetPage);
   }
 
   async function findResumableAgentLabRoom(value: unknown): Promise<RoomSummary | undefined> {
@@ -131,8 +162,9 @@ export function EvalLabFeature() {
     return undefined;
   }
 
-  async function createOptimizationRoom(experiment: EvalLabExperiment, run?: EvalLabRun, actionKey = experiment.experimentId): Promise<void> {
+  async function createOptimizationRoom(experiment: EvalLabExperiment, run?: EvalLabRun, actionKey = experiment.experimentId, targetPage: EvalLabPage = 'sessions'): Promise<void> {
     if (roomAction?.state === 'creating' || roomAction?.state === 'sending') return;
+    if (targetPage === 'workspace') setSelectedExperimentId(experiment.experimentId);
     setRoomAction({ runId: actionKey, state: 'creating' });
     try {
       const rolesResponse = await transport.request({ pathId: 'agent.roles.list' });
@@ -148,7 +180,7 @@ export function EvalLabFeature() {
         });
         const existing = await findResumableAgentLabRoom(existingResponse);
         if (existing) {
-          showOwnedRoom(existing, personas);
+          showOwnedRoom(existing, personas, targetPage);
           setRoomAction(undefined);
           return;
         }
@@ -181,7 +213,7 @@ export function EvalLabFeature() {
       if (!isAgentLabRoom(room)) {
         throw new Error('服务端没有返回可验证的 Room。');
       }
-      showOwnedRoom(room, personas);
+      showOwnedRoom(room, personas, targetPage);
       setRoomAction({ runId: actionKey, state: 'sending' });
       await transport.request({
         pathId: 'agent.room.message',
@@ -197,183 +229,144 @@ export function EvalLabFeature() {
     }
   }
 
-  async function createEvaluationWizardRoom(): Promise<void> {
+  async function createCandidateRoom(experiment: EvalLabExperiment, setup: ExperimentSetup): Promise<void> {
     if (roomAction?.state === 'creating' || roomAction?.state === 'sending') return;
-    setRoomAction({ runId: 'evaluation-wizard', state: 'creating' });
-    try {
-      const rolesResponse = await transport.request({ pathId: 'agent.roles.list' });
-      const personas = roleItems(rolesResponse);
-      const participants = buildEvaluationWizardParticipants(personas);
-      const brief = buildEvaluationWizardBrief();
-      const message = publicRoomMessage(brief);
-      try {
-        const existingResponse = await transport.request({ pathId: 'agent.rooms.list', query: { ownerAppId: AGENT_LAB_OWNER_APP_ID, surfaceKey: 'wizard', limit: 1 } });
-        const existing = await findResumableAgentLabRoom(existingResponse);
-        if (existing) {
-          showOwnedRoom(existing, personas);
-          setRoomAction(undefined);
-          return;
-        }
-      } catch {
-        // See the matching optimization in createOptimizationRoom.
-      }
-      const roomResponse = await transport.request<Record<string, unknown>>({
-        pathId: 'agent.rooms.create',
-        body: {
-          title: 'Agent Lab · 评测向导',
-          // The wizard is an intake conversation. A collaboration Room gives
-          // the first unaddressed message a deterministic coordinator lane;
-          // roleplay/natural routing can otherwise leave the UI waiting for a
-          // planet when the roster is still being hydrated.
-          roomKind: 'collaboration',
-          avatar: 'briefcase',
-          description: '先补齐数据，再共同冻结评测合同和下一步候选',
-          scenarioPrompt: buildEvalLabSkillContext(brief),
-          participants,
-          routingPolicy: 'natural',
-          routingConfig: { maxResponders: 1, naturalJitter: 0, fallbackParticipantId: '' },
-          workspaceRoots: [],
-          permissionPolicy: EVAL_LAB_READ_ONLY_PERMISSION_POLICY,
-          ownerAppId: AGENT_LAB_OWNER_APP_ID,
-          surfaceKey: 'wizard',
-        },
-      });
-      const room = record(roomResponse).room;
-      if (!isAgentLabRoom(room)) {
-        throw new Error('服务端没有返回可验证的评测向导 Room。');
-      }
-      showOwnedRoom(room, personas);
-      setRoomAction({ runId: 'evaluation-wizard', state: 'sending' });
-      await transport.request({
-        pathId: 'agent.room.message',
-        params: { roomId: room.id },
-        body: {
-          message,
-          clientMessageId: 'eval-lab:evaluation-wizard',
-        },
-      });
-      setRoomAction(undefined);
-    } catch (error) {
-      setRoomAction({ runId: 'evaluation-wizard', state: 'error', message: error instanceof Error ? error.message : '评测向导暂时无法创建，请稍后重试。' });
-    }
-  }
-
-  async function prepareCandidateRoom(experiment: EvalLabExperiment): Promise<void> {
-    if (!transport.pickFiles) {
-      setRoomAction({ runId: experiment.experimentId, state: 'error', message: '当前环境不能选择候选目录。' });
+    const existing = candidateDispatch.get(experiment.experimentId);
+    if (existing) { showOwnedRoom(existing.room, roomPersonas, 'workspace'); return; }
+    let compiled = compileExperimentDispatch(experiment, setup, scenarioTaskContract(experiment));
+    if (!compiled.ok) {
+      setRoomAction({ runId: experiment.experimentId, state: 'error', message: compiled.errors.join(' ') });
       return;
     }
-    try {
-      const picked = await transport.pickFiles({ purpose: 'workspace-root', selection: 'directory', multiple: false, maxFiles: 1 });
-      const workspaceRoot = picked[0]?.path?.trim() ?? '';
-      if (!workspaceRoot) return;
-      await createCandidateRoom(experiment, workspaceRoot);
-    } catch {
-      setRoomAction({ runId: experiment.experimentId, state: 'error', message: '候选目录没有选定，请重试。' });
-    }
-  }
-
-  async function createCandidateRoom(experiment: EvalLabExperiment, workspaceRoot: string): Promise<void> {
-    if (roomAction?.state === 'creating' || roomAction?.state === 'sending') return;
+    setSelectedExperimentId(experiment.experimentId);
     setRoomAction({ runId: experiment.experimentId, state: 'creating' });
     try {
+      const sceneId = sceneRecipeIdForExperiment(experiment.experimentId);
+      if (sceneId) {
+        const state = await getSceneRecipeState(transport, sceneId, experiment.experimentId);
+        compiled = compileExperimentDispatch(experiment, setup, scenarioTaskContract(experiment), bindSceneRecipeState(state));
+        if (!compiled.ok) throw new Error(compiled.errors.join(' '));
+      }
       const rolesResponse = await transport.request({ pathId: 'agent.roles.list' });
       const personas = roleItems(rolesResponse);
       const participants = buildRoomParticipants(experiment, personas);
-      const confirmation = candidateConfirmation(experiment);
       const roomResponse = await transport.request<Record<string, unknown>>({
         pathId: 'agent.rooms.create',
         body: {
           title: `Agent Lab · 新候选 · ${experiment.title}`,
           roomKind: 'collaboration',
           avatar: 'briefcase',
-          description: '用户选定工作区的新候选；只允许运行冻结 Validation',
-          scenarioPrompt: buildCandidateRoomContext(experiment, confirmation),
+          description: '按已设定目标、范围和预算执行的新候选实验',
+          scenarioPrompt: compiled.scenarioPrompt,
           participants,
           routingPolicy: 'natural',
           routingConfig: { maxResponders: 1, naturalJitter: 0, fallbackParticipantId: '' },
-          workspaceRoots: [workspaceRoot],
+          workspaceRoots: [compiled.contract.workspace.root],
           permissionPolicy: EVAL_LAB_CANDIDATE_PERMISSION_POLICY,
-          workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
+          dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
           ownerAppId: AGENT_LAB_OWNER_APP_ID,
           surfaceKey: `candidate.${experiment.experimentId}`.slice(0, 64),
         },
       });
       const room = record(roomResponse).room;
       if (!isAgentLabRoom(room)) throw new Error('服务端没有返回可验证的候选 Room。');
-      showOwnedRoom(room, personas);
+      showOwnedRoom(room, personas, 'workspace');
       setRoomAction({ runId: experiment.experimentId, state: 'sending' });
-      await transport.request({
-        pathId: 'agent.room.message',
-        params: { roomId: room.id },
-        body: {
-          message: candidateConfirmationMessage(experiment, confirmation),
-          clientMessageId: `eval-lab:candidate:${experiment.experimentId}`,
-        },
-      });
+      await candidateDispatch.begin(experiment.experimentId, room, compiled.message);
       setRoomAction(undefined);
     } catch (error) {
       setRoomAction({ runId: experiment.experimentId, state: 'error', message: error instanceof Error ? error.message : '候选 Room 暂时无法创建。' });
     }
   }
 
+  if (page === 'golden') return <main className="eval-lab eval-lab--golden"><GoldenWorkflow onClose={closeGolden} startNew={goldenStartNew} /></main>;
+
   return (
-    <main aria-labelledby="eval-lab-title" className="eval-lab">
+    <main aria-labelledby="eval-lab-title" className={`eval-lab${page === 'workspace' ? ' eval-lab--workspace' : ''}`}>
       <header className="eval-lab__header">
         <div>
-          <p className="eval-lab__eyebrow"><FlaskConical aria-hidden="true" size={15} /> Agent Lab · 真实任务对照评测</p>
-          <h1 id="eval-lab-title">Agent 工作流实验室</h1>
-          <p className="eval-lab__lede">把任何能重复验收的 Agent 能力注册成测评：每个测评使用自己冻结的数据与评分标准，PAW 在统一证据框架下比较方案。</p>
+          <h1 id="eval-lab-title"><FlaskConical aria-hidden="true" size={23} /> Agent 工作流实验室</h1>
+          <p className="eval-lab__lede">设定目标，运行候选，用同一批任务检查改善。</p>
+          <Button aria-expanded={recordsOpen} leadingIcon={<ClipboardList size={15} />} onClick={() => setRecordsOpen((open) => !open)} variant="secondary">浏览实验记录</Button>
         </div>
         <div className="eval-lab__header-actions">
-          <span className={`eval-lab__source-badge eval-lab__source-badge--${transport.kind}`}>{transport.kind === 'mock' ? '示例数据' : '本机数据'}</span>
-          <Button leadingIcon={<ClipboardList size={15} />} loading={wizardBusy} onClick={() => void createEvaluationWizardRoom()} variant="primary">
-            {roomAction?.runId === 'evaluation-wizard' && roomAction.state === 'sending' ? '正在打开…' : '新建评测'}
-          </Button>
-          <Button leadingIcon={<RefreshCw size={15} />} onClick={() => void runs.refetch()} variant="secondary">
+          {transport.kind === 'mock' ? <span className="eval-lab__source-badge eval-lab__source-badge--mock">示例数据</span> : null}
+          <Button onClick={() => showGolden()} variant="secondary">评测集</Button>
+          <Button leadingIcon={<ClipboardList size={15} />} onClick={() => showGolden(true)} variant="primary">新建评测</Button>
+          <Button leadingIcon={<RefreshCw size={15} />} loading={runs.isFetching || sourceEvidence.isFetching} onClick={() => { void runs.refetch(); void sourceEvidence.refetch(); }} variant="secondary">
             刷新
           </Button>
         </div>
       </header>
 
-      {roomAction?.runId === 'evaluation-wizard' && roomAction.state === 'error' ? <p aria-live="assertive" className="eval-lab__room-error" role="alert">{roomAction.message}</p> : null}
 
-      <section aria-label="Agent Lab 三步流程" className="eval-lab__primer">
-        <div><strong>1 · 选择真实任务</strong><span>给出输入、期望结果和不能违反的限制</span></div>
-        <div><strong>2 · 一次只改一项</strong><span>模型、提示词、技能、工具、检索、记忆或协作流程</span></div>
-        <div><strong>3 · 按同一标准重跑</strong><span>先比正确与安全，再比成本；耗时只作诊断</span></div>
-        <p>当前结论只使用仍有效的实验；被新回执替代的失败方案移入只读历史，不再参与当前比较。</p>
-      </section>
+      <TraceLabContext experiment={page === 'workspace' ? activeWorkspaceExperiment(runs.data?.experiments ?? [], selectedExperimentId) : activeProjectExperiment(runs.data?.experiments ?? [], selectedExperimentId)} />
 
       {runs.isLoading ? <div aria-live="polite" className="eval-lab__state" role="status">正在读取评测回执…</div> : null}
       {runs.error ? (
         <div aria-live="assertive" className="eval-lab__error" role="alert">
-          <strong>还没读取到评测结果</strong>
-          <span>请确认本机服务正在运行，然后点击“刷新”。已经保存的实验不会丢失。</span>
+          <strong>{runs.data ? '更新暂时失败，仍显示上次读取的实验' : '还没读取到评测结果'}</strong>
+          <span>{runs.data ? '当前页面和未提交设置已保留。重新连接后，读取最新回执。' : '请确认本机服务正在运行，再重新读取。已经保存的实验不会丢失。'}</span>
+          <Button size="small" loading={runs.isFetching} onClick={() => void runs.refetch()}>重新读取实验</Button>
           <details><summary>查看技术信息</summary><code>{publicErrorText(runs.error)}</code></details>
         </div>
       ) : null}
       {!runs.isLoading && !runs.error && runs.data && runs.data.items.length === 0 && runs.data.experiments.length === 0 ? (
-        <EmptyState icon={ClipboardList} title="还没有实验" description="点击上方“新建评测”，Agent 会先确认任务、数据和验收标准，再创建第一轮对照实验。" />
+        <EmptyState icon={ClipboardList} title="还没有实验" description="点击“新建评测”，从真实资料起草题目，审核标准并校准评审后，开始对照实验。" />
       ) : null}
-      {!runs.isLoading && !runs.error && runs.data && (runs.data.items.length > 0 || runs.data.experiments.length > 0 || ownedRooms.length > 0) ? (
+      {!runs.isLoading && runs.data && (runs.data.items.length > 0 || runs.data.experiments.length > 0 || ownedRooms.length > 0) ? (
         <>
-          <nav aria-label="Agent Lab 页面" className="eval-lab__pages" role="tablist">
+          {recordsOpen ? <nav aria-label="Agent Lab 页面" className="eval-lab__pages" role="tablist">
             {EVAL_LAB_PAGES.map(([key, label], index) => (
               <button
+                aria-controls={`${id}-records-panel`}
                 aria-selected={page === key}
+                id={`${id}-${key}-tab`}
                 key={key}
                 onClick={() => setPage(key)}
                 onKeyDown={(event) => moveTabbedSelection(event, index, EVAL_LAB_PAGES.map(([value]) => value), setPage)}
                 role="tab"
+                tabIndex={page === key ? 0 : -1}
                 type="button"
               >{label}</button>
             ))}
-          </nav>
-          <section aria-label="评测批次列表" className="eval-lab__runs">
+          </nav> : null}
+          <section aria-label={recordsOpen ? undefined : '评测批次列表'} aria-labelledby={recordsOpen ? `${id}-${page}-tab` : undefined} className="eval-lab__runs" id={`${id}-records-panel`} role={recordsOpen ? 'tabpanel' : undefined}>
+            {page === 'workspace' && runs.data.experiments.length ? (() => {
+              const experiment = activeWorkspaceExperiment(runs.data.experiments, selectedExperimentId);
+              if (!experiment) return <EmptyState icon={FlaskConical} title="还没有可运行的垂直实验" description="新建评测后，固定任务与基线即可进入实验工作区。" />;
+              const evidenceRuns = matchingEvidenceRuns(sourceEvidence.data, experiment);
+              const rooms = matchingExperimentRooms(ownedRooms, experiment);
+              const currentAction = roomAction?.runId === experiment.experimentId ? roomAction : undefined;
+              const busy = currentAction?.state === 'creating' || currentAction?.state === 'sending';
+              const pendingDispatch = candidateDispatch.pending[experiment.experimentId];
+              return <ExperimentWorkspace
+                application={<ExperimentApplication experiment={experiment} />}
+                baseline={<ExperimentTraceLinks desktop={desktop} evidenceRuns={evidenceRuns} experiment={experiment} kind="baseline" />}
+                busy={busy}
+                dispatchPending={Boolean(pendingDispatch)}
+                recovery={pendingDispatch ? <CandidateDispatchRecovery pending={pendingDispatch} onRefresh={() => void candidateDispatch.refresh(experiment.experimentId)} onRetry={() => void candidateDispatch.retry(experiment.experimentId)} /> : undefined}
+                datasetSummary={publicDatasetSummary(experiment)}
+                decision={statusLabel(experiment.status)}
+                error={currentAction?.state === 'error' ? currentAction.message : undefined}
+                experiment={experiment}
+                trialSceneId={experiment.projectionState !== 'history' ? projectKeyForExperiment(experiment) ?? undefined : undefined}
+                key={experiment.experimentId}
+                onDiscuss={() => { if (pendingDispatch) showOwnedRoom(pendingDispatch.room, roomPersonas, 'workspace'); else void createOptimizationRoom(experiment, undefined, experiment.experimentId, 'workspace'); }}
+                onStart={(setup) => createCandidateRoom(experiment, setup)}
+                results={<ExperimentWorkspaceResults desktop={desktop} evidenceCatalog={sourceEvidence.data} evidenceError={Boolean(sourceEvidence.error)} evidenceLoading={sourceEvidence.isLoading} experiment={experiment} linkedRuns={matchingRuns(experiment, runs.data.items)} />}
+                room={<AgentLabRoomDeck activeRoomId={activeRoomId} error={roomCatalogError} onRoomUpdated={(updated) => { setOwnedRooms((current) => mergeAgentLabRooms([updated], current)); void runs.refetch(); void sourceEvidence.refetch(); }} onSelect={setActiveRoomId} personas={roomPersonas} rooms={rooms} />}
+                roomCount={rooms.length}
+                scene={candidateLabel(experiment)}
+                selector={<ExperimentWorkspacePicker experiments={runs.data.experiments} onSelect={setSelectedExperimentId} selectedId={experiment.experimentId} />}
+                title={projectTitleForExperiment(experiment)}
+              />;
+            })() : null}
+            {page === 'workspace' && !runs.data.experiments.length ? <EmptyState icon={FlaskConical} title="还没有实验配置" description="已有运行可在对话与证据中核对。点击新建评测，定义任务与基线。" /> : null}
             {page === 'overview' && runs.data.experiments.length ? (
               <ExperimentMatrix evidenceCatalog={sourceEvidence.data} evidenceLoading={sourceEvidence.isLoading} experiments={runs.data.experiments} onOpenExperiment={(experimentId) => { setSelectedExperimentId(experimentId); setPage('details'); }} />
             ) : null}
+            {(page === 'overview' || page === 'details') && !runs.data.experiments.length ? <EmptyState icon={FlaskConical} title="还没有已关联的实验结果" description="已有运行仍可在对话与证据中查看；建立评测集后，才能保存有明确基线的实验比较。" action={<Button onClick={() => setPage('sessions')}>查看已有运行</Button>} /> : null}
             {page === 'paths' && runs.data.pathSearches?.length ? <OptimalPathPanel searches={runs.data.pathSearches} /> : null}
             {page === 'paths' && !runs.data.pathSearches?.length ? <EmptyState icon={GitBranch} title="还没有可比较的方案路径" description="先新建评测并运行至少一个新方案，这里会显示每一步为何保留或淘汰。" /> : null}
             {page === 'details' && runs.data.experiments.length ? (
@@ -389,10 +382,7 @@ export function EvalLabFeature() {
                     experiment={experiment}
                     key={experiment.experimentId}
                     linkedRuns={matchingRuns(experiment, runs.data?.items ?? [])}
-                    onCreateRoom={(run) => void createOptimizationRoom(experiment, run)}
                     onOpenRoom={(roomId) => { setActiveRoomId(roomId); setPage('sessions'); }}
-                    onRunCandidate={() => void prepareCandidateRoom(experiment)}
-                    roomAction={roomAction}
                     rooms={matchingExperimentRooms(ownedRooms, experiment)}
                   />;
                 })() : null}
@@ -434,6 +424,144 @@ export function EvalLabFeature() {
   );
 }
 
+function ExperimentWorkspacePicker({ experiments, selectedId, onSelect }: {
+  experiments: readonly EvalLabExperiment[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+}) {
+  const groups = groupProjectExperiments(experiments.filter((experiment) => !isHistoricalExperiment(experiment)))
+    .sort((left, right) => Number(right.key === 'enterprise-rag') - Number(left.key === 'enterprise-rag'));
+  return <div className="lab-workspace__selector"><label htmlFor="lab-experiment-selector">当前实验</label><select id="lab-experiment-selector" onChange={(event) => onSelect(event.target.value)} value={selectedId}>
+    {groups.map((group) => <optgroup key={group.key} label={group.title}>{group.experiments.map((experiment) => <option key={experiment.experimentId} value={experiment.experimentId}>{projectTitleForExperiment(experiment)}{group.experiments.length > 1 ? ` · ${candidateLabel(experiment)}` : ''}</option>)}</optgroup>)}
+    {experiments.find((experiment) => experiment.experimentId === selectedId && isHistoricalExperiment(experiment)) ? <option value={selectedId}>历史实验 · {candidateLabel(experiments.find((experiment) => experiment.experimentId === selectedId)!)}</option> : null}
+  </select></div>;
+}
+
+function activeWorkspaceExperiment(experiments: readonly EvalLabExperiment[], selectedId: string): EvalLabExperiment | undefined {
+  const selected = experiments.find((experiment) => experiment.experimentId === selectedId);
+  if (selected) return selected;
+  const current = experiments.filter((experiment) => !isHistoricalExperiment(experiment));
+  return current.find((experiment) => experiment.experimentId === 'enterprise-rag.luna-prompt-v4-standard-r6.v1')
+    ?? current.filter((experiment) => projectKeyForExperiment(experiment) === 'enterprise-rag').sort(compareProjectExperimentPriority)[0]
+    ?? activeProjectExperiment(experiments, '');
+}
+
+function ExperimentTraceLinks({ desktop, evidenceRuns, experiment, kind }: {
+  desktop: ReturnType<typeof usePawOsDesktop>;
+  evidenceRuns: readonly EvalLabEvidenceRun[];
+  experiment: EvalLabExperiment;
+  kind: 'baseline' | 'candidate';
+}) {
+  const version = experiment[kind];
+  const frozenTrace = kind === 'baseline' ? experiment.optimizationEvidence?.baselineTrace : undefined;
+  const traces = kind === 'baseline' ? experimentBaselineTraceIds(evidenceRuns, experiment) : evidenceTraceIds(evidenceRuns, version);
+  return <section aria-label={kind === 'baseline' ? '原运行 Trace' : '候选运行 Trace'} className="lab-workspace__trace-links">
+    <h4>{kind === 'baseline' ? '原运行' : '候选运行'}</h4>
+    <code>{version.runId}</code>
+    {traces.length ? traces.map((traceId) => <button className="lab-workspace__text-action" key={traceId} onClick={() => openPawOsRoute(desktop, `/observability?traceId=${encodeURIComponent(traceId)}`)} type="button">打开 Trace · {traceId} <ArrowUpRight aria-hidden="true" size={14} /></button>) : <p>{frozenTrace?.reason || '未绑定可打开的 Trace；报告与对话证据仍可在下方核对。'}</p>}
+  </section>;
+}
+
+function ExperimentWorkspaceResults({ desktop, evidenceCatalog, evidenceLoading, evidenceError, experiment, linkedRuns }: {
+  desktop: ReturnType<typeof usePawOsDesktop>;
+  evidenceCatalog?: EvalLabEvidenceResponse;
+  evidenceLoading: boolean;
+  evidenceError: boolean;
+  experiment: EvalLabExperiment;
+  linkedRuns: readonly EvalLabRun[];
+}) {
+  const evidenceRuns = matchingEvidenceRuns(evidenceCatalog, experiment);
+  const boundary = experiment.vertical === 'paw-selfboot' ? experiment.claim.forbidden : experiment.optimizationEvidence?.validationBoundary.candidateAware && !experiment.optimizationEvidence.validationBoundary.candidateBlind
+    ? '本轮数据已经参与候选调优，结果仅适用于这批验证题；尚不能据此证明未见任务上的效果。'
+    : `${experiment.dataset.caseCount} 个固定 Case。${boundaryText(experiment.dataset.split)}`;
+  const resultSummary = (
+    <ExperimentResultSummary
+      experiment={experiment}
+      displayMetrics={buildExperimentDisplayMetrics(experiment)}
+      qualitySummary={matrixQuality(experiment)}
+      reliabilitySummary={matrixReliability(experiment)}
+      efficiencySummary={matrixEfficiency(experiment)}
+      boundary={boundary}
+    />
+  );
+  return <div className="lab-workspace__results">
+    {experiment.vertical === 'paw-selfboot' ? <>
+      <p className="paw-results-intro">{publicDecisionSummary(experiment)}</p>
+      <PawSelfbootResultsChart experiment={experiment} />
+      <details className="lab-workspace__details"><summary>查看完整指标口径</summary>{resultSummary}</details>
+    </> : resultSummary}
+    <CandidatePatchEvidence experiment={experiment} />
+    {evidenceLoading ? <p className="lab-workspace__notice" role="status">正在读取本实验的前后证据…</p> : evidenceError ? <p className="lab-workspace__error" role="alert">前后运行证据暂时无法读取。已有结论保留，点击上方刷新可重试。</p> : null}
+    <ExperimentPairedCases evidenceRuns={evidenceRuns} experiment={experiment} />
+    <details className="lab-workspace__details"><summary>原始评估与适用范围</summary><p>{humanClaimText(experiment.comparison.decisionReason)}</p><p>{humanClaimText(experiment.claim.allowed)}</p><p>{humanClaimText(experiment.claim.forbidden)}</p></details>
+    <details className="lab-workspace__details"><summary>查看原运行与候选记录</summary><div className="lab-workspace__evidence-summary">
+      <ExperimentTraceLinks desktop={desktop} evidenceRuns={evidenceRuns} experiment={experiment} kind="baseline" />
+      <ExperimentTraceLinks desktop={desktop} evidenceRuns={evidenceRuns} experiment={experiment} kind="candidate" />
+    </div></details>
+    <details className="lab-workspace__details"><summary>查看任务、数据与完整运行档案</summary><ExperimentRecordBrowser evidenceCatalog={evidenceCatalog} experiment={experiment} linkedRuns={linkedRuns} /><ExperimentEvidenceLinks catalog={evidenceCatalog} experiment={experiment} /></details>
+  </div>;
+}
+
+type CaseEvidenceBinding = { run: EvalLabEvidenceRun; task: EvalLabEvidenceTask };
+
+function ExperimentPairedCases({ evidenceRuns, experiment }: {
+  evidenceRuns: readonly EvalLabEvidenceRun[];
+  experiment: EvalLabExperiment;
+}) {
+  const [selectedCase, setSelectedCase] = useState('');
+  const before = new Map<string, CaseEvidenceBinding>();
+  const after = new Map<string, CaseEvidenceBinding>();
+  for (const run of [...evidenceRuns].sort((left, right) => right.updatedAtMs - left.updatedAtMs)) {
+    for (const [kind, target] of [['baseline', before], ['candidate', after]] as const) {
+      if (!evidenceRunMatchesVersion(run, experiment[kind])) continue;
+      for (const task of run.tasks) if (!target.has(evidenceTaskKey(task))) target.set(evidenceTaskKey(task), { run, task });
+    }
+  }
+  const outputs = new Map((experiment.comparison.outputComparisons ?? []).map((item) => [item.caseId, item]));
+  const scored = new Map((experiment.optimizationEvidence?.caseComparisons ?? []).map((item) => [item.caseId, item]));
+  // A RAG Session can answer the complete batch. Its lane/task label is not a
+  // Case identity. A typed case projection takes precedence over Session rows.
+  const batchEvidence = projectKeyForExperiment(experiment) === 'enterprise-rag' || experiment.evaluationKind === 'answer_evidence';
+  const cases = scored.size ? [...scored.keys()] : batchEvidence ? [] : [...new Set([...before.keys(), ...after.keys(), ...outputs.keys()])].filter((id) => id !== 'aggregate');
+  const baselineRun = evidenceRuns.find((run) => run.reportAvailable && evidenceRunMatchesVersion(run, experiment.baseline));
+  const candidateRun = evidenceRuns.find((run) => run.reportAvailable && evidenceRunMatchesVersion(run, experiment.candidate));
+  return <section aria-label="逐 Case 前后对比" className="lab-workspace__cases">
+    <header><h3>逐 Case 前后对比</h3><p>{cases.length} 条公开记录 · {experiment.vertical === 'paw-selfboot' ? publicDatasetSummary(experiment) : <>固定分母 {experiment.dataset.caseCount} 个 Case</>}</p></header>
+    {cases.length ? <div aria-hidden="true" className="lab-workspace__case-columns"><span>案例</span><span>原方案</span><span>候选方案</span><span>证据</span></div> : null}
+    {cases.length ? <ol>{cases.map((caseId) => {
+      const baseline = before.get(caseId);
+      const candidate = after.get(caseId);
+      const output = outputs.get(caseId);
+      const expanded = selectedCase === caseId;
+      return <li className="lab-workspace__case" key={caseId}>
+        <header><strong>{caseId}</strong>
+          <CaseResultSummary label="原方案" binding={baseline} scored={scored.get(caseId)?.before} />
+          <CaseResultSummary label="候选方案" binding={candidate} scored={scored.get(caseId)?.after} />
+          <button aria-expanded={expanded} aria-label={`${expanded ? '收起' : '查看'} ${caseId} 前后证据`} className="lab-workspace__text-action" onClick={() => setSelectedCase(expanded ? '' : caseId)} type="button">{expanded ? '收起证据' : '前后证据'} <ArrowUpRight aria-hidden="true" size={14} /></button>
+        </header>
+        {expanded ? <div className="lab-workspace__case-output">
+          <CaseEvidenceSide binding={baseline} label="原方案证据" output={output?.before} scored={scored.get(caseId)?.before} run={baselineRun} />
+          <CaseEvidenceSide binding={candidate} label="候选方案证据" output={output?.after} scored={scored.get(caseId)?.after} run={candidateRun} />
+        </div> : null}
+      </li>;
+    })}</ol> : <p className="lab-workspace__notice">还没有精确绑定的逐 Case 证据；汇总分数不能代替每道题的前后结果。</p>}
+  </section>;
+}
+
+type ScoredCase = NonNullable<EvalLabExperiment['optimizationEvidence']>['caseComparisons'][number]['before'];
+
+function CaseResultSummary({ label, binding, scored }: { label: string; binding?: CaseEvidenceBinding; scored?: ScoredCase }) {
+  return <div><span className="lab-workspace__case-side">{label}</span><p>{scored ? scored.status === 'passed' ? '通过' : '未通过' : binding ? evidenceTaskResult(binding.task) : '未绑定运行记录'}</p>{binding ? <small>{typeof binding.task.verifierTotal === 'number' ? `验收 ${binding.task.verifierPassed ?? '未知'}/${binding.task.verifierTotal}` : '验收明细未记录'} · {binding.task.transcriptAvailable ? '可查看对话' : evidenceTaskIsReportOnly(binding.run, binding.task) ? '仅报告证据' : '对话缺失'}</small> : null}</div>;
+}
+
+function CaseEvidenceSide({ binding, label, output, scored, run }: { binding?: CaseEvidenceBinding; label: string; output?: string; scored?: ScoredCase; run?: EvalLabEvidenceRun }) {
+  const [showReport, setShowReport] = useState(false);
+  return <section aria-label={label}><h4>{label}</h4>{output ? <p>{output}</p> : null}{scored ? <MetricList metrics={scored.metrics} /> : null}{binding
+    ? <EvidencePanel runId={binding.run.runId} taskIndex={evidenceTaskIndex(binding.run, binding.task)} fallbackTask={binding.task} initialTab={evidenceTaskIsReportOnly(binding.run, binding.task) ? 'report' : 'task'} />
+    : run ? <><p>本次对话处理整批任务，未记录独立的单 Case 对话位置。</p><button className="lab-workspace__text-action" onClick={() => setShowReport((open) => !open)} type="button">{showReport ? '收起本批报告' : `打开${label.replace('证据', '')}所在批次报告`}</button>{showReport ? <EvidencePanel runId={run.runId} taskIndex={0} initialTab="report" /> : null}</>
+      : <p>没有这侧的精确运行记录，无法打开原始输入、输出和验收过程。</p>}</section>;
+}
+
 function AgentLabRoomDeck({ activeRoomId, error, onRoomUpdated, onSelect, personas, rooms }: {
   activeRoomId: string;
   error: string;
@@ -448,9 +576,8 @@ function AgentLabRoomDeck({ activeRoomId, error, onRoomUpdated, onSelect, person
     <section aria-label="Agent Lab Room 对话" className="eval-lab__room-deck">
       <header>
         <div>
-          <p className="eval-lab__eyebrow"><Users aria-hidden="true" size={15} /> 优化对话</p>
-          <h2>Agent 如何诊断问题并设计下一轮实验</h2>
-          <p>这里只显示从 Agent Lab 创建的讨论。诊断对话不能修改文件；只有你确认测试目录后，新方案才能在隔离环境中运行。</p>
+          <h2>{activeRoom.permissionPolicy?.room.executionMode === 'read_only' || activeRoom.executionMode === 'read_only' ? '证据讨论' : '本实验的 Agent 对话'}</h2>
+          <p>查看真实进展，补充要求或停止运行。消息与运行状态来自同一个 Room。</p>
         </div>
         {rooms.length > 1 ? <nav aria-label="切换 Agent Lab Room">{rooms.map((room) => (
           <button aria-pressed={room.id === activeRoom.id} key={room.id} onClick={() => onSelect(room.id)} type="button">{room.title}</button>
@@ -518,6 +645,7 @@ function ExperimentMatrix({ evidenceCatalog, evidenceLoading, experiments, onOpe
                     <div><dt>可靠性与安全</dt><dd>{matrixReliability(experiment)}</dd></div>
                     <div><dt>成本与耗时观察</dt><dd>{matrixEfficiency(experiment)}</dd></div>
                   </dl>
+                  {experiment.vertical === 'paw-selfboot' ? <PawSelfbootResultsChart experiment={experiment} /> : null}
                   <footer><div><strong>结论</strong><span>{publicDecisionSummary(experiment)}</span></div><button className="eval-lab__matrix-open" onClick={() => onOpenExperiment?.(experiment.experimentId)} type="button">查看完整报告</button></footer>
                 </article>
               ))}
@@ -1331,7 +1459,7 @@ function pathDecisionLabel(status: EvalLabPathSearch['claimStatus']): string {
   return '仍需补证据';
 }
 
-type ProjectKey = 'enterpriseops' | 'enterprise-rag' | 'cloudops' | 'memory';
+type ProjectKey = 'enterpriseops' | 'enterprise-rag' | 'cloudops' | 'memory' | 'paw-selfboot';
 
 type ProjectExperimentGroup = {
   key: ProjectKey;
@@ -1342,6 +1470,7 @@ type ProjectExperimentGroup = {
 };
 
 const PROJECT_DEFINITIONS: ReadonlyArray<Omit<ProjectExperimentGroup, 'experiments'>> = [
+  { key: 'paw-selfboot', title: 'PAW 协作与接续', codeName: 'PAW Selfboot', goal: '验证完整任务、跨阶段接续和可靠执行；成本作为代价记录，保留未完成与失败结果。' },
   { key: 'enterpriseops', title: '企业客户支持', codeName: 'EnterpriseOps', goal: '让 Agent 真正完成跨系统客户任务，并在结果不变差的前提下降低成本。' },
   { key: 'enterprise-rag', title: '企业知识库问答', codeName: 'Enterprise RAG', goal: '让关键资料稳定被找到、答案有据可查，没有依据时明确拒答。' },
   { key: 'cloudops', title: '云上事故诊断', codeName: 'CloudOps', goal: '从日志和观测中定位故障根因，同时控制错误调用和成本；耗时只用于排查循环与阻塞。' },
@@ -1349,6 +1478,7 @@ const PROJECT_DEFINITIONS: ReadonlyArray<Omit<ProjectExperimentGroup, 'experimen
 ];
 
 function projectKeyForExperiment(experiment: EvalLabExperiment): ProjectKey | null {
+  if (experiment.vertical === 'paw-selfboot') return 'paw-selfboot';
   const identity = `${experiment.title} ${experiment.vertical} ${experiment.evaluationKind}`.toLocaleLowerCase();
   if (identity.includes('trace agent') || identity.includes('trace_repair') || identity.includes('agent-runtime-diagnosis')) return null;
   if (identity.includes('cloudops')) return 'cloudops';
@@ -1401,6 +1531,7 @@ function candidateLabel(experiment: EvalLabExperiment): string {
 }
 
 function publicDatasetSummary(experiment: EvalLabExperiment): string {
+  if (experiment.vertical === 'paw-selfboot') return experiment.frozenControls.find((control) => control.name === 'observation_scope')?.value ?? experiment.dataset.unit;
   const count = experiment.dataset.caseCount;
   const project = projectKeyForExperiment(experiment);
   if (project === 'enterpriseops') return `${count} 个客户支持任务 · 由系统逐项自动验收`;
@@ -1459,6 +1590,7 @@ function publicChangeSummary(experiment: EvalLabExperiment): string {
 }
 
 function publicDecisionSummary(experiment: EvalLabExperiment): string {
+  if (experiment.vertical === 'paw-selfboot') return experiment.comparison.decisionReason;
   if (experiment.status === 'kept' && experiment.evaluationKind === 'model_cost') return '方案在实验账本中标记为保留；成本结论仍以项目验收中的绑定价格回执为准。';
   if (experiment.status === 'kept') return '主要质量指标变好，并通过当前可靠性检查，因此保留。';
   if (experiment.status === 'rejected') return '关键质量或可靠性没有通过，因此不采用，并回到上一版。';
@@ -1531,19 +1663,6 @@ function metricDigest(metrics: Readonly<Record<string, number>>): string {
   return entries.length ? entries.map(([name, value]) => `${metricLabel(name)} ${formatMetricByName(name, value)}`).join(' · ') : '尚未运行';
 }
 
-function matrixObjective(experiment: EvalLabExperiment): string {
-  const objectives: Record<string, string> = {
-    workflow: '让任务按正确顺序完成，并可验收',
-    rag_retrieval: '提高相关证据的召回与排序',
-    answer_evidence: '让答案有据可查，缺证据时拒答',
-    trace_repair: '找到根因，再验证修复是否有效',
-    memory: '记住有用内容，挡住回声与越权',
-    model_cost: '质量不下降时降低单次成本',
-    tool_runtime: '减少 Tool 失败并保证可恢复',
-  };
-  return objectives[experiment.evaluationKind] ?? '验证这条 Agent 工作流是否可靠';
-}
-
 function isCloudOpsTranscriptOnlyFailure(experiment: EvalLabExperiment): boolean {
   const identity = `${experiment.title} ${experiment.vertical}`.toLocaleLowerCase();
   const candidate = experiment.candidate.metrics;
@@ -1557,6 +1676,7 @@ function isCloudOpsRuntimeSelectionRepair(experiment: EvalLabExperiment): boolea
 }
 
 function matrixQuality(experiment: EvalLabExperiment): string {
+  if (experiment.vertical === 'paw-selfboot') return pawSelfbootQuality(experiment);
   const baseline = experiment.baseline.metrics;
   const candidate = experiment.candidate.metrics;
   if (isCloudOpsTranscriptOnlyFailure(experiment)) {
@@ -1591,6 +1711,7 @@ function matrixQuality(experiment: EvalLabExperiment): string {
 }
 
 function matrixReliability(experiment: EvalLabExperiment): string {
+  if (experiment.vertical === 'paw-selfboot') return pawSelfbootReliability(experiment);
   const candidate = experiment.candidate.metrics;
   if (isCloudOpsTranscriptOnlyFailure(experiment)) {
     return `运行记录中的工具调用 ${integerMetric(candidate.transcriptToolCalls)}（不是可比较的业务工具调用） · 失败 ${integerMetric(candidate.failedTranscriptToolCalls)} · 第三批超时 · 取消也超时`;
@@ -1637,6 +1758,7 @@ function matrixReliability(experiment: EvalLabExperiment): string {
 }
 
 function matrixEfficiency(experiment: EvalLabExperiment): string {
+  if (experiment.vertical === 'paw-selfboot') return pawSelfbootEfficiency(experiment);
   const baseline = experiment.baseline.metrics;
   const candidate = experiment.candidate.metrics;
   if (isCloudOpsTranscriptOnlyFailure(experiment)) {
@@ -1671,12 +1793,6 @@ function matrixEfficiency(experiment: EvalLabExperiment): string {
   return '尚无可比效率数据';
 }
 
-function shortDecisionReason(value: string): string {
-  const normalized = value.trim();
-  if (normalized.length <= 96) return normalized;
-  return `${normalized.slice(0, 94)}…`;
-}
-
 function hasMetric(metrics: Readonly<Record<string, number>>, name: string): boolean {
   return typeof metrics[name] === 'number' && Number.isFinite(metrics[name]);
 }
@@ -1693,19 +1809,42 @@ function answerEvidenceRate(metrics: Readonly<Record<string, number>>, names: re
 }
 
 function answerEvidenceCountPair(experiment: EvalLabExperiment): string | undefined {
-  const baseline = experiment.baseline.metrics;
-  const candidate = experiment.candidate.metrics;
-  const denominator = firstMetric(baseline, ['answerCaseCount', 'answerCases', 'caseCount'])
-    ?? firstMetric(candidate, ['answerCaseCount', 'answerCases', 'caseCount'])
-    ?? experiment.dataset.caseCount;
-  if (!denominator || !Number.isFinite(denominator)) return undefined;
-  const beforeCount = firstMetric(baseline, ['answerSuccessCount', 'answerJudgeCorrectCount']);
-  const afterCount = firstMetric(candidate, ['answerSuccessCount', 'answerJudgeCorrectCount']);
-  const beforeRate = answerEvidenceRate(baseline, ['answerSuccessRate', 'answerJudgeCorrectnessRate']);
-  const afterRate = answerEvidenceRate(candidate, ['answerSuccessRate', 'answerJudgeCorrectnessRate']);
-  if (beforeCount === undefined && beforeRate === undefined || afterCount === undefined && afterRate === undefined) return undefined;
-  const before = beforeCount ?? Math.round((beforeRate ?? 0) * denominator);
-  const after = afterCount ?? Math.round((afterRate ?? 0) * denominator);
+  const counts = answerEvidenceCaseCounts(experiment, 'answerJudgeCorrect', 0);
+  return counts ? answerEvidenceCaseCountLabel(counts) : answerEvidenceCoveragePair(
+    experiment.baseline.metrics, experiment.candidate.metrics,
+    ['answerSuccessRate', 'answerJudgeCorrectnessRate'], ['answerableCaseCount', 'answerableCases'],
+    ['answerSuccessCount', 'answerJudgeCorrectCount'],
+  );
+}
+
+type AnswerEvidenceCaseCounts = { before: number; after: number; denominator: number };
+
+function answerEvidenceCaseCounts(
+  experiment: EvalLabExperiment,
+  metricName: string,
+  abstentionExpected?: 0 | 1,
+): AnswerEvidenceCaseCounts | undefined {
+  const cases = experiment.optimizationEvidence?.caseComparisons ?? [];
+  if (!cases.length || cases.length !== experiment.dataset.caseCount || new Set(cases.map((item) => item.caseId)).size !== cases.length) return undefined;
+  const counts = { before: 0, after: 0, denominator: 0 };
+  for (const item of cases) {
+    if (abstentionExpected !== undefined) {
+      const beforeClass = item.before.metrics.abstentionExpected;
+      const afterClass = item.after.metrics.abstentionExpected;
+      if ((beforeClass !== 0 && beforeClass !== 1) || beforeClass !== afterClass) return undefined;
+      if (beforeClass !== abstentionExpected) continue;
+    }
+    const before = item.before.metrics[metricName];
+    const after = item.after.metrics[metricName];
+    if ((before !== 0 && before !== 1) || (after !== 0 && after !== 1)) return undefined;
+    counts.before += before;
+    counts.after += after;
+    counts.denominator += 1;
+  }
+  return counts.denominator ? counts : undefined;
+}
+
+function answerEvidenceCaseCountLabel({ before, after, denominator }: AnswerEvidenceCaseCounts): string {
   return `${integerMetric(before)}/${integerMetric(denominator)} → ${integerMetric(after)}/${integerMetric(denominator)}`;
 }
 
@@ -1714,30 +1853,53 @@ function answerEvidenceCoveragePair(
   candidate: Readonly<Record<string, number>>,
   rateNames: readonly string[],
   denominatorNames: readonly string[],
+  countNames: readonly string[] = [],
+  caseDenominator?: number,
 ): string | undefined {
   const before = answerEvidenceRate(baseline, rateNames);
   const after = answerEvidenceRate(candidate, rateNames);
-  if (before === undefined || after === undefined) return undefined;
-  const denominator = firstMetric(baseline, denominatorNames) ?? firstMetric(candidate, denominatorNames);
-  if (denominator && Number.isFinite(denominator)) {
-    return `${integerMetric(Math.round(before * denominator))}/${integerMetric(denominator)} → ${integerMetric(Math.round(after * denominator))}/${integerMetric(denominator)}（${ratePair(before, after)}）`;
+  const beforeDenominator = firstMetric(baseline, denominatorNames) ?? caseDenominator;
+  const afterDenominator = firstMetric(candidate, denominatorNames) ?? caseDenominator;
+  const beforeCount = firstMetric(baseline, countNames) ?? (before === undefined || beforeDenominator === undefined ? undefined : before * beforeDenominator);
+  const afterCount = firstMetric(candidate, countNames) ?? (after === undefined || afterDenominator === undefined ? undefined : after * afterDenominator);
+  const hasExactCount = (count: number | undefined, denominator: number | undefined): boolean => count !== undefined
+    && denominator !== undefined && Number.isInteger(denominator) && denominator > 0
+    && count >= 0 && count <= denominator && Math.abs(count - Math.round(count)) < 1e-6;
+  if (hasExactCount(beforeCount, beforeDenominator) && hasExactCount(afterCount, afterDenominator)) {
+    return `${integerMetric(Math.round(beforeCount!))}/${integerMetric(beforeDenominator)} → ${integerMetric(Math.round(afterCount!))}/${integerMetric(afterDenominator)}`;
   }
+  if (before === undefined || after === undefined) return undefined;
   return ratePair(before, after);
 }
 
 function answerEvidenceQualitySummary(experiment: EvalLabExperiment): string {
   const baseline = experiment.baseline.metrics;
   const candidate = experiment.candidate.metrics;
+  const taskCounts = answerEvidenceCaseCounts(experiment, 'agentSuccess');
+  const answerCounts = answerEvidenceCaseCounts(experiment, 'answerJudgeCorrect', 0);
+  const abstentionCounts = answerEvidenceCaseCounts(experiment, 'abstentionCorrect', 1);
+  const tasks = taskCounts ? answerEvidenceCaseCountLabel(taskCounts) : answerEvidenceCoveragePair(
+    baseline, candidate, ['agentSuccessRate', 'taskSuccessRate'], ['taskCaseCount', 'protocolCaseCount'], ['agentSuccessCount', 'taskSuccessCount'],
+  );
+  const answers = answerEvidenceCountPair(experiment);
+  const facts = answerEvidenceCoveragePair(baseline, candidate, ['highLevelFactCoverage', 'factCoverage'], ['highLevelFactCount']);
+  const citations = answerEvidenceCoveragePair(
+    baseline, candidate, ['exactCitationFactCoverage', 'citationFactCoverage'],
+    ['citationFactCount', 'verifiedRequiredFacts', 'verifiedRequiredFactCount', 'requiredFactCount'], ['exactCitationFactsCovered'],
+  );
+  const answerableCitations = answerEvidenceCoveragePair(
+    baseline, candidate, ['answerableCitationSupportRate', 'citationSupportRate'], ['answerableCases', 'answerableCaseCount'], [], answerCounts?.denominator,
+  );
+  const abstentions = abstentionCounts ? answerEvidenceCaseCountLabel(abstentionCounts) : answerEvidenceCoveragePair(
+    baseline, candidate, ['infoNotFoundAbstentionRecall'], ['infoNotFoundCaseCount'],
+  );
   const parts = [
-    answerEvidenceCountPair(experiment) ? `答案通过 ${answerEvidenceCountPair(experiment)}` : '',
-    answerEvidenceCoveragePair(baseline, candidate, ['highLevelFactCoverage', 'factCoverage'], ['highLevelFactCount'])
-      ? `高层事实覆盖 ${answerEvidenceCoveragePair(baseline, candidate, ['highLevelFactCoverage', 'factCoverage'], ['highLevelFactCount'])}` : '',
-    answerEvidenceCoveragePair(baseline, candidate, ['citationFactCoverage'], ['verifiedRequiredFacts', 'verifiedRequiredFactCount', 'requiredFactCount'])
-      ? `引用事实覆盖 ${answerEvidenceCoveragePair(baseline, candidate, ['citationFactCoverage'], ['verifiedRequiredFacts', 'verifiedRequiredFactCount', 'requiredFactCount'])}` : '',
-    answerEvidenceCoveragePair(baseline, candidate, ['answerableCitationSupportRate', 'citationSupportRate'], ['answerableCases', 'answerableCaseCount'])
-      ? `可回答问题引用支持 ${answerEvidenceCoveragePair(baseline, candidate, ['answerableCitationSupportRate', 'citationSupportRate'], ['answerableCases', 'answerableCaseCount'])}` : '',
-    answerEvidenceCoveragePair(baseline, candidate, ['infoNotFoundAbstentionRecall'], ['infoNotFoundCaseCount'])
-      ? `应拒答问题拒答 ${answerEvidenceCoveragePair(baseline, candidate, ['infoNotFoundAbstentionRecall'], ['infoNotFoundCaseCount'])}` : '',
+    tasks ? `任务通过 ${tasks}` : '',
+    answers ? `可回答题答案正确 ${answers}` : '',
+    facts ? `高层事实覆盖 ${facts}` : '',
+    citations ? `引用事实覆盖 ${citations}` : '',
+    answerableCitations ? `可回答问题引用支持 ${answerableCitations}` : '',
+    abstentions ? `应拒答问题拒答 ${abstentions}` : '',
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : '答案与引用指标待补';
 }
@@ -1783,6 +1945,7 @@ function answerEvidenceTokenCount(metrics: Readonly<Record<string, number>>): nu
 function answerEvidenceEfficiencySummary(experiment: EvalLabExperiment): string {
   const baseline = experiment.baseline.metrics;
   const candidate = experiment.candidate.metrics;
+  const cost = answerEvidenceCostSummary(experiment);
   const tokens = `${answerEvidenceTokenCount(baseline) !== undefined && answerEvidenceTokenCount(candidate) !== undefined ? `Token ${integerMetric(answerEvidenceTokenCount(baseline))} → ${integerMetric(answerEvidenceTokenCount(candidate))}` : ''}`;
   const toolBefore = firstMetric(baseline, ['toolCalls', 'businessToolCalls']);
   const toolAfter = firstMetric(candidate, ['toolCalls', 'businessToolCalls']);
@@ -1791,8 +1954,21 @@ function answerEvidenceEfficiencySummary(experiment: EvalLabExperiment): string 
     firstMetric(baseline, ['latencyMs', 'elapsedMs']),
     firstMetric(candidate, ['latencyMs', 'elapsedMs']),
   );
-  const parts = [tokens, tool, latency === '耗时待补' ? '' : `耗时 ${latency}`].filter(Boolean);
+  const parts = [cost, tokens, tool, latency === '耗时待补' ? '' : `耗时 ${latency}`].filter(Boolean);
   return parts.length ? parts.join(' · ') : '尚无可比效率数据';
+}
+
+function answerEvidenceCostSummary(experiment: EvalLabExperiment): string | undefined {
+  const before = firstMetric(experiment.baseline.metrics, ['apiCostUsd', 'estimatedApiCostUsd']);
+  const after = firstMetric(experiment.candidate.metrics, ['apiCostUsd', 'estimatedApiCostUsd']);
+  if (before === undefined || after === undefined || before < 0 || after < 0) return undefined;
+  const costScope = experiment.frozenControls.find((control) => control.name === 'cost_scope')?.value.split(';')[0].trim();
+  const details = [
+    experiment.optimizationEvidence?.validationBoundary.costAuthority === 'runtime_cost_reconciled' ? 'Runtime 对账' : '',
+    costScope === 'full four-lane run plus frozen Judge' ? '完整四条 lane + 冻结 Judge' : costScope,
+    experiment.baseline.metrics.providerBillAvailable === 0 && experiment.candidate.metrics.providerBillAvailable === 0 ? '非 Provider 账单' : '',
+  ].filter(Boolean);
+  return `API 估算 $${before.toFixed(4)} → $${after.toFixed(4)}${details.length ? `（${details.join('；')}）` : ''}`;
 }
 
 function ratePair(before: number | undefined, after: number | undefined): string {
@@ -1812,12 +1988,6 @@ function durationMetric(value: number | undefined): string {
 function durationMetricPair(before: number | undefined, after: number | undefined): string {
   if (typeof before !== 'number' || typeof after !== 'number') return '耗时待补';
   return `${duration(before)} → ${duration(after)}`;
-}
-
-function usdPair(before: number | undefined, after: number | undefined): string {
-  if (typeof before !== 'number' || typeof after !== 'number' || before <= 0 || !Number.isFinite(before) || !Number.isFinite(after)) return '待补';
-  const decrease = ((before - after) / before) * 100;
-  return `$${before.toFixed(4)} → $${after.toFixed(4)}（${decrease >= 0 ? '降低' : '增加'} ${Math.abs(decrease).toFixed(1)}%）`;
 }
 
 type CandidateEffect = 'improved' | 'regressed' | 'neutral' | 'unverified' | 'not_run' | 'runtime_failed' | 'scoring_recovered' | 'observed_failure' | 'partial';
@@ -1869,24 +2039,14 @@ function experimentTypeLabel(experiment: EvalLabExperiment): string {
   return '历史组合结果';
 }
 
-function scenePickerLabel(experiment: EvalLabExperiment): string {
-  const title = experimentTitle(experiment.title);
-  if (experiment.evaluationKind === 'model_cost') return 'Sol / Luna 成本';
-  if (experiment.evaluationKind === 'rag_retrieval') return '企业 RAG';
-  if (experiment.evaluationKind === 'trace_repair') return 'Trace 闭环';
-  if (experiment.evaluationKind === 'memory') return 'Memory';
-  if (experiment.vertical === 'cloudops-incident-diagnosis') return 'CloudOps';
-  if (title.includes('状态合同')) return '状态合同';
-  if (title.includes('执行链')) return 'EnterpriseOps 执行链';
-  return title;
-}
-
-function deltaDigest(deltas: readonly { metric: string; delta: number }[]): string {
-  return deltas.length ? deltas.slice(0, 3).map((delta) => `${metricLabel(delta.metric)} ${delta.delta >= 0 ? '+' : ''}${formatMetricByName(delta.metric, delta.delta)}`).join(' · ') : '无可比变化';
-}
-
 function metricLabel(name: string): string {
+  if (PAW_METRIC_LABELS[name]) return PAW_METRIC_LABELS[name];
   return ({
+    abstentionCorrect: '拒答判断',
+    abstentionExpected: '本题要求',
+    agentSuccess: '任务验收',
+    answerJudgeCorrect: '答案评审',
+    toolSuccess: '工具执行',
     taskSuccessRate: '任务完成',
     taskSuccess: '任务完成',
     taskSuccessCount: '完成任务数',
@@ -2010,6 +2170,8 @@ function metricLabel(name: string): string {
 }
 
 function formatMetricByName(name: string, value: number): string {
+  if (name === 'abstentionExpected') return value === 1 ? '应拒答' : value === 0 ? '应回答' : '未知';
+  if (['abstentionCorrect', 'agentSuccess', 'answerJudgeCorrect', 'toolSuccess'].includes(name)) return value === 1 ? '通过' : value === 0 ? '未通过' : '未知';
   if (name === 'costReceiptAvailable' || name === 'cost_receipt_available') return value > 0 ? '已提供' : '缺失';
   if (name === 'hostFormalCaJraAvailable') return value > 0 ? '已运行' : '未运行';
   if (name === 'thirdBatchTimeout' || name === 'abortTimeout') return value > 0 ? '发生' : '未发生';
@@ -2029,19 +2191,14 @@ function formatMetricByName(name: string, value: number): string {
   return formatMetric(value);
 }
 
-function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, onCreateRoom, onOpenRoom, onRunCandidate, roomAction, rooms }: {
+function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, onOpenRoom, rooms }: {
   desktop: ReturnType<typeof usePawOsDesktop>;
   experiment: EvalLabExperiment;
   linkedRuns: EvalLabRun[];
   evidenceCatalog?: EvalLabEvidenceResponse;
-  onCreateRoom: (run?: EvalLabRun) => void;
   onOpenRoom: (roomId: string) => void;
-  onRunCandidate: () => void;
-  roomAction?: RoomAction;
   rooms: RoomSummary[];
 }) {
-  const currentRoomAction = roomAction?.runId === experiment.experimentId ? roomAction : undefined;
-  const historical = isHistoricalExperiment(experiment);
   const factors = experiment.factors ?? [];
   const frozenControls = experiment.frozenControls ?? [];
   const datasetExplanation = experimentDatasetExplanation(experiment);
@@ -2090,26 +2247,14 @@ function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, o
           <p>{projectTitleForExperiment(experiment)} · {publicDatasetSummary(experiment)}</p>
         </div>
         <div className="eval-lab__run-actions">
-          {!historical ? <>
-            <Button
-              leadingIcon={currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending' ? <LoaderCircle className="ui-spin" size={15} /> : <Users size={15} />}
-              loading={currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending'}
-              onClick={() => onCreateRoom(linkedRuns[0])}
-              variant="primary"
-            >
-              {currentRoomAction?.state === 'sending' ? '正在发送任务…' : '和 Agent 一起继续优化'}
-            </Button>
-            <Button onClick={onRunCandidate} variant="secondary">测试新方案</Button>
-          </> : null}
           <Button leadingIcon={<Download size={15} />} onClick={downloadAudit} variant="secondary">导出报告</Button>
           <span className="eval-lab__read-only"><ShieldCheck size={14} /> 证据只读</span>
         </div>
       </header>
-      {currentRoomAction?.state === 'error' ? <p aria-live="assertive" className="eval-lab__room-error" role="alert">{currentRoomAction.message}</p> : null}
 
       <ExperimentOutcomeSummary experiment={experiment} />
+      {experiment.vertical === 'paw-selfboot' ? <PawSelfbootResultsChart experiment={experiment} /> : null}
       <ExperimentRecordBrowser evidenceCatalog={evidenceCatalog} experiment={experiment} linkedRuns={linkedRuns} />
-      <CandidateProposal experiment={experiment} onEnterRoom={() => onCreateRoom(linkedRuns[0])} busy={Boolean(currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending')} readOnly={historical} />
       <RoomReviewEvidence onOpenRoom={onOpenRoom} rooms={rooms} />
       <div className="eval-lab__experiment-context">
         <div><span>为什么需要 Agent</span><strong>{humanClaimText(experiment.whyAgent)}</strong></div>
@@ -2275,6 +2420,7 @@ function ExperimentDatasetCases({ evidenceRuns, experiment }: {
   experiment: EvalLabExperiment;
 }) {
   const [selected, setSelected] = useState<{ runId: string; task: EvalLabEvidenceTask }>();
+  if (experiment.optimizationEvidence?.caseComparisons.length) return <ExperimentPairedCases evidenceRuns={evidenceRuns} experiment={experiment} />;
   const preferredRuns = [...evidenceRuns].sort((left, right) => {
     const relationDelta = Number(evidenceRelation(experiment, right) === 'candidate') - Number(evidenceRelation(experiment, left) === 'candidate');
     return relationDelta || right.updatedAtMs - left.updatedAtMs;
@@ -2328,10 +2474,6 @@ type ExperimentCaseDiff = {
   gates: string;
   usage: string;
 };
-
-function evidenceRunMatchesVersion(run: EvalLabEvidenceRun, version: EvalLabExperiment['baseline']): boolean {
-  return experimentRunBindings(version).some((binding) => evidenceRunMatches(binding, run.runId));
-}
 
 function evidenceTaskKey(task: EvalLabEvidenceTask): string {
   return task.taskLabel.trim() || `case-${task.taskIndex}`;
@@ -2388,7 +2530,7 @@ function ExperimentChangeRecord({ evidenceRuns, experiment }: { evidenceRuns: re
     <div className="eval-lab__change-record">
       <section><h4>为什么改</h4><p>{publicProblemSummary(experiment)}</p></section>
       <section><h4>实际改动</h4>{experiment.factors.length ? <ol>{experiment.factors.map((factor) => <li key={factor.name}><strong>{factorLabel(factor.name)}</strong><span>{humanClaimText(factor.reason)}</span></li>)}</ol> : <p>本轮没有记录可归因的改动。</p>}</section>
-      {experiment.factors.length ? <section aria-label="改动 diff" className="eval-lab__factor-diffs"><h4>改动 diff</h4>{experiment.factors.map((factor) => (
+      {experiment.factors.length ? <section aria-label="方案配置摘要" className="eval-lab__factor-diffs"><h4>方案配置摘要</h4>{experiment.factors.map((factor) => (
         <article className="eval-lab__factor-diff" key={`${factor.name}-diff`}>
           <header><strong>{factorLabel(factor.name)}</strong><span>{humanClaimText(factor.reason)}</span></header>
           <div>
@@ -2423,70 +2565,6 @@ function ExperimentOutcomeSummary({ experiment }: { experiment: EvalLabExperimen
         <div><dt>成本与耗时观察</dt><dd>{matrixEfficiency(experiment)}</dd></div>
         <div><dt>为什么这样决定</dt><dd>{publicDecisionSummary(experiment)}</dd></div>
       </dl>
-    </section>
-  );
-}
-
-function CandidateProposal({ experiment, onEnterRoom, busy, readOnly = false }: {
-  experiment: EvalLabExperiment;
-  onEnterRoom: () => void;
-  busy: boolean;
-  readOnly?: boolean;
-}) {
-  const factors = experiment.factors ?? [];
-  const changedLayer = factors.length === 1
-    ? factorLabel(factors[0]!.name)
-    : factors.length > 1
-      ? `组合修复（${factors.map((factor) => factorLabel(factor.name)).join(' + ')}）`
-      : '尚未指定';
-  const expectedMetric = metricLabel(experiment.scoring.primaryMetric);
-  const factorReason = factors.map((factor) => humanClaimText(factor.reason)).filter(Boolean).join('；');
-  const actualChange = factors.length
-    ? factors.map((factor) => `${humanClaimText(factor.before)} → ${humanClaimText(factor.after)}`).join('；')
-    : '旧版回执没有记录具体改动';
-  const state = isCloudOpsTranscriptOnlyFailure(experiment)
-    ? '运行失败 / 无业务质量分'
-    : experiment.experimentId === 'cloudops.validation-baseline.v1'
-      ? '评分链已恢复'
-      : experiment.experimentId === 'memory.maintenance-observed-failure.v0'
-        ? '真实失败基线'
-        : experiment.effectStatus === 'not_run'
-    ? '运行前阻断'
-    : experiment.effectStatus === 'improved'
-      ? '已验证改善'
-      : experiment.effectStatus === 'regressed'
-        ? '已验证回退'
-        : experiment.effectStatus === 'neutral'
-          ? '已验证无提升'
-          : '证据不足';
-  return (
-    <section aria-label="本轮只改一处的对照实验" className="eval-lab__candidate-proposal">
-      <header>
-        <div>
-          <span className="eval-lab__proposal-kicker">实验方法</span>
-          <h3>这轮实验是怎么做的</h3>
-        </div>
-        <span className="eval-lab__proposal-state">{state}</span>
-      </header>
-      <ol aria-label="消融实验流程" className="eval-lab__ablation-flow">
-        <li><span>1</span><strong>看哪里失败</strong><small>检查原输出和运行记录</small></li>
-        <li><span>2</span><strong>只选一个改动</strong><small>模型 / 提示词 / 技能 / 工具 / 流程</small></li>
-        <li><span>3</span><strong>其余保持不变</strong><small>同一批题、同一验收方法</small></li>
-        <li><span>4</span><strong>运行新方案</strong><small>只使用调优数据</small></li>
-        <li><span>5</span><strong>保留或回退</strong><small>先保证做对，再比较成本</small></li>
-      </ol>
-      <dl>
-        <div><dt>为什么改这一层</dt><dd>{factorReason || '旧版回执没有记录 Trace 归因。'}</dd></div>
-        <div><dt>实际改了什么</dt><dd><strong>{changedLayer}</strong> · {actualChange}</dd></div>
-        <div><dt>冻结了什么</dt><dd>{(experiment.frozenControls ?? []).map((control) => controlLabel(control.name)).join('、') || '旧版回执未记录冻结控制'}</dd></div>
-        <div><dt>主要看什么、底线是什么</dt><dd>{expectedMetric}；{experiment.scoring.hardGates.map(humanClaimText).join('；') || '未记录必须守住的底线'}</dd></div>
-        <div><dt>怎样复验</dt><dd>沿用 {splitLabel(experiment.dataset.split)} 的同一批任务、验收条件、运行环境和证据范围。</dd></div>
-        <div><dt>结果与决策</dt><dd>{humanClaimText(experiment.star.result)} {humanClaimText(experiment.comparison.decisionReason)}</dd></div>
-      </dl>
-      {factors.length > 1 ? <p className="eval-lab__proposal-warning">这是一条历史组合修复回执；下一轮候选会拆成单独的模型、Prompt、Skill、Tool 或工作流改动，不能把组合结果归因给某一层。</p> : null}
-      {!readOnly ? <Button leadingIcon={<Users size={15} />} loading={busy} onClick={onEnterRoom} variant="secondary">
-        在 Room 中继续下一轮
-      </Button> : null}
     </section>
   );
 }
@@ -2567,12 +2645,6 @@ function ExperimentEvidenceLinks({ catalog, experiment }: { catalog?: EvalLabEvi
   );
 }
 
-function matchingEvidenceRuns(catalog: EvalLabEvidenceResponse | undefined, experiment: EvalLabExperiment): EvalLabEvidenceRun[] {
-  if (!catalog) return [];
-  const bindings = [...experimentRunBindings(experiment.baseline), ...experimentRunBindings(experiment.candidate)];
-  return catalog.runs.filter((run) => bindings.some((binding) => evidenceRunMatches(binding, run.runId)));
-}
-
 function evidenceOriginLabel(run: EvalLabEvidenceRun): string {
   const source = `${run.sourceId ?? ''} ${run.sourceLabel ?? ''}`.toLocaleLowerCase();
   if (source.includes('os-app') || source.includes('agent-lab-app')) return 'PAWOS Agent Lab App run';
@@ -2585,32 +2657,6 @@ function evidenceOriginLabel(run: EvalLabEvidenceRun): string {
 function auditOriginLabel(runs: readonly EvalLabEvidenceRun[]): string {
   if (!runs.length) return 'historical evidence export · origin unverified';
   return [...new Set(runs.map(evidenceOriginLabel))].join(' + ');
-}
-
-function evidenceRunMatches(expected: string, actual: string): boolean {
-  return canonicalEvidenceRunId(expected) === canonicalEvidenceRunId(actual);
-}
-
-function experimentRunBindings(run: EvalLabExperiment['baseline']): string[] {
-  return [run.runId, ...run.evidenceRefs.map(evidenceRefRunId)].filter(Boolean);
-}
-
-function evidenceRefRunId(ref: string): string {
-  const value = ref.trim();
-  if (!value) return '';
-  const pathLeaf = value.split(/[\\/]/u).at(-1) ?? value;
-  return pathLeaf.replace(/\.json$/u, '');
-}
-
-function canonicalEvidenceRunId(value: string): string {
-  let normalized = evidenceRefRunId(value);
-  for (const namespace of ['ledger--', 'enterpriseops-local--', 'cloudops--', 'rag--', 'trace--']) {
-    if (normalized.startsWith(namespace)) {
-      normalized = normalized.slice(namespace.length);
-      break;
-    }
-  }
-  return normalized.replace(/\.v1$/u, '');
 }
 
 function hasReportOnlyExperimentEvidence(catalog: EvalLabEvidenceResponse | undefined, experiment: EvalLabExperiment): boolean {
@@ -2742,7 +2788,6 @@ function EvalRunSection({ desktop, run, roomAction, onCreateRoom }: {
           <span className="eval-lab__read-only"><ShieldCheck size={14} /> 原始记录只读</span>
         </div>
       </header>
-      {currentRoomAction?.state === 'error' ? <p aria-live="assertive" className="eval-lab__room-error" role="alert">{currentRoomAction.message}</p> : null}
 
       <dl className="eval-lab__metrics">
         <Metric label="任务完成" value={`${run.taskSuccessCount}/${run.taskCount}`} tone={run.taskSuccessCount === run.taskCount ? 'good' : 'warn'} />
@@ -2863,7 +2908,7 @@ function EvidencePanel({ runId, taskIndex, fallbackTask, initialTab }: {
     <section aria-label="逐轮证据面板" className="eval-lab__evidence-panel">
       <header className="eval-lab__evidence-panel-header">
         <div>
-          <span className="eval-lab__proposal-kicker">{previewEvidence ? '预览样例' : '只读证据'}</span>
+          <span className="eval-lab__evidence-kind">{previewEvidence ? '预览样例' : '只读证据'}</span>
           <h3>{panelTitle}</h3>
           <p>{reportView ? (reportOnly ? '这条运行只有回执/报告，原始对话未公开；请按逐 case/报告核对。' : '这是该运行的公开报告投影；报告与逐轮 transcript 分开展示。') : transcriptMissing ? '这条任务有验收回执，但原始 JSONL 没有随运行目录保存；不会用摘要伪造对话。' : previewEvidence ? '这是演示数据中的有限样例，不代表实际 JSONL transcript；真实运行请查看本机回执。' : '这是该任务的公开 transcript 投影；只显示可复核的用户消息、助手动作和 Tool 返回摘要。'}</p>
           <code className="eval-lab__evidence-id">{runId} · {taskIndex > 0 ? `Task ${taskIndex}` : '运行级'}</code>
@@ -3115,15 +3160,6 @@ function reportLabel(key: string): string {
     currency: '币种',
     unit: '计价单位',
   } as Record<string, string>)[key] ?? key;
-}
-
-function formatPublicReportValue(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value, null, 2) || '—';
-  } catch {
-    return '—';
-  }
 }
 
 function ConversationEvidence({ detail }: { detail?: EvalLabEvidenceDetail }) {
@@ -3614,21 +3650,6 @@ function experimentDatasetExplanation(experiment: EvalLabExperiment): DatasetExp
   };
 }
 
-function evaluationKindLabel(kind: string): string {
-  const labels: Record<string, string> = {
-    workflow: '工作流验收',
-    rag_retrieval: '检索质量',
-    answer_evidence: '答案与引用',
-    tool_runtime: '工具运行',
-    trace_repair: 'Trace 修复',
-    memory: '记忆整理',
-    model_cost: '模型成本',
-    other: '综合验证',
-    retrieval: '检索质量',
-  };
-  return labels[kind] ?? kind;
-}
-
 function workflowLabel(value: string): string {
   const labels: Record<string, string> = {
     'execution-chain-v5': '执行链修复（第 5 版）',
@@ -3638,13 +3659,6 @@ function workflowLabel(value: string): string {
     'baseline-v1': '基线工作流（第 1 版）',
   };
   return labels[value] ?? (value || '未记录工作流');
-}
-
-function claimStatusLabel(status: EvalLabExperiment['claimStatus']): string {
-  if (status === 'headline') return '可作为主结果展示';
-  if (status === 'supporting') return '支持性证据';
-  if (status === 'blocked') return '被门禁阻断';
-  return '仅诊断，不作推广';
 }
 
 function humanClaimText(value: string): string {
@@ -3718,17 +3732,6 @@ function buildRoomParticipants(experiment: EvalLabExperiment, personas: AgentPer
   }));
 }
 
-function buildEvaluationWizardParticipants(personas: AgentPersonaV1[]) {
-  if (personas.length < 2) throw new Error('当前没有足够的 Agent 伙伴可加入评测向导。');
-  const plan: Array<'coordinator' | 'researcher' | 'reviewer'> = ['coordinator', 'researcher', 'reviewer'];
-  return personas.slice(0, Math.min(plan.length, personas.length)).map((persona, index) => ({
-    roleId: persona.roleId,
-    roleVersion: persona.version,
-    displayName: persona.displayName,
-    collaborationRole: plan[index],
-  }));
-}
-
 function isAgentLabRoom(value: unknown): value is RoomSummary {
   const room = record(value);
   return typeof room.id === 'string'
@@ -3766,78 +3769,12 @@ function matchingExperimentRooms(rooms: readonly RoomSummary[], experiment: Eval
     .sort((left, right) => right.updatedAtMs - left.updatedAtMs);
 }
 
-function candidateConfirmation(experiment: EvalLabExperiment): ReadonlyArray<readonly [string, string]> {
-  const changedLayers = experiment.factors.map((factor) => (
-    `${factorLabel(factor.name)}：${humanClaimText(factor.before)} → ${humanClaimText(factor.after)}`
-  )).join('；') || '尚未声明改变层，必须先在 Room 中补齐，不能运行。';
-  const expectedDeltas = experiment.comparison.metricDeltas.map((delta) => (
-    `${metricLabel(delta.metric)} ${delta.delta >= 0 ? '+' : ''}${formatMetricByName(delta.metric, delta.delta)}`
-  )).join('；');
-  return [
-    ['失败原因', humanClaimText(experiment.comparison.decisionReason)],
-    ['具体问题', humanClaimText(experiment.businessProblem)],
-    ['改变层', changedLayers],
-    ['预期指标', expectedDeltas || `${metricLabel(experiment.scoring.primaryMetric)} 按同一分母复验`],
-    ['不影响门禁', experiment.scoring.hardGates.map(humanClaimText).join('；') || '现有质量、安全和清理门禁全部保持不变'],
-    ['验证方法', `Validation only：${datasetSummary(experiment.dataset)}；Held-out 保持封存，不读取、不运行、不据此调参。`],
-  ];
-}
-
-function buildCandidateRoomContext(
-  experiment: EvalLabExperiment,
-  confirmation: ReadonlyArray<readonly [string, string]>,
-): string {
-  return [
-    '$agent-eval-room-optimizer',
-    '用户点击“测试新方案”并选定 workspace，即构成本次 Validation dispatch 授权；无需二次批准，直接执行。',
-    '这是隔离候选 Room。Validation only. Held-out sealed.',
-    scenarioTaskContract(experiment),
-    `实验：${experiment.experimentId} · revision ${experiment.revisionSha256}`,
-    ...confirmation.map(([label, value]) => `${label}：${value}`),
-    '只允许在已授权 workspaceRoots 内准备候选并运行冻结 Validation；不得读取或运行 Held-out，不得安装、发布或触发工作区之外的外部副作用，也不得宣称已安装、已发布或已通过。',
-    '每次运行必须返回真实命令、Sandbox/Trace/Eval 回执或具体失败阻断。',
-  ].join('\n');
-}
-
-function candidateConfirmationMessage(
-  experiment: EvalLabExperiment,
-  confirmation: ReadonlyArray<readonly [string, string]>,
-): string {
-  return [
-    '用户点击“测试新方案”并选定 workspace，即构成本次 Validation dispatch 授权；无需二次批准，直接执行。',
-    `新候选：${experiment.title}`,
-    ...confirmation.map(([label, value]) => `${label}：${value}`),
-    '请直接在本 Room 授权目录内推进冻结 Validation。Held-out 仍封存；不得安装、发布或触发工作区之外的外部副作用。',
-  ].join('\n');
-}
-
-function buildEvaluationWizardBrief(): string {
-  return [
-    'Agent Lab 评测向导',
-    '模式：先提问和补数据，未经用户确认不得运行评测、修改工作区或消费 Held-out。',
-    '请每轮最多问四组问题，并把答案整理成短 TaskBrief：',
-    '1) 业务目标与不可失败的硬门禁；2) 数据文件/目录、来源许可、隐私处理、split、Gold authority、manifest hash；',
-    '3) 已有 baseline receipt/run，以及本轮只改变的一个因素（model、Prompt、Skill、Tool、Workflow、Context/RAG 或 pricing）；',
-    '4) Provider 价格快照、usage receipt 和本轮权限。',
-    '缺少任何文件或字段时，输出 pending_data 的 dataGap，说明最小补齐方式；不要猜路径、Gold、价格或真实日志。',
-    '数据齐全后先冻结 case-set、verifier、Prompt/Tool/Skill/Workflow、模型、预算、价格单位和 heldOutConsumed=false，再提出一个 Validation 候选。',
-    '按任务完成度、Verifier/Evidence、Runtime 可靠性、Context/RAG、效率、成本排序；成本没有 usage receipt 就保持 unavailable。',
-    '最终返回 status、questions、dataGaps、baseline、candidates、metrics、nextAction、evidenceRefs；候选不是已修复，需用户授权和新的 Host Trace/Eval。',
-  ].join('\n');
-}
-
 function roomParticipantPlan(experiment: EvalLabExperiment): Array<'coordinator' | 'researcher' | 'implementer' | 'reviewer'> {
   const kind = `${experiment.evaluationKind} ${experiment.title}`.toLocaleLowerCase();
   const layers = `${experiment.star.action} ${experiment.openGaps.join(' ')}`.toLocaleLowerCase();
   if (kind.includes('trace') || kind.includes('diagnos')) return ['coordinator', 'researcher', 'reviewer', 'reviewer'];
   if (kind.includes('retriev') || layers.includes('tool') || layers.includes('workflow') || layers.includes('skill')) return ['coordinator', 'researcher', 'implementer', 'reviewer'];
   return ['coordinator', 'implementer'];
-}
-
-function repairLayers(plan: EvalLabRepairPlan | undefined): string[] {
-  if (!plan) return [];
-  if (typeof plan === 'string') return plan.split(/[,\s]+/u).filter(Boolean);
-  return Array.isArray(plan.targetLayers) ? plan.targetLayers.filter((layer): layer is string => typeof layer === 'string' && Boolean(layer.trim())) : [];
 }
 
 function buildEvalLabRoomBrief(experiment: EvalLabExperiment, run?: EvalLabRun): string {
@@ -4038,15 +3975,11 @@ function fallbackExperiment(run: EvalLabRun): EvalLabExperiment {
 }
 
 function statusLabel(status: EvalLabExperiment['status']): string {
-  return status === 'kept' ? '采用' : status === 'rejected' ? '不采用' : status === 'open_gap' ? '待补证据' : '仅记录';
+  return status === 'kept' ? '保留候选' : status === 'rejected' ? '淘汰候选' : status === 'open_gap' ? '待补证据' : '仅记录';
 }
 
 function formatMetric(value: number): string {
   return Number.isInteger(value) ? value.toLocaleString('en-US') : value.toLocaleString('en-US', { maximumFractionDigits: 4 });
-}
-
-function shortHash(value: string): string {
-  return value.length > 12 ? `${value.slice(0, 12)}…` : value;
 }
 
 function record(value: unknown): Record<string, unknown> {

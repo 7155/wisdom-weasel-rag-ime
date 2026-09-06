@@ -8,6 +8,20 @@ afterEach(() => {
 });
 
 describe('PAWOS route bridge', () => {
+  it('opens a Lab deep link above a restored Room focus without closing its work', () => {
+    const store = createPawDesktopStore('agent', '/agent?room=room-open');
+    store.getState().bindAgentMain('agent', { kind: 'room', id: 'room-open', title: '正在协作' });
+    store.getState().setCollaborationFocusGroup('room:room-open');
+    window.location.hash = '#/eval-lab';
+
+    syncPawOsRoute(store);
+
+    expect(store.getState().activeWindowId).toBe('eval-lab');
+    expect(store.getState().collaborationFocusGroup).toBeNull();
+    expect(store.getState().collaborationFocusReturnWindowId).toBeNull();
+    expect(store.getState().windows.agent?.target).toMatchObject({ kind: 'room', id: 'room-open' });
+  });
+
   it('reconciles an existing App window to the current hash on mount', () => {
     const store = createPawDesktopStore('input-studio', '/input');
     window.location.hash = '#/input?view=lexicon';

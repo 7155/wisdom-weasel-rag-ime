@@ -388,6 +388,8 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(failed["error"], "")
         self.assertEqual(failed["candidates"][0]["text"], "暂未完成，可以重试")
         self.assertTrue(failed["candidates"][0]["metadata"]["activeRagNoSuggestion"])
+        self.assertEqual(failed["diagnostics"]["progress"]["stage"], "error")
+        self.assertFalse(failed["diagnostics"]["progress"]["workerPending"])
         transport = terminal["model"]["request"]["transport"]
         self.assertEqual(transport["terminalReason"], "upstream_stream_closed")
         self.assertEqual(transport["contentChars"], 7)
@@ -744,6 +746,24 @@ class ActiveRagServiceTests(unittest.TestCase):
             completion_request.surface_request_id,
         )
 
+    def test_active_rag_cancel_uses_generated_surface_request_id(self) -> None:
+        provider = CancellableManagedActiveRagProvider()
+        service = ActiveRagService(completion_provider=provider)
+
+        started = service.start(_request(selected_text="取消无面板请求", panel_session_id=""))
+        session_id = str(started["sessionId"])
+        self.assertTrue(provider.started.wait(timeout=1))
+
+        cancelled = service.cancel(session_id)
+        provider.gate.set()
+        provider.released.wait(timeout=1)
+
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertFalse(cancelled["diagnostics"]["progress"]["workerPending"])
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(provider.cancelled_ids, [provider.calls[0].surface_request_id])
+        self.assertTrue(provider.cancelled_ids[0].startswith("active-rag-surface:"))
+
     def test_active_rag_governed_recovery_finishes_as_no_suggestion_with_diagnostics(self) -> None:
         provider = FailingActiveRagProvider()
         service = ActiveRagService(completion_provider=provider)
@@ -822,6 +842,41 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["candidates"][0]["text"], "暂未完成，可以重试")
         self.assertEqual(ready["error"], "")
         self.assertEqual(ready["candidates"][0]["metadata"]["reason"], "visible_timeout")
+
+    def test_active_rag_visible_timeout_keeps_open_generation_stage_truthful(self) -> None:
+        gate = threading.Event()
+        provider = BlockingActiveRagProvider(gate)
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="超时后模型仍在生成")
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            session_id = str(started["sessionId"])
+            deadline = time.monotonic() + 1
+            while not provider.calls and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(provider.calls, "provider must be in-flight before the visible timeout projection")
+            with service._lock:
+                service._sessions[session_id].created_at_ms -= 121_000
+
+            visible_timeout = service.status(session_id)
+            progress = visible_timeout["diagnostics"]["progress"]
+            self.assertEqual(visible_timeout["status"], "ready")
+            self.assertFalse(visible_timeout["keyPolicy"]["ready"])
+            self.assertEqual(progress["stage"], "generating")
+            self.assertTrue(progress["workerPending"])
+            self.assertTrue(progress["model"]["attempted"])
+
+            gate.set()
+            deadline = time.monotonic() + 1
+            settled = service.status(session_id)
+            while settled["diagnostics"]["progress"]["stage"] != "ready" and time.monotonic() < deadline:
+                time.sleep(0.01)
+                settled = service.status(session_id)
+
+        self.assertEqual(settled["status"], "ready")
+        self.assertEqual(settled["diagnostics"]["progress"]["stage"], "ready")
+        self.assertFalse(settled["diagnostics"]["progress"]["workerPending"])
 
     def test_active_rag_deepseek_prompt_gets_timeline_context_pack(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-timeline-") as tmp:
@@ -1423,6 +1478,27 @@ class BlockingActiveRagProvider:
         self.gate.wait(timeout=2)
         self.released.set()
         yield CompletionCandidateDelta(text="第二个主动候选", insert_text="第二个主动候选")
+
+
+class CancellableManagedActiveRagProvider:
+    uses_managed_pi = True
+
+    def __init__(self):
+        self.gate = threading.Event()
+        self.started = threading.Event()
+        self.released = threading.Event()
+        self.calls: list[object] = []
+        self.cancelled_ids: list[str] = []
+
+    def stream_candidates(self, request):
+        self.calls.append(request)
+        self.started.set()
+        self.gate.wait(timeout=2)
+        self.released.set()
+        yield CompletionCandidateDelta(text="取消前不应落地", insert_text="取消前不应落地")
+
+    def cancel(self, request_id: str) -> None:
+        self.cancelled_ids.append(request_id)
 
 
 class BlockingRecoveryActiveRagProvider:

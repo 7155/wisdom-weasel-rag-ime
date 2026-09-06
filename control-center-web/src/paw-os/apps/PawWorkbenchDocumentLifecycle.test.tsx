@@ -20,6 +20,21 @@ const DOCUMENT_ID = `workdoc_${'a'.repeat(32)}`;
 const AUTHORITY_ID = 'session-authority-1';
 
 describe('PawWorkbenchDocumentLifecycle', () => {
+  it('retries the approval-session read in place without preparing or applying erase', async () => {
+    let attempts = 0;
+    const transport = lifecycleTransport({ 'agent.sessions.list': () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('sessions unavailable');
+      return { ok: true, items: [{ id: 'approval-session', title: '审批对话', status: 'active', updatedAtMs: 2 }] };
+    } });
+    renderLifecycle({ current: workDocument({ state: 'archived' }), transport });
+    await userEvent.click(screen.getByRole('button', { name: '永久清除…' }));
+    await userEvent.click(await screen.findByRole('button', { name: '重新读取可用对话' }));
+    expect(await screen.findByText('审批对话')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '永久清除，不是归档' })).toBeDisabled();
+    expect(transport.requests.every(({ request }) => request.pathId === 'agent.sessions.list')).toBe(true);
+  });
+
   it('requires a terminal receipt before archiving and reports the typed receipt', async () => {
     const user = userEvent.setup();
     const changed = vi.fn();

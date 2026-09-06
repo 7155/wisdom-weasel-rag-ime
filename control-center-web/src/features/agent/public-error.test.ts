@@ -7,6 +7,18 @@ import {
 } from './public-error';
 
 describe('Agent command receipt public recovery', () => {
+  it('explains a Room participant reservation without a generic resend loop', () => {
+    const expected = '目标伙伴正在处理另一条请求；草稿已保留，待当前请求结束后可再次发送。';
+    expect(publicAgentErrorText({
+      payload: {
+        code: 'AGENT_COMMAND_FAILED',
+        commandReceipt: { state: 'failed', clientMessageId: 'busy-1', causeCode: 'ROOM_PARTICIPANT_BUSY' },
+      },
+    })).toBe(expected);
+    expect(publicAgentErrorText(new Error('Agent 3 is currently busy'))).toBe(expected);
+    expect(publicAgentErrorText(new Error('Room participants are currently busy: Agent 3'))).toBe(expected);
+  });
+
   it('turns an optional memory budget failure into a non-blocking message', () => {
     expect(publicAgentErrorText({
       payload: {

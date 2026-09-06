@@ -179,6 +179,10 @@ export function PawWorkDirectoryProvider({
       window.clearTimeout(timer);
       if (document.visibilityState === 'hidden') {
         directoryAbortRef.current?.abort();
+        // Polling stops here. Keep directory content for recovery, but do not
+        // replay its last busy status when the user later returns to the sky.
+        setSessionStatusFresh(false);
+        setRoomStatusFresh(false);
         return;
       }
       void tick();

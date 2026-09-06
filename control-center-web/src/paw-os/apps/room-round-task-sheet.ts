@@ -40,6 +40,9 @@ export interface RoomRoundTaskRow {
   /** The authoritative blocked WorkItem to pass to the Room resume command. */
   blockedWorkItemId?: string;
   result?: string;
+  /** Full public moderator prose, including a still-streaming report. This
+   * carries content only and never confers final-result status. */
+  report?: string;
   /** Explicit kind of the moderator assistant RoomPost represented by `result`, when present. */
   postKind?: RoomMessageProjection['postKind'];
   evidenceRefs: string[];
@@ -162,6 +165,7 @@ function roundRow({
   const orderedCurrentMessages = [...currentMessages]
     .sort(compareRoomMessages)
     .reverse();
+  const latestPublicMessage = orderedCurrentMessages.find((message) => Boolean(message.text.trim()));
   const latestCompletedMessage = orderedCurrentMessages
     .find((message) => message.status === 'completed' && Boolean(message.text.trim()));
   const isModerator = participant.id === room.moderatorParticipantId;
@@ -232,8 +236,13 @@ function roundRow({
     ...(blockerNextStep ? { blockerNextStep } : {}),
     ...(blockedWorkItemId ? { blockedWorkItemId } : {}),
     ...(isModerator && resultMessage?.postKind ? { postKind: resultMessage.postKind } : {}),
+    ...(isModerator && latestPublicMessage
+      ? { report: latestPublicMessage.text.trim().replace(/\r\n?/gu, '\n') }
+      : {}),
     ...(resultMessage?.text.trim() || workResult
-      ? { result: compactMarkdown(resultMessage?.text.trim() || workResult || '') }
+      // Result surfaces are the answer, not a list preview. Keep the complete
+      // Markdown; only task/progress summaries above have a compact budget.
+      ? { result: (resultMessage?.text.trim() || workResult || '').replace(/\r\n?/gu, '\n') }
       : {}),
     evidenceRefs: unique(workItems.flatMap((work) => [...work.artifactRefs, ...work.evidenceRefs]))
       .slice(-MAX_ROW_EVIDENCE_REFS),

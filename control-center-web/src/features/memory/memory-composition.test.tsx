@@ -24,7 +24,7 @@ describe('MemoryFeature composition', () => {
     );
   });
 
-  it('keeps the governed pipeline spine visible across catalog and relations views', async () => {
+  it('keeps content classification inside the catalog and lets other views own their workspace', async () => {
     renderMemory(catalogTransport());
     const pipeline = await screen.findByRole('list', { name: '记忆内容分类' });
     expect(within(pipeline).getByRole('button', { name: /来源/ })).toBeInTheDocument();
@@ -33,10 +33,11 @@ describe('MemoryFeature composition', () => {
 
     renderMemory(relationsTransport(), '/memory?view=relations');
     expect(await screen.findByRole('heading', { name: '记忆关系' })).toBeInTheDocument();
-    expect(screen.getByRole('list', { name: '记忆内容分类' })).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: '记忆内容分类' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: '记忆页面' })).not.toBeInTheDocument();
   });
 
-  it('keeps the pipeline a compact spine with the status detail behind a disclosure', async () => {
+  it('keeps organization and provenance detail behind a disclosure', async () => {
     const user = userEvent.setup();
     renderMemory(catalogTransport());
 
@@ -48,22 +49,21 @@ describe('MemoryFeature composition', () => {
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('检索索引')).toBeInTheDocument();
-    expect(screen.getByText('主题不会替代原始记录；每条结论都能沿这条链路回到来源，也能在详情里看到它最近被哪些 Session 装配。')).toBeInTheDocument();
+    expect(screen.getByText('主题和记忆都保留来源；打开详情可核对原文和最近的使用记录。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看整理与审核' })).toBeVisible();
 
     await user.click(toggle);
     expect(screen.queryByText('检索索引')).not.toBeInTheDocument();
   });
 
-  it('fits all four pipeline stages in one compact row at phone-width windows', () => {
-    expect(memoryStylesheet).toMatch(
-      /@container memory-second-brain \(max-width: 480px\)[\s\S]*?\.memory-pipeline__stages\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);[^}]*overflow-x:\s*hidden;/,
-    );
-    expect(memoryStylesheet).toMatch(
-      /@container memory-second-brain \(max-width: 480px\)[\s\S]*?\.memory-pipeline__flow\s*\{[^}]*display:\s*none;/,
-    );
+  it('uses a single selection color and removes the retired pipeline and duplicate navigation styles', () => {
+    expect(memoryStylesheet).not.toContain('memory-pipeline');
+    expect(memoryStylesheet).not.toContain('memory-app-nav');
+    expect(memoryStylesheet).not.toContain('--memory-atoms:');
+    expect(memoryStylesheet).toContain('.memory-library__layers button');
   });
 
-  it('routes between memory layers from the pipeline spine', async () => {
+  it('routes between memory layers from the catalog classification', async () => {
     const user = userEvent.setup();
     const transport = catalogTransport();
     renderMemory(transport);
@@ -139,30 +139,11 @@ describe('MemoryFeature composition', () => {
       ".memory-second-brain[data-view='catalog'] .mgmt-section__header p { margin-top: 2px; color: var(--color-text-secondary);",
     );
     expect(memoryStylesheet).not.toContain('color: #7a8493');
-    expect(memoryStylesheet).toContain(":root[data-theme='dark'] :is(main, section)[data-route-id='memory']");
     expect(memoryStylesheet).toContain('background: var(--color-surface-subtle);');
     expect(memoryStylesheet).toContain('background: var(--color-paper);');
     expect(memoryStylesheet).toContain(
       '.memory-layer-list .mgmt-list__copy span {\n  display: block;\n  overflow: visible;',
     );
-  });
-
-  it('gives every memory layer its own signal identity in the stylesheet owner', () => {
-    for (const scope of [
-      ".memory-second-brain[data-view='catalog'][data-layer='evidence']",
-      ".memory-second-brain[data-view='catalog'][data-layer='books']",
-      ".memory-second-brain[data-view='roleBooks']",
-      ".memory-second-brain[data-view='timeline']",
-      ".memory-second-brain[data-view='relations']",
-      ".memory-second-brain[data-view='organize']",
-      ".memory-second-brain[data-view='preferences']",
-    ]) {
-      expect(memoryStylesheet).toContain(scope);
-    }
-    // The pipeline spine carries all four stage identities at once.
-    for (const stage of ['evidence', 'organize', 'atoms', 'books']) {
-      expect(memoryStylesheet).toContain(`.memory-pipeline__stage[data-stage='${stage}']`);
-    }
   });
 
   it('runs the catalog search live instead of behind a filter button', async () => {
@@ -293,7 +274,7 @@ function memoryEntity(kind: string, entityId: string): Record<string, unknown> {
   };
 }
 
-function renderMemory(transport: MockControlTransport, initialEntry = '/') {
+function renderMemory(transport: MockControlTransport, initialEntry = '/memory?layer=atoms') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });

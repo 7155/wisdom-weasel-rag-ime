@@ -121,7 +121,21 @@ interface ActivityCalendarDay {
 const PERIODS: TimelinePeriod[] = ['day', 'morning', 'afternoon', 'evening'];
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] as const;
 
-export function ActivityTimeline({ initialDate = '' }: { initialDate?: string }) {
+type MemoryLibrarySummary = { memories: number; topics: number; pendingSources: number };
+
+export function ActivityTimeline({
+  initialDate = '',
+  library,
+  latestTimelineDate = '',
+  onBrowseMemories,
+  onOpenOrganize,
+}: {
+  initialDate?: string;
+  library?: MemoryLibrarySummary;
+  latestTimelineDate?: string;
+  onBrowseMemories?: () => void;
+  onOpenOrganize?: () => void;
+}) {
   const today = useMemo(localDate, []);
   const [date, setDate] = useState(() => (
     /^\d{4}-\d{2}-\d{2}$/u.test(initialDate) && initialDate <= today
@@ -214,12 +228,14 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
 
   const moveDate = (offset: number) => chooseDate(shiftDate(date, offset));
   const moveMonth = (offset: number) => chooseDate(shiftMonth(date, offset));
+  const recentDate = [latestTimelineDate, ...calendarDays.filter((day) => day.organized && day.modelOrganized).map((day) => day.date)]
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/u.test(value) && value <= today && value !== date)
+    .sort().at(-1);
 
   return (
     <section className="activity-timeline activity-timeline--semantic" aria-labelledby="activity-timeline-title">
       <header className="activity-timeline__toolbar">
         <div>
-          <span className="activity-timeline__eyebrow">每日活动</span>
           <h2 id="activity-timeline-title">{formatDateHeading(date)}</h2>
         </div>
         <div className="activity-timeline__date-controls">
@@ -259,17 +275,6 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         </div>
       </header>
 
-      <MemoryInsightCanvas
-        canRead={canRead}
-        date={date}
-        hasError={Boolean(timeline.error)}
-        isLoading={capabilities.isPending || (canRead && timeline.isPending)}
-        onSelectTask={setSelectedTaskId}
-        semanticReady={semanticReady}
-        tasks={tasks}
-        timelineId={timelineId}
-      />
-
       {/* Master-detail viewport: the journal is the primary object and owns
           the first screen; the month calendar accompanies it as a side rail
           instead of a dashboard the reader must scroll past. */}
@@ -282,8 +287,12 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
             hasError={Boolean(timeline.error)}
             isLoading={capabilities.isPending || (canRead && timeline.isPending)}
             item={item}
+            library={library}
             semanticReady={semanticReady}
             onBuild={() => build.mutate({ targetDate: date })}
+            onBrowseMemories={onBrowseMemories}
+            onRecentDate={recentDate ? () => chooseDate(recentDate) : undefined}
+            recentDate={recentDate}
             onOpenSource={() => setSelectedReference({
               kind: 'timeline',
               referenceId: timelineId,
@@ -295,6 +304,10 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
             timelineId={timelineId}
             busy={busy}
           />
+
+          {semanticReady && !timeline.isPending && !timeline.error ? (
+            <MemoryDayInsights onSelectTask={setSelectedTaskId} tasks={tasks} />
+          ) : null}
 
           {buildJobWarning ? (
             <InlineNotice title="语义整理待检查" tone="warning">
@@ -435,10 +448,19 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
             today={today}
             unavailable={!capabilities.isPending && !canReadCalendar}
           />
+          {onOpenOrganize ? (
+            <div className="activity-timeline__library-link">
+              <p>{library && library.pendingSources > 0 ? `${library.pendingSources} 条来源等待整理` : '整理来源与审核草稿'}</p>
+              <Button onClick={onOpenOrganize} size="small" variant="quiet">查看整理与审核</Button>
+            </div>
+          ) : null}
         </aside>
       </div>
 
-      <MemorySteward date={date} timelineId={timelineId} />
+      <details className="activity-timeline__conversation">
+        <summary>与记忆管家聊这一天 <span>查找线索或核对来源</span></summary>
+        <MemorySteward date={date} timelineId={timelineId} />
+      </details>
 
       <TaskDetailDialog
         onClose={() => setSelectedTaskId('')}
@@ -494,88 +516,36 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   );
 }
 
-function MemoryInsightCanvas({
-  canRead,
-  date,
-  hasError,
-  isLoading,
+function MemoryDayInsights({
   onSelectTask,
-  semanticReady,
   tasks,
-  timelineId,
 }: {
-  canRead: boolean;
-  date: string;
-  hasError: boolean;
-  isLoading: boolean;
   onSelectTask: (taskId: string) => void;
-  semanticReady: boolean;
   tasks: SemanticTimelineTask[];
-  timelineId: string;
 }) {
   const insights = useMemo(() => deriveMemoryInsights(tasks), [tasks]);
-  const totalEvidence = sumEvidenceCount(tasks);
+  if (!insights.length) return null;
 
   return (
-    <section aria-label="记忆画布" className="memory-insight-canvas">
-      <header className="memory-insight-canvas__header">
-        <div>
-          <span>记忆画布</span>
-          <h2 id="memory-insight-canvas-title">今天值得回看的内容</h2>
-        </div>
-        {timelineId && semanticReady ? <small>{tasks.length} 项已整理活动 · {totalEvidence} 条来源</small> : null}
-      </header>
-
-      {isLoading ? (
-        <div className="memory-insight-canvas__empty" role="status">
-          正在读取当天整理结果，尚不展示推断。
-        </div>
-      ) : !canRead || hasError ? (
-        <div className="memory-insight-canvas__empty">
-          <strong>暂时没有可验证的画布内容</strong>
-          <span>时间线恢复后，才会从真实整理结果中挑选线索。</span>
-        </div>
-      ) : !timelineId ? (
-        <div className="memory-insight-canvas__empty">
-          <strong>{formatDateHeading(date)}还没有整理结果</strong>
-          <span>先整理当天来源；没有可验证内容时，画布不会虚构 idea、安排或情绪。</span>
-        </div>
-      ) : !semanticReady ? (
-        <div className="memory-insight-canvas__empty">
-          <strong>当天来源尚未核对成可用线索</strong>
-          <span>原始来源已经保留；通过整理验收后，才会在画布中显示可回看的内容。</span>
-        </div>
-      ) : insights.length ? (
-        <div className="memory-insight-canvas__grid" aria-label="可回看的记忆线索">
+    <section aria-label="当天的记忆线索" className="memory-day-insights">
+      <h3>值得回看的线索</h3>
+      <ul>
           {insights.map((insight) => (
+            <li key={insight.id}>
             <button
               aria-label={`查看${insight.label}线索：${insight.title}`}
-              className="memory-insight-card"
-              data-kind={insight.kind}
-              key={insight.id}
               onClick={() => onSelectTask(insight.taskId)}
               type="button"
             >
-              <span className="memory-insight-card__kind">{insight.label}</span>
+              <span className="memory-day-insights__kind">{insight.label}</span>
               <strong title={insight.title}>{insight.title}</strong>
               <p>{insight.summary}</p>
-              <footer>
-                <span>{insightEvidenceLabel(insight.task)}</span>
-                <small>{insightCaution(insight.kind)}</small>
-              </footer>
+              <small>{insightEvidenceLabel(insight.task)} · {insightCaution(insight.kind)}</small>
             </button>
+            </li>
           ))}
-        </div>
-      ) : (
-        <div className="memory-insight-canvas__empty">
-          <strong>今天没有可确认的 idea、未完成事项、安排或情绪迹象</strong>
-          <span>当前有 {tasks.length} 项已整理活动，但没有足够文字证据支持进一步归类。</span>
-        </div>
-      )}
-
-      <footer className="memory-insight-canvas__boundary">
-        画布只从当天已整理活动及其来源计数提取线索；不是对情绪或计划的推断。点击卡片可核对完整活动与来源。
-      </footer>
+      </ul>
+      <p>线索来自当天已整理活动，点击可核对原文。</p>
     </section>
   );
 }
@@ -588,13 +558,17 @@ function DailyJournal({
   hasError,
   isLoading,
   item,
+  library,
   semanticReady,
   onBuild,
+  onBrowseMemories,
+  onRecentDate,
   onOpenSource,
   onSelectTask,
   status,
   tasks,
   timelineId,
+  recentDate,
 }: {
   busy: boolean;
   canRead: boolean;
@@ -603,13 +577,17 @@ function DailyJournal({
   hasError: boolean;
   isLoading: boolean;
   item: Record<string, unknown>;
+  library?: MemoryLibrarySummary;
   semanticReady: boolean;
   onBuild: () => void;
+  onBrowseMemories?: () => void;
+  onRecentDate?: () => void;
   onOpenSource: () => void;
   onSelectTask: (taskId: string) => void;
   status: string;
   tasks: SemanticTimelineTask[];
   timelineId: string;
+  recentDate?: string;
 }) {
   const highlights = tasks.slice(0, 3);
   const apps = topJournalApps(tasks, 5);
@@ -627,7 +605,6 @@ function DailyJournal({
         <div className="daily-journal__identity">
           <span className="daily-journal__mark" aria-hidden="true"><BookOpenText size={18} /></span>
           <div>
-            <span>时间线日记</span>
             <h3 id="daily-journal-title">{formatDateHeading(date)}的每日日记</h3>
           </div>
         </div>
@@ -652,21 +629,27 @@ function DailyJournal({
       ) : !timelineId ? (
         <div className="daily-journal__empty-copy">
           <strong>这一天还没有日记</strong>
-          <span>整理当天时间线后，这里会形成可回看、可追溯的日记，而不是复制一份新数据。</span>
+          <span>{library && (library.memories > 0 || library.topics > 0)
+            ? `记忆库中已有 ${library.memories} 条记忆、${library.topics} 个主题，可以继续查找。`
+            : '可以浏览已有记忆，或从日历回看其他日期。'}</span>
+          <div className="daily-journal__empty-actions">
+          {onBrowseMemories ? <Button onClick={onBrowseMemories} size="small" variant="primary">浏览全部记忆</Button> : null}
+          {onRecentDate && recentDate ? <Button onClick={onRecentDate} size="small" variant="quiet">回看 {recentDate.slice(5)}</Button> : null}
           <Button
             disabled={busy || !canWrite}
             leadingIcon={<Sparkles size={15} />}
             onClick={onBuild}
             size="small"
-            variant="primary"
+            variant="quiet"
           >
             生成这天的日记
           </Button>
+          </div>
         </div>
       ) : !semanticReady ? (
         <div className="daily-journal__empty-copy">
           <strong>这一天还没有整理成日记</strong>
-          <span>目前只按来源做了分组，还没有整理核对成日记；原始输入不会被直接当作日记正文。</span>
+          <span>当天来源已收集，整理后可以在这里回看。</span>
           <Button
             disabled={busy || !canWrite}
             leadingIcon={<Sparkles size={15} />}
@@ -719,7 +702,8 @@ function DailyJournal({
             </button>
           </article>
 
-          <aside className="daily-journal__facts" aria-label="今日日记摘要">
+          <details className="daily-journal__facts">
+            <summary>日记摘要与应用来源</summary>
             <dl>
               <div><dt>活动</dt><dd>{tasks.length} 项活动</dd></div>
               <div><dt>记录时间范围合计</dt><dd>{formatDuration(sumTaskSpan(tasks))}</dd></div>
@@ -728,7 +712,7 @@ function DailyJournal({
             </dl>
             {apps.length ? (
               <div className="daily-journal__apps">
-                <span>今日足迹</span>
+                <span>当天应用</span>
                 <ul>
                   {apps.map((app) => (
                     <li key={app.id}>
@@ -740,12 +724,9 @@ function DailyJournal({
                 </ul>
               </div>
             ) : null}
-          </aside>
+          </details>
         </div>
       )}
-      <footer className="daily-journal__boundary">
-        日记由当天时间线维护；重新整理会更新它，来源记录不会被复制或改写。
-      </footer>
     </section>
   );
 }
@@ -816,7 +797,6 @@ function ActivityTimelineCalendar({
     <section className="activity-calendar" aria-labelledby="activity-calendar-title">
       <header className="activity-calendar__header">
         <div>
-          <span className="activity-calendar__kicker">月度整理轨迹</span>
           <h3 id="activity-calendar-title">{formatMonthHeading(month)}</h3>
           <p>点击日期，直接查看当天时间线和来源。</p>
         </div>
@@ -827,7 +807,7 @@ function ActivityTimelineCalendar({
             loading={organizeActive}
             onClick={() => setOrganizePreviewOpen(true)}
             size="small"
-            variant="primary"
+            variant="quiet"
           >
             {organizeActive ? '正在整理' : '整理本月'}
           </Button>
@@ -1942,10 +1922,6 @@ function formatDuration(value: number): string {
 function formatTimestamp(value: number): string {
   if (!value) return '未知';
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
-}
-
-function shortHash(value: string): string {
-  return value ? value.slice(0, 8) : '未生成';
 }
 
 function timelineStatusLabel(status: string): string {

@@ -49,7 +49,8 @@ export async function highlightCode(
   await loading;
   return highlighter.codeToHtml(content, {
     lang: selection.id,
-    theme: 'github-dark-default',
+    themes: { dark: 'github-dark-default', light: 'github-light' },
+    defaultColor: 'dark',
     transformers: options.inheritSurface ? [surfaceInheritTransformer] : [],
   });
 }
@@ -70,11 +71,12 @@ async function highlighterInstance(): Promise<HighlighterCore> {
       import('shiki/core'),
       import('shiki/engine/javascript'),
       import('shiki/dist/themes/github-dark-default.mjs'),
-    ]).then(([{ createHighlighterCore }, { createJavaScriptRegexEngine }, { default: theme }]) => (
+      import('shiki/dist/themes/github-light.mjs'),
+    ]).then(([{ createHighlighterCore }, { createJavaScriptRegexEngine }, { default: dark }, { default: light }]) => (
       createHighlighterCore({
         engine: createJavaScriptRegexEngine(),
         langs: [],
-        themes: [theme],
+        themes: [dark, light],
       })
     ));
   }

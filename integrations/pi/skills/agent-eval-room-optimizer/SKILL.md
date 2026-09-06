@@ -1,15 +1,41 @@
 ---
 name: agent-eval-room-optimizer
-description: Guide a user through a PAW Agent Lab evaluation, fill missing data, choose a comparable baseline and candidate, and verify one evidence-backed optimization in a real Room. Use for evaluation-driven Agent, Tool, workflow, RAG, or Memory tests; do not use for ordinary code changes or ungoverned benchmark tuning.
+description: Execute a bounded PAW Agent Lab experiment in a real Room from its supplied dispatch contract, or guide the user to fill missing evaluation data. Use for evaluation-driven Agent, Tool, workflow, RAG, or Memory tests; do not use for ordinary code changes or ungoverned benchmark tuning.
 ---
 
 # Agent Lab 评测向导与优化 Room
 
-默认先做“向导模式”，不是直接开跑。你的职责是把用户目标、数据、变量、
-指标和权限边界补齐，再由 Host evaluator 判断结果；Room 只是协作容器，
-不替代 Pi Runtime、评测器或用户授权。
+已有完整实验设置时，直接执行其中授权的有界实验；缺少设置时进入向导模式。
+由 Host evaluator 判断结果；Room 只是协作容器，不替代 Pi Runtime、评测器
+或用户授权。
 
-## 1. 先问，再运行
+## 0. 已授权实验合同
+
+App 把 `agentLabDispatch` JSON 持久记录到 Room `scenarioPrompt` 和首条消息。
+`schemaVersion=rag-ime.agent-lab-dispatch.v1` 的合同包含 `objective`、`scope`、
+`baseline`、`dataset`、`budget`、`stopConditions`、`workspace`、
+`repairOperators` 和 `counterfactualProbes`。用户提交设置就是这次精确 dispatch
+的执行授权；不要重新问已给出的目标、预算或权限。
+
+- 只在 `scope.allowedChanges` 内选择有失败证据支持的 operator。配置层修改
+  通用 Prompt 或一个检索参数族；实现层修改已定位的 Tool、检索或 Workflow
+  owner，并运行其回归检查。`scope.target` 还必须明确是 `prompt`、`retrieval`、
+  `tool`、`skill`、`model` 或 `workflow`，所选 operator 的 target 必须完全匹配；不能把
+  Tool/Skill 的收益归因给 Prompt。`planned` 探针只是待验证的假设，不是已发生的结果。
+- 先在选定目录内准备独立候选副本，记录 baseline revision、candidate root 和
+  实际 diff。目录选择或 Room `full_trust` 不是已完成隔离的证据。
+- 在同一 Pi Session/Room 中连续提出、执行、比较和淘汰候选，达到
+  `maxCandidates`、`maxEstimatedCostUsd` 或任一停止条件就收束。每次付费候选前
+  读取累计 usage/价格回执，缺失则停止付费尝试并返回 `blocked`。
+  `budget.enforcement=agent_observed` 表示 Agent 观察预算，不能声称 Host 已有
+  Room 累计美元硬限。候选数、费用和停止原因必须由真实回执支持。
+- 用户经 `agent.room.message` 干预，经 `agent.room.abort` 停止；复用 Pi 的
+  Steer、Stop、恢复与 Room 取消扇出。不得创建第二套模型或生命周期 loop。
+- 合法终态包括 `improved`、`no_improvement`、`budget_exhausted`、`stopped`、
+  `blocked`、`failed`。无有效改善也是完整实验结果。`Keep` 只保留候选，应用到
+  指定场景是独立动作；已有 Session 的资源快照不随候选改变。
+
+## 1. 缺失设置时补齐数据
 
 如果 intake 不完整，每轮最多问四组问题，并把答案写入一个短的
 `TaskBrief`（包含 compact run, case, and evidence references）。优先复用
@@ -100,6 +126,20 @@ Prompt：
 | `evaluator_gold` | 修正矛盾的评测合同并重新冻结 | 不重跑到“好结果”或改分母 |
 | `pricing` | usage 采集、模型价格快照、成本单位 | 不把价格差当质量提升 |
 
+App 合同中的 `scope.target` 是本轮唯一优化对象：
+
+| target | 可改变的变量 | 必须保留的对照 |
+| --- | --- | --- |
+| `model` | 业务执行模型（配置层） | Judge 模型、推理强度、Prompt、Tool、Skill、Workflow、数据集、评分器；用同口径价格与完整 usage 比较 |
+| `prompt` | Prompt 模板、证据覆盖和拒答规则 | 模型、Tool、Skill、RAG、数据集、评分器 |
+| `retrieval` | parse/chunk/search/rerank/packing 或一个检索参数族 | Prompt、模型、Tool、Skill、数据集、评分器 |
+| `tool` | Tool 选择、schema、transport 或错误语义 | Prompt、模型、Skill、权限、数据集、评分器 |
+| `skill` | Skill 选择、版本、加载与输出契约 | Prompt、模型、Tool、权限、数据集、评分器 |
+| `workflow` | 依赖、重试、恢复、清理和编排边界 | Prompt、模型、Tool、Skill、权限、数据集、评分器 |
+
+若合同没有对应 target 的失败证据或 operator，返回 `blocked` 并说明缺口，不能
+退回到“先改 Prompt”这一默认猜测。
+
 ### 每个垂直项目先追加一段最小工作合同
 
 Agent Lab 使用 Room 的 `scenarioPrompt` 追加项目合同，不替换 PAW/Pi 的全局
@@ -151,7 +191,7 @@ RAG 和 Memory 的专门边界分别交给
 
 每个场景结束时，Facilitator 必须从 Host receipt、Trace 和 Eval projection
 生成一份汇总：业务目标、基线、候选改动层、前后输出、质量/可靠性/效率/成本
-变化、`effectStatus`、Keep/Reject 原因和 evidence refs。不能从 Agent 自述
+变化、`targetObject`、`effectStatus`、Keep/Reject 原因和 evidence refs。不能从 Agent 自述
 推导成功率，也不能把不同场景的指标相加。
 
 ## 4. 可用工具与调用顺序
@@ -165,11 +205,14 @@ RAG 和 Memory 的专门边界分别交给
    剪枝和成本/延迟排序；缺字段保持 blocked/insufficient evidence。
 4. `scripts/build_agent_lab_cost_receipt_from_runtime_db.py`：仅对匹配的
    私有 runtime DB 生成 usage + price snapshot receipt；无 DB 就报告缺口。
-5. `agent.rooms.create` / `agent.room.message`：仅在用户进入 Room 讨论或
-   授权后创建；Room 首条消息应包含本 Skill、TaskBrief、数据缺口和问题，
-   不直接执行修复。
+5. `agent.rooms.create` / `agent.room.message`：用户进入讨论时发送本 Skill、
+   TaskBrief 和缺失问题；用户提交完整 `agentLabDispatch` 后直接执行已授权候选。
 
-诊断阶段是 read-only。验证候选必须使用一个 new Validation split 与 sandbox/run；安装、
+源代码中的真实候选入口和版本边界见
+[references/scene-runners.md](references/scene-runners.md)。先核对当前安装的
+runner 是否提供该参数；缺少接口是运行缺口，不能仅生成一段结果 JSON 冒充执行。
+
+诊断阶段是 read-only。验证候选必须使用 same frozen Validation case-set 和新的 sandbox/run；不能为了改善数字换题或改变分母。安装、
 真实工作区写入、Memory apply、发布和 Held-out 都需要用户在对应边界明确
 允许（explicit approval）。保留 Reject、失败、取消和不可比的 receipt。
 
@@ -201,7 +244,8 @@ Validation 日，再由用户决定是否扩展到更多日期。
 
 ```text
 status: needs_user_input | ready_for_validation | candidate_proposed |
-        validation_running | verified | blocked
+        validation_running | verified | no_improvement | budget_exhausted |
+        stopped | failed | blocked
 questions: []
 dataGaps: []
 baseline: run/receipt + frozen controls

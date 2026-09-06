@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItem, session, shell, systemPreferences } from 'electron';
 import { browserPartition, defaultPawHostPort, isBrowserGuestUrl, resolveHostPaths } from './host-config.mjs';
 import { startPawHostServer } from './local-server.mjs';
 import {
@@ -13,7 +13,20 @@ import {
   readBrowserSessionSettings,
   removeBrowserHistoryEntry,
 } from './browser-session.mjs';
+import {
+  addBookmark,
+  cancelDownload as cancelBrowserDownload,
+  getBookmarks,
+  getDownloads,
+  openDownload as openBrowserDownload,
+  removeBookmark,
+  restoreInterruptedDownloads,
+  revealDownload as revealBrowserDownload,
+  trackDownload,
+} from './browser-library.mjs';
 import { browserWindowChrome } from './window-chrome.mjs';
+import { assistantLaunchIntent, assistantSessionRoute } from './assistant-launch.mjs';
+import { installScreenAssistant } from './screen-assistant.mjs';
 
 const paths = resolveHostPaths();
 
@@ -23,9 +36,12 @@ app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
 app.commandLine.appendSwitch('remote-debugging-port', process.env.PAW_REMOTE_DEBUGGING_PORT || '0');
 
 let mainWindow = null;
+let screenAssistant = null;
+let pendingAssistantIntent = assistantLaunchIntent(process.argv);
 let hostServer = null;
 const guestRegistry = new Map();
 const pendingTabs = new Map();
+const activeDownloads = new Map();
 const hostToken = crypto.randomBytes(24).toString('hex');
 let browserStartPage = readBrowserStartPage();
 
@@ -50,7 +66,12 @@ function normalizedStartPage(value) {
   throw new Error('启动页必须是 http(s) 地址或 about:blank');
 }
 
-function createWindow() {
+function sendToMainWindow(channel, payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(channel, payload);
+}
+
+function createWindow(initialRoute, showWhenReady = true) {
   const window = new BrowserWindow({
     width: 1440,
     height: 940,
@@ -111,9 +132,9 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  const route = process.env.PAW_INITIAL_ROUTE || '/project-field';
+  const route = initialRoute || process.env.PAW_INITIAL_ROUTE || '/project-field';
   void window.loadURL(`${hostServer.origin}/?frontend=paw-os&pawHost=electron#${route}`);
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => { if (showWhenReady) window.show(); });
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
   });
@@ -174,7 +195,13 @@ const primaryInstance = app.requestSingleInstanceLock({ profilePath: paths.profi
 if (!primaryInstance) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    const intent = assistantLaunchIntent(argv);
+    if (intent) {
+      if (!screenAssistant) pendingAssistantIntent = intent;
+      else handleAssistantIntent(intent);
+      return;
+    }
     if (mainWindow?.isMinimized()) mainWindow.restore();
     mainWindow?.show();
     mainWindow?.focus();
@@ -189,6 +216,11 @@ async function startPrimaryInstance() {
   await app.whenReady();
   fs.mkdirSync(paths.profilePath, { recursive: true });
   fs.mkdirSync(paths.browserExtensionsDir, { recursive: true });
+  try {
+    restoreInterruptedDownloads(paths.browserDownloadsFile);
+  } catch {
+    console.error('Could not restore PAW Browser Downloads');
+  }
   fs.writeFileSync(paths.hostPidFile, `${process.pid}\n`, { encoding: 'utf8', mode: 0o600 });
   fs.writeFileSync(paths.hostPidFile.replace(/\.pid$/, '.token'), `${hostToken}\n`, { encoding: 'utf8', mode: 0o600 });
   const configuredFrontendPort = String(process.env.PAW_FRONTEND_PORT || '').trim();
@@ -206,6 +238,18 @@ async function startPrimaryInstance() {
   );
   ipcMain.on('paw-browser:register', (event, tab) => { void registerGuest(event.sender, tab); });
   const persistentBrowserSession = session.fromPartition(browserPartition);
+  persistentBrowserSession.on('will-download', (_event, item) => {
+    try {
+      trackDownload(paths.browserDownloadsFile, item, {
+        activeDownloads,
+        downloadsPath: app.getPath('downloads'),
+        onChange: (downloads) => sendToMainWindow('paw-browser:downloads-updated', downloads),
+        onError: (stage) => console.error('Could not persist PAW Browser Download metadata', stage),
+      });
+    } catch {
+      console.error('Could not register PAW Browser Download');
+    }
+  });
   ipcMain.handle('paw-browser:get-settings', (event) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('Browser settings sender rejected');
     return readBrowserSessionSettings({
@@ -251,6 +295,48 @@ async function startPrimaryInstance() {
   ipcMain.handle('paw-browser:get-history', (event) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('Browser History sender rejected');
     return readBrowserHistory(paths.browserHistoryFile);
+  });
+  ipcMain.handle('paw-browser:get-bookmarks', (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser Bookmarks sender rejected');
+    return getBookmarks(paths.browserBookmarksFile);
+  });
+  ipcMain.handle('paw-browser:add-bookmark', (event, bookmark) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser Bookmarks sender rejected');
+    const bookmarks = addBookmark(paths.browserBookmarksFile, bookmark);
+    sendToMainWindow('paw-browser:bookmarks-updated', bookmarks);
+    return bookmarks;
+  });
+  ipcMain.handle('paw-browser:remove-bookmark', (event, bookmarkId) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser Bookmarks sender rejected');
+    const bookmarks = removeBookmark(paths.browserBookmarksFile, bookmarkId);
+    sendToMainWindow('paw-browser:bookmarks-updated', bookmarks);
+    return bookmarks;
+  });
+  ipcMain.handle('paw-browser:get-downloads', (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser Downloads sender rejected');
+    return getDownloads(paths.browserDownloadsFile);
+  });
+  ipcMain.handle('paw-browser:open-download', async (event, downloadId) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser Downloads sender rejected');
+    const record = await openBrowserDownload(paths.browserDownloadsFile, downloadId, {
+      downloadsPath: app.getPath('downloads'),
+      openPath: (filePath) => shell.openPath(filePath),
+    });
+    return { ...record, opened: true };
+  });
+  ipcMain.handle('paw-browser:reveal-download', (event, downloadId) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser Downloads sender rejected');
+    const record = revealBrowserDownload(paths.browserDownloadsFile, downloadId, {
+      downloadsPath: app.getPath('downloads'),
+      showItemInFolder: (filePath) => shell.showItemInFolder(filePath),
+    });
+    return { ...record, revealed: true };
+  });
+  ipcMain.handle('paw-browser:cancel-download', (event, downloadId) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Browser Downloads sender rejected');
+    const record = cancelBrowserDownload(paths.browserDownloadsFile, downloadId, { activeDownloads });
+    // DownloadItem lifecycle events publish the authoritative cancellation state.
+    return record;
   });
   ipcMain.handle('paw-browser:remove-history-entry', (event, entryId) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('Browser History sender rejected');
@@ -319,7 +405,40 @@ async function startPrimaryInstance() {
       { encoding: 'utf8', mode: 0o600 },
     );
   });
-  mainWindow = createWindow();
+  screenAssistant = installScreenAssistant({
+    app, BrowserWindow, ipcMain, dialog, systemPreferences,
+    origin: hostServer.origin, preload: paths.preloadEntry,
+    getMainWindow: () => mainWindow, openSession: openAssistantSession,
+  });
+  const initialIntent = pendingAssistantIntent;
+  pendingAssistantIntent = null;
+  mainWindow = createWindow(initialIntent?.kind === 'session' ? assistantSessionRoute(initialIntent.sessionId) : undefined, initialIntent?.kind !== 'capture');
+  if (initialIntent?.kind === 'capture') void screenAssistant.startCapture(initialIntent.sourceAppBundleId);
+  const menu = Menu.getApplicationMenu();
+  if (menu) {
+    const item = new MenuItem({ label: '框选屏幕与 PAW 对话…', click: () => { void screenAssistant.startCapture(); } });
+    const fileMenu = menu.items.find((entry) => entry.role === 'fileMenu')?.submenu;
+    (fileMenu || menu.items[0]?.submenu)?.append(item);
+    Menu.setApplicationMenu(menu);
+  }
+}
+
+function openAssistantSession(sessionId) {
+  const route = assistantSessionRoute(sessionId);
+  if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow(route);
+  else {
+    const contents = mainWindow.webContents;
+    const navigate = () => { if (!contents.isDestroyed()) contents.send('paw-host:navigate', route); };
+    if (contents.isLoadingMainFrame()) contents.once('did-finish-load', navigate);
+    else navigate();
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show(); mainWindow.focus();
+  }
+}
+
+function handleAssistantIntent(intent) {
+  if (intent.kind === 'capture') void screenAssistant.startCapture(intent.sourceAppBundleId);
+  else openAssistantSession(intent.sessionId);
 }
 
 app.on('activate', () => {

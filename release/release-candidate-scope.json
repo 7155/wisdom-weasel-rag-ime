@@ -1,11 +1,11 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-06T04:14:55.337053+00:00",
+  "generatedAt": "2026-09-06T06:19:52.757280+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
     "baseCommit": "f0bcdab577bb5d7f33afec1797bffd23f7946323",
-    "candidateCommitPolicy": "This inventory covers the exact prior installed-source base to current candidate, including this manifest; installation and foreground acceptance remain separate receipts."
+    "candidateCommitPolicy": "Inventory covers base through the September 6 integrated source commit including this inventory. Installation and foreground acceptance remain separate."
   },
   "dispositions": {
     "keep_release": "Retain this path change in the source release candidate.",
@@ -13,93 +13,102 @@
     "other_work_not_in_release": "Leave outside this candidate."
   },
   "groups": {
-    "control_center_release_ui": {
-      "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 106
-    },
-    "evaluation_audit": {
-      "description": "Frozen Agent evaluations, public-safe receipts, importers, and cost/quality gates.",
-      "pathCount": 116
-    },
     "project_harness": {
       "description": "Bounded root project context and accepted cross-outcome rules.",
-      "pathCount": 3
-    },
-    "release_scope": {
-      "description": "Self-describing candidate inventory.",
-      "pathCount": 1
+      "pathCount": 5
     },
     "requirement_evidence": {
       "description": "Lossless user requirement volumes and evidence/status indexes.",
-      "pathCount": 15
+      "pathCount": 39
     },
-    "session_room_skill_flow": {
-      "description": "Scenario-scoped Pi Skill routing.",
-      "pathCount": 1
+    "control_center_release_ui": {
+      "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
+      "pathCount": 366
     },
-    "session_runtime": {
-      "description": "Authoritative backend Session, Provider, Trace, and durable-message contracts.",
-      "pathCount": 45
-    },
-    "verification": {
-      "description": "Backend and cross-layer regression tests.",
-      "pathCount": 54
-    },
-    "product_installation": {
-      "description": "Product build, install, and installed evidence selection.",
-      "pathCount": 4
+    "memory_context_continuity": {
+      "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
+      "pathCount": 26
     },
     "execution_reliability": {
       "description": "Background ownership, safe process recovery, idempotency, cancellation, and reproducible fault evidence.",
       "pathCount": 30
     },
-    "memory_context_continuity": {
-      "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
-      "pathCount": 26
+    "evaluation_audit": {
+      "description": "Frozen Agent evaluations, public-safe receipts, importers, and cost/quality gates.",
+      "pathCount": 134
+    },
+    "session_room_skill_flow": {
+      "description": "Scenario-scoped Pi Skill routing.",
+      "pathCount": 6
+    },
+    "session_runtime": {
+      "description": "Authoritative backend Session, Provider, Trace, and durable-message contracts.",
+      "pathCount": 111
+    },
+    "release_scope": {
+      "description": "Self-describing candidate inventory.",
+      "pathCount": 1
+    },
+    "product_installation": {
+      "description": "Product build, install, and installed evidence selection.",
+      "pathCount": 4
+    },
+    "input_adapter": {
+      "description": "Native input and screen-assistance adapter source.",
+      "pathCount": 5
+    },
+    "verification": {
+      "description": "Backend and cross-layer regression tests.",
+      "pathCount": 117
     }
   },
   "summary": {
-    "pathCount": 401,
+    "pathCount": 844,
     "dispositionCounts": {
-      "keep_release": 401
+      "keep_release": 843,
+      "delete_old_implementation": 1
     },
     "groupCounts": {
-      "project_harness": 3,
-      "requirement_evidence": 15,
-      "control_center_release_ui": 106,
+      "project_harness": 5,
+      "requirement_evidence": 39,
+      "control_center_release_ui": 366,
       "memory_context_continuity": 26,
       "execution_reliability": 30,
-      "evaluation_audit": 116,
-      "session_room_skill_flow": 1,
-      "session_runtime": 45,
+      "evaluation_audit": 134,
+      "session_room_skill_flow": 6,
+      "session_runtime": 111,
       "release_scope": 1,
       "product_installation": 4,
-      "verification": 54
+      "input_adapter": 5,
+      "verification": 117
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
   },
   "cleanupReceipts": [],
   "verification": {
-    "frontendTypecheck": "passed",
-    "frontendUnitTests": "254 files; 2823/2823 passed",
-    "frontendBuild": "passed; Vite transformed 4504 modules",
-    "focusedBackendAndEvaluationTests": "169/169 passed after all Agent writers settled",
-    "agentLabImportConsistency": "8/8 passed on the stable 26-experiment ledger",
-    "importBoundaries": "passed",
-    "routeOwnership": "passed",
-    "requirementIndex": "241 requirements structurally valid; assessment remains conservative",
-    "localInstall": "pending formal install from the final clean commit",
-    "foregroundAcceptance": "pending installed-app canary",
-    "inventoryRefresh": "Reconciled 345 committed base-to-HEAD paths at b1a12d97; local packaging-only edits are not installed product changes. Prior test receipts below remain historical.",
-    "memoryTopicContinuity": {
-      "focusedTests": "195 passed: 50 organizer/curation, 71 compiler/projection/lifecycle, 74 owner/personal/maintenance",
-      "independentChecks": "23 identity/projection/verifier boundaries and 9 parser compatibility/rejection cases passed",
-      "modelReplays": "Normal and recovery paths passed in private databases; malformed initial recovery responses were explicit fixtures",
-      "localInstall": "Combined dirty-source candidate installed; 737 backend files match; 304 Gateway/native frontend files preserved",
-      "runtime": "Sidecar/Gateway health, Session/Memory list routes and managed Pi ensure passed",
-      "selfHostingBoundary": "Pi Sessions authored the change; parent recovery assistance was needed after Runtime failures; unattended operation remains unproven"
-    }
+    "historicalReceipts": {
+      "frontendTypecheck": "passed",
+      "frontendUnitTests": "254 files; 2823/2823 passed",
+      "frontendBuild": "passed; Vite transformed 4504 modules",
+      "focusedBackendAndEvaluationTests": "169/169 passed after all Agent writers settled",
+      "agentLabImportConsistency": "8/8 passed on the stable 26-experiment ledger",
+      "importBoundaries": "passed",
+      "routeOwnership": "passed",
+      "requirementIndex": "241 requirements structurally valid; assessment remains conservative",
+      "localInstall": "pending formal install from the final clean commit",
+      "foregroundAcceptance": "pending installed-app canary",
+      "inventoryRefresh": "Reconciled 345 committed base-to-HEAD paths at b1a12d97; local packaging-only edits are not installed product changes. Prior test receipts below remain historical.",
+      "memoryTopicContinuity": {
+        "focusedTests": "195 passed: 50 organizer/curation, 71 compiler/projection/lifecycle, 74 owner/personal/maintenance",
+        "independentChecks": "23 identity/projection/verifier boundaries and 9 parser compatibility/rejection cases passed",
+        "modelReplays": "Normal and recovery paths passed in private databases; malformed initial recovery responses were explicit fixtures",
+        "localInstall": "Combined dirty-source candidate installed; 737 backend files match; 304 Gateway/native frontend files preserved",
+        "runtime": "Sidecar/Gateway health, Session/Memory list routes and managed Pi ensure passed",
+        "selfHostingBoundary": "Pi Sessions authored the change; parent recovery assistance was needed after Runtime failures; unattended operation remains unproven"
+      }
+    },
+    "integrationCheckpoint": "control-center-web/docs/pawos/INTEGRATION_CLOSEOUT_20260906.md"
   },
   "items": [
     {
@@ -117,11 +126,74 @@
       "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
     },
     {
+      "path": "DESIGN.md",
+      "group": "project_harness",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "OUTCOMES.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "project_harness",
       "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
+    },
+    {
+      "path": "PRODUCT.md",
+      "group": "project_harness",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/APP_OPTIMIZATION_20260905.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/HOLOGRAPHIC_MAP_REVIEW_20260906.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/INTEGRATION_CLOSEOUT_20260906.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_GOLDEN_WORKFLOW_20260905.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAINTED_GALAXY_CONTINUATION_20260906.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_RELIABILITY_CONTINUATION_20260905.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md",
@@ -143,6 +215,27 @@
       "disposition": "keep_release",
       "group": "requirement_evidence",
       "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
+    },
+    {
+      "path": "control-center-web/docs/pawos/ROOM_EXPERIENCE_20260905.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/STELLAR_BROWSER_CONTINUATION_20260905.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/STELLAR_MEMORY_TOPIC_PAGES_20260905.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_091_120.md",
@@ -222,11 +315,284 @@
       "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
     },
     {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_242_245.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_246_248.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_249_250.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_251_253.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_254_255.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_256_258.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_260_264.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_265_266.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_267_269.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_270_270.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_271_271.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_272_274.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_275_277.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_278_283.md",
+      "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "requirement_evidence",
       "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
+    },
+    {
+      "path": "control-center-web/electron/assistant-launch.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/assistant-launch.test.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/browser-library.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/browser-library.test.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/host-config.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/host-config.test.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/main.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/preload.cjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/screen-assistant.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/screen-assistant.test.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/screen-capture.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/electron/screen-capture.test.mjs",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/App.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/App.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/app.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/app-icon-192.png",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/app-icon-512.png",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/app-icon-64.png",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/app-icon.svg",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/paw-media/project-galaxy/ATTRIBUTION.md",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/paw-media/project-galaxy/earth-clouds-2k.jpg",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/paw-media/project-galaxy/mars-viking.jpg",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/paw-media/project-galaxy/moon-color-2k.jpg",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/public/paw-media/project-galaxy/moon-height-1k.jpg",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/app/App.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/app/preview-control-transport.tsx",
@@ -241,6 +607,20 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/app/standalone-surface.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/app/standalone-surface.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/build-channel.d.ts",
@@ -278,6 +658,13 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "control-center-web/src/contracts/generated/agent-configuration.v1.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/contracts/generated/agent-lab-cost-receipt.v1.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -304,6 +691,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/memory-entity.v1.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/contracts/generated/session-memory-recall.v1.ts",
@@ -348,6 +742,20 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/design/themes.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/design/themes.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/features/agent/agent-feature.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -355,11 +763,32 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/agent/agent.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/features/agent/composer/AgentComposer.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/ModelPicker.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/ModelPicker.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/agent/composer/PermissionPicker.tsx",
@@ -395,6 +824,20 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/syntax-highlighter.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/syntax-highlighter.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/agent/index.tsx",
@@ -488,6 +931,13 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/agent/timeline/ConversationPlanetMark.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/features/agent/timeline/activity-summary.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -507,6 +957,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/conversation-planet-mark.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/agent/tool-count.test.ts",
@@ -535,6 +992,111 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/browser/BrowserFindBar.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/browser/BrowserLibraryPanel.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/browser/BrowserLibraryPanel.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/browser/BrowserTabStrip.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/browser/browser-chrome.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/browser/browser-library.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PawOsAppearanceSettings.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PawOsAppearanceSettings.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PromptSettingsPanel.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/ScenarioSkillSettings.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/configuration.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/index.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/management-writes.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/prompt-settings.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/prompt-settings.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/conversation-ui/components/VirtualTranscript.tsx",
@@ -572,6 +1134,62 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/eval-lab/CandidatePatchEvidence.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/ExperimentApplication.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/ExperimentApplication.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/ExperimentResultSummary.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/ExperimentWorkspace.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/ExperimentWorkspace.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/PawSelfbootResultsChart.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/TraceLabContext.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/features/eval-lab/api.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -579,11 +1197,46 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/eval-lab/candidate-room-dispatch.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/control-request.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/features/eval-lab/eval-lab.css",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/evidence-identity.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/execution-contract.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/execution-contract.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/eval-lab/experiment-audit-html.test.ts",
@@ -598,6 +1251,104 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/experiment-display-metrics.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/experiment-display-metrics.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/experiment-result-summary.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/experiment-result-summary.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/experiment-workspace.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/Calibration.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/CaseReview.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/Experiment.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/GoldenWorkflow.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/GoldenWorkflow.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/GoldenWorkflow.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/Shared.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/api.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/types.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/eval-lab/index.test.tsx",
@@ -649,6 +1400,286 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "control-center-web/src/features/eval-lab/paw-selfboot-metrics.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/paw-selfboot-metrics.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/paw-selfboot-results-chart.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/paw-selfboot-results-chart.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/scene-recipes.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/scene-recipes.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/trials/SceneTrialPanel.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/trials/SceneTrialPanel.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/trials/SceneTrialResult.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/trials/api.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/trials/scene-trial.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/trials/trial-result.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/FileCollaborationPanel.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/FileCollaborationPanel.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/PawOsFilesApp.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/WorkspaceTextEditor.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/file-collaboration.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/file-collaboration.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/file-collaboration.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/files-editor.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/paw-os-files-app.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/paw-os-files-app.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/files/workspace-text-editor.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/history/history.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/history/index.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/history/management-writes.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/input-method/index.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/input-method/input-method-feature.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/input-method/lexicon-workflow.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/api.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/document-workspace.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/index.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge-feature.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge-recovery.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge-secondary-recovery.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/reading-context.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/ActivityTimeline.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/ActivityTimeline.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryCatalogRecovery.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/features/memory/MemoryCurationWorkbench.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -656,11 +1687,263 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "control-center-web/src/features/memory/MemoryLibraryNavigation.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryPipeline.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "deleted",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryPreferences.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryRelations.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemorySecondaryRecovery.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemorySteward.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/features/memory/MemorySteward.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryTopicMap.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryTopicMap.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryTopicPage.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryTopicPage.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/RoleBookLayer.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/activity-timeline.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/index.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-composition.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-feature.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-opaque-surfaces.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-steward.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-topic-map.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-topic-page.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/observability/index.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/observability/observability-feature.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/observability/observability.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/SatelliteModelBadge.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/SatelliteModelBadge.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/model/app-registry.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/model/app-registry.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/satellite-model-badge.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/plugins/PluginScenes.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/plugins/PluginStudio.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/plugins/PluginStudio.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/plugins/index.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/plugins/plugin-studio.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/plugins/plugins-feature.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/rooms/RoomStatusPanel.tsx",
@@ -703,6 +1986,55 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/screen-assistant/ScreenAssistant.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/screen-assistant/screen-assistant-model.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/screen-assistant/screen-assistant-model.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/screen-assistant/screen-assistant.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/terminal/PawOsTerminalApp.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/terminal/paw-os-terminal-app.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/handoff.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/trace-agent/html-export.ts",
@@ -754,6 +2086,41 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/voice/index.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/voice/voice-feature.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/voice/voice.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/PawOsApp.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/PawOsApp.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/PawAgentApp.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -782,6 +2149,27 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/PawBrowserApp.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawBrowserApp.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawContextTrace.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/PawContextTrace.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -789,11 +2177,81 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/PawNativeApps.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/PawRoomConversation.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomFocusOverview.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomFocusOverview.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomFocusParticipants.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomFocusParticipants.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomLiveFocusOverview.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomLiveFocusOverview.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomRoundSheet.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomRoundSheet.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/paw-os/apps/PawRoomWorkspace.test.tsx",
@@ -838,11 +2296,186 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/PawWorkbenchDocumentLifecycle.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawWorkbenchDocumentLifecycle.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawWorkbenchMigrated.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawWorkbenchMigrated.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawWorkbenchPlanningTools.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawWorkbenchPlanningTools.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-apps-style.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-apps.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-browser-host.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-room-round-sheet.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-focus-projection.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-focus-projection.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/room-gravity-harness.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-message-flow.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-message-flow.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-round-task-sheet.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-satellite-auto-open.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-satellite-auto-open.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula.png",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/provenance.json",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-planet.png",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/app-registry.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/desktop-store.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/desktop-store.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawAppIcon.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawAppIcon.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.test.tsx",
@@ -873,11 +2506,382 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "control-center-web/src/paw-os/shell/PawProjectDocuments.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawProjectDocuments.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawProjectGalaxy.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawProjectGalaxy.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawProjectGalaxyScene.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawProjectGalaxyScene.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawStellarBackdrop.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawStellarBackdrop.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWayfinderWork.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWayfinderWork.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWindowLayer.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWindowLayer.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWorkDirectory.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWorkDirectory.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/StellarAgentField.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/collaboration-focus.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/paw-app-icon.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/paw-project-documents.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/paw-project-galaxy.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-dust.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-entrance.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-entrance.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-labels.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-labels.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-model.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-model.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-paint.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-physics.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-physics.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-shaders.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-stage.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-stage.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-surfaces.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-surfaces.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/project-galaxy-volume.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/stellar-agent-field.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/stellar-agent-projection.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/stellar-agent-projection.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/wayfinder-work-projection.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/wayfinder-work-projection.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-agent-fx.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-agent-next.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-controls.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-room-focus.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-room-migrated-v1.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/paw-os/styles/paw-os-shell-migrated-v1.css",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-stellar-dark.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-stellar-dark.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-stellar.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-sys-apps-migrated-v1.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-workbench-migrated-v1.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-workbench-migrated-v1.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os.css",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-stellar-sky.svg",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/platform/http-transport.test.ts",
@@ -913,6 +2917,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/platform/routes.test.ts",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/platform/routes.ts",
@@ -1006,6 +3017,13 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "eval/interview-metrics/RESUME_EVIDENCE_CURRENT.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "eval/interview-metrics/TRACE_EVAL_COMPATIBILITY.md",
       "status": "modified",
       "disposition": "keep_release",
@@ -1055,6 +3073,13 @@
       "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
+      "path": "eval/interview-metrics/evidence-ledger.v1.json",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "eval/interview-metrics/openai-codex-runtime-pricing-20260904.v1.json",
       "status": "added",
       "disposition": "keep_release",
@@ -1067,6 +3092,13 @@
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-candidate-evidence-enterprise-rag-r6.v1.json",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-alert-first-model-only-20260904.r1.v1.json",
@@ -1650,11 +3682,186 @@
       "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
+      "path": "eval/interview-metrics/runs/memory-pi-current-pair-20260905.r3.json",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/memory-topic-selfboot/RESULT.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "eval/micro-selfboot/CORE_SKILL_FLOW_REVIEW.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/FIVE_METRIC_RESULTS.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/MEDIUM_TASK_RESULTS.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/MEDIUM_TASK_WORK.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/METRIC_COMPLETION.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/OPTIMIZATION_RESULTS.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/OPTIMIZATION_WORK.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/OS_RESULTS.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/PAW_CURRENT_SKILL_REVIEW.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/PROMPT_SETTINGS_REVIEW.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/README.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/RESULTS.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/SKILL_FLOW_REVIEW.md",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "eval/micro-selfboot/tasks.v1.json",
+      "group": "evaluation_audit",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "integrations/pi/skill-routing-cards.json",
+      "group": "session_room_skill_flow",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "integrations/pi/skills/agent-eval-room-optimizer/SKILL.md",
+      "group": "session_room_skill_flow",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "integrations/pi/skills/agent-eval-room-optimizer/references/result-contract.md",
+      "group": "session_room_skill_flow",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "integrations/pi/skills/agent-eval-room-optimizer/references/scene-runners.md",
+      "group": "session_room_skill_flow",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "integrations/pi/skills/facilitate-room/SKILL.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the bounded Pi Skill routing correction used by the current Session and Room contract."
+    },
+    {
+      "path": "integrations/pi/skills/plugin-creator/SKILL.md",
+      "group": "session_room_skill_flow",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "pyproject.toml",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/active_rag_candidate_compiler.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/active_rag_service.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/activity_timeline.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/activity_timeline_evaluation.py",
@@ -1706,11 +3913,25 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/agent_configuration.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/agent_context_runtime.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "memory_context_continuity",
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "rag_ime/agent_core_policy.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/agent_delegation.py",
@@ -1741,11 +3962,32 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/agent_extensions.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/agent_external_approval.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_lab_candidate_evidence.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_cloudops.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/agent_lab_cost.py",
@@ -1762,11 +4004,88 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/agent_lab_golden.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_golden_execution.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_golden_pi.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_medium.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_memory_pi.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_memory_trial.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_micro.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/agent_lab_optimal_path.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "rag_ime/agent_lab_rag_trial.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_room_comparison.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_room_merge.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_scene_recipes.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/agent_lab_trial_execution.py",
@@ -1781,6 +4100,13 @@
       "disposition": "keep_release",
       "group": "execution_reliability",
       "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/agent_media.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/agent_memory_context.py",
@@ -1811,11 +4137,32 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/agent_prompt_settings.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/agent_protocol.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/agent_room_partner_application.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_room_partner_dispatch_store.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/agent_room_prompt_context.py",
@@ -1832,6 +4179,13 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/agent_room_session_dispatch.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/agent_room_start_gate.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -1844,6 +4198,13 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_runtime_driver.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/agent_service.py",
@@ -1874,6 +4235,20 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/agent_surface_runtime.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_templates.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/agent_tools.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -1900,6 +4275,13 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-configuration.v1.json",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/contracts/json/agent-lab-cost-receipt.v1.json",
@@ -1930,6 +4312,13 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/contracts/json/memory-entity.v1.json",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/contracts/json/session-memory-recall.v1.json",
       "status": "modified",
       "disposition": "keep_release",
@@ -1956,6 +4345,13 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/control_api/route_table.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/db/migrations/0187_agent_approval_room_execution_fence.sql",
@@ -2014,6 +4410,13 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/deepseek_completion.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/deepseek_memory_organizer.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2021,11 +4424,25 @@
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
+      "path": "rag_ime/eval_lab.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/eval_lab_evidence.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/input_task.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/memory_book_compiler.py",
@@ -2056,6 +4473,13 @@
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
+      "path": "rag_ime/memory_graph_read.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/memory_model_executor.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2063,11 +4487,32 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/memory_projection.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
       "path": "rag_ime/memory_projection_consistency.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "memory_context_continuity",
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "rag_ime/memory_topic_page.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/node/pi_provider_bridge_bundled.ts",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/observability.py",
@@ -2084,6 +4529,20 @@
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
+      "path": "rag_ime/personal_context_maintenance.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/personal_memory_books.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
       "path": "rag_ime/personal_memory_luna_evaluation.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2091,11 +4550,25 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/pi_provider_auth.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/pi_provider_config.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/pi_runtime.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/pi_runtime_public.py",
@@ -2119,6 +4592,13 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/prediction_trigger.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/rag_benchmark_agent.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2126,11 +4606,25 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/real_memory_rag_evaluation.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/retrieval_docs.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "memory_context_continuity",
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "rag_ime/screen_context.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/session_memory_recall.py",
@@ -2154,11 +4648,25 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/trace_runtime.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "release/release-candidate-scope.json",
       "status": "modified",
       "disposition": "keep_release",
       "group": "release_scope",
       "reason": "Record the exact base-to-candidate path inventory used by the formal installation."
+    },
+    {
+      "path": "scripts/agent_eval_candidate_prompt.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "scripts/build_agent_lab_cost_receipt_from_runtime_db.py",
@@ -2180,6 +4688,13 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "scripts/build_patched_squirrel.sh",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "scripts/build_paw_backend_model_bundle.py",
@@ -2210,6 +4725,20 @@
       "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
+      "path": "scripts/build_paw_resume_lab_ledger.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/canary_rag_benchmark_agent.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "scripts/check_agent_execution_fault_matrix.py",
       "status": "added",
       "disposition": "keep_release",
@@ -2224,6 +4753,27 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "scripts/eval_paw_app_export_acceptance.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/eval_paw_context_continuation.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/eval_paw_execution_reliability.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "scripts/eval_personal_memory_luna.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2231,11 +4781,53 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "scripts/export_agent_lab_candidate_evidence.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/export_agent_lab_showcase.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/export_memory_pi_trial_pair.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/export_paw_micro_evidence.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/export_paw_policy_app.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "scripts/import_agent_lab_experiments.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "scripts/install_agent_gateway_launch_agent.sh",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "scripts/install_sidecar_launch_agent.sh",
@@ -2252,11 +4844,39 @@
       "reason": "Retain the committed build and install ownership fixes and installed evidence selection."
     },
     {
+      "path": "scripts/prepare_squirrel_workspace.sh",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/preview_assistant_generation.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/promote_enterpriseops_csm_validation.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "scripts/promote_rag_agent_validation.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "scripts/rag_agent_spool_runtime_wrapper.mjs",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "scripts/rescore_enterprise_rag_answer_evidence.py",
@@ -2280,11 +4900,39 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "scripts/run_paw_medium_eval.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/run_paw_micro_eval.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "scripts/run_rag_agent_ablation.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "scripts/smoke_pi_prompt_settings.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/summarize_paw_optimization_metrics.py",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "scripts/verify_enterprise_rag_answer_evidence_candidate_citation_revision.py",
@@ -2322,6 +4970,41 @@
       "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
+      "path": "squirrel-patches/0001-add-rag-ime-sidecar.patch",
+      "group": "input_adapter",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "squirrel-patches/GENERATION_EXPERIENCE.md",
+      "group": "input_adapter",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "squirrel-patches/SCENARIO_INTEGRATION.md",
+      "group": "input_adapter",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "squirrel-patches/sources/RagImeAssistantPanelController.swift",
+      "group": "input_adapter",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "squirrel-patches/sources/RagImeSuggestionCardView.swift",
+      "group": "input_adapter",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/fixtures/agent/agent-approval.json",
       "status": "modified",
       "disposition": "keep_release",
@@ -2341,6 +5024,41 @@
       "disposition": "keep_release",
       "group": "execution_reliability",
       "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/fixtures/pi_prompt_settings_probe.mjs",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/frozen_rag_replay.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_active_rag_service.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_activity_timeline.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_activity_timeline_control_api.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_activity_timeline_evaluation.py",
@@ -2399,6 +5117,13 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_agent_configuration.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_agent_context_runtime.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2418,6 +5143,20 @@
       "disposition": "keep_release",
       "group": "execution_reliability",
       "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_eval_room_optimizer_skill.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_event_projection.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_agent_events.py",
@@ -2455,6 +5194,27 @@
       "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
     },
     {
+      "path": "tests/test_agent_extensions.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_candidate_evidence.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_cloudops.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_agent_lab_cost.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2469,6 +5229,62 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_agent_lab_golden.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_golden_execution.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_golden_pi.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_golden_routes.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_medium.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_memory_pi.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_memory_trial.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_micro.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_agent_lab_optimal_path.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2476,11 +5292,60 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_agent_lab_rag_trial.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_room_comparison.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_room_merge.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_scene_recipe_routes.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_scene_recipes.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_showcase_export.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_agent_lab_trial_execution.py",
       "status": "added",
       "disposition": "keep_release",
       "group": "execution_reliability",
       "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_lab_trial_routes.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_agent_lab_trials.py",
@@ -2511,6 +5376,41 @@
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
+      "path": "tests/test_agent_prompt_audit.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_prompt_settings.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_partner_application.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_partner_restart_recovery.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_send_admission.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_agent_room_start_gate.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2530,6 +5430,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_runtime_error_projection.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_agent_service.py",
@@ -2553,6 +5460,27 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_agent_workspace_sqlite_scratch.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Keep the installed workspace-managed SQLite scratch regression."
+    },
+    {
+      "path": "tests/test_assistant_generation_behavior.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_assistant_generation_stage_plan.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_build_agent_lab_cost_receipt_from_runtime_db.py",
       "status": "added",
       "disposition": "keep_release",
@@ -2567,6 +5495,13 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_build_patched_squirrel.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_build_paw_backend_web_model_package.py",
       "status": "added",
       "disposition": "keep_release",
@@ -2574,11 +5509,25 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_canary_rag_benchmark_agent.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_cloudops_luna_prompt_receipts.py",
       "status": "added",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_control_api_route_policy.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_control_center_cutover.py",
@@ -2600,6 +5549,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_deepseek_memory_organizer.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
     },
     {
       "path": "tests/test_enterprise_rag_answer_evidence_candidate_citation_revision.py",
@@ -2686,6 +5642,13 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_input_task_scenarios.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_interview_agent_experiments.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2700,11 +5663,39 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_memory_book_compiler.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "tests/test_memory_consumer_acceptance.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_memory_curation.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "memory_context_continuity",
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "tests/test_memory_evaluation_body.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_memory_graph_read.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_memory_model_executor.py",
@@ -2714,11 +5705,32 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_memory_pi_trial_pair_evidence.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_memory_projection_consistency.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "memory_context_continuity",
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "tests/test_memory_references.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_memory_topic_page.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_model_runtime.py",
@@ -2728,11 +5740,67 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_native_active_rag_cancel.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_owner_memory_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "tests/test_paw_app_export_acceptance.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_paw_context_continuation.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_paw_execution_reliability.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_paw_policy_app_export.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_pawos_requirement_status.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_personal_context_maintenance.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_personal_memory_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
     },
     {
       "path": "tests/test_personal_memory_luna_evaluation.py",
@@ -2747,6 +5815,27 @@
       "disposition": "keep_release",
       "group": "memory_context_continuity",
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "tests/test_pi_prompt_settings_overlay.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_provider_auth.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_provider_auth_bridge.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_pi_provider_config.py",
@@ -2770,6 +5859,27 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_prediction_trigger.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_prepare_squirrel_workspace.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_promote_enterpriseops_csm_validation.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_promote_rag_agent_validation.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2777,11 +5887,39 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_rag_agent_candidate_controls.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_rag_agent_scene_recipe.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_rag_benchmark_agent.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_rag_benchmark_exact_dense.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_real_memory_rag_evaluation.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "modified",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_rescore_enterprise_rag_answer_evidence.py",
@@ -2812,11 +5950,25 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_screen_context.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_session_memory_recall.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "memory_context_continuity",
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "tests/test_summarize_paw_optimization_metrics.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_system_terminal.py",
@@ -2840,6 +5992,13 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_workspace_file_editor.py",
+      "group": "verification",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_workspace_job_idempotency_gateway.py",
       "status": "added",
       "disposition": "keep_release",
@@ -2854,60 +6013,11 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
-      "path": "eval/memory-topic-selfboot/RESULT.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "memory_context_continuity",
-      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
-    },
-    {
-      "path": "rag_ime/memory_projection.py",
+      "path": "uv.lock",
+      "group": "session_runtime",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_context_continuity",
-      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
-    },
-    {
-      "path": "rag_ime/personal_memory_books.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_context_continuity",
-      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
-    },
-    {
-      "path": "tests/test_agent_workspace_sqlite_scratch.py",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "execution_reliability",
-      "reason": "Keep the installed workspace-managed SQLite scratch regression."
-    },
-    {
-      "path": "tests/test_deepseek_memory_organizer.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_context_continuity",
-      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
-    },
-    {
-      "path": "tests/test_memory_book_compiler.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_context_continuity",
-      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
-    },
-    {
-      "path": "tests/test_owner_memory_curation.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_context_continuity",
-      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
-    },
-    {
-      "path": "tests/test_personal_memory_application.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_context_continuity",
-      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+      "disposition": "keep_release"
     }
   ]
 }

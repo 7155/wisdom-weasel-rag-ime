@@ -9,6 +9,8 @@ import './styles/paw-os-motion.css';
 import './styles/paw-os-webmodel-v1.css';
 import './styles/paw-os-shell-migrated-v1.css';
 import './styles/paw-os-controls.css';
+import './styles/paw-os-stellar.css';
+import './styles/paw-os-stellar-dark.css';
 
 export function PawOsApp() {
   const { theme } = usePawOsAppearance();
@@ -17,7 +19,7 @@ export function PawOsApp() {
   return (
     <PawDesktopProvider initialAppId={initialApp?.id} initialRoute={initialRoute}>
       <PawOsRouteBridge />
-      <div className="paw-desktop-root" data-paw-theme={theme} data-testid="paw-os-product-root">
+      <div className="paw-desktop-root" data-paw-theme={theme} data-paw-visual="stellar" data-testid="paw-os-product-root">
         <PawDesktop />
       </div>
     </PawDesktopProvider>

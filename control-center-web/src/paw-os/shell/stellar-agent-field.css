@@ -1,0 +1,49 @@
+.paw-stellar-agents { position: absolute; inset: 40px; }
+.paw-stellar-agents__links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.paw-stellar-agents__links line { stroke: #e9f5ff; stroke-width: 1; stroke-dasharray: 5 8; vector-effect: non-scaling-stroke; opacity: .6; }
+.paw-stellar-agent { position: absolute; width: var(--stellar-body-size); transform: translate(-50%, -50%); }
+.paw-stellar-agent__float { position: relative; animation: paw-stellar-agent-float 28s ease-in-out infinite alternate; animation-delay: var(--stellar-delay); }
+.paw-stellar-agent__sphere {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #7895ad;
+  transform: rotate(var(--stellar-tilt));
+  box-shadow: 14px 23px 38px -9px rgb(17 39 79 / .38), -2px -2px 7px rgb(224 244 255 / .85);
+}
+.paw-stellar-agent__sphere::after {
+  position: absolute; inset: 0; content: ''; border-radius: inherit;
+  background: radial-gradient(circle at 26% 20%, rgb(245 249 255 / .35), transparent 38%, rgb(4 15 33 / .55) 72%, #040d20 97%);
+  box-shadow: inset -9px -6px 12px rgb(2 12 32 / .6), inset 2px 2px 5px rgb(232 250 255 / .8);
+}
+.paw-stellar-agent__surface {
+  position: absolute; inset: 0 -55%;
+  background-image: var(--stellar-texture);
+  background-repeat: repeat-x; background-size: auto 100%;
+  animation: paw-stellar-agent-turn 90s linear infinite alternate;
+  animation-delay: var(--stellar-delay);
+}
+.paw-stellar-agent__orbit {
+  position: absolute; inset: -25% -57%; border: 1px solid rgb(226 243 255 / .52);
+  border-radius: 50%; transform: rotate(-23deg) scaleY(.38);
+}
+.paw-stellar-agent__caption { position: absolute; top: calc(100% + 13px); left: 50%; width: 172px; transform: translateX(-50%); text-align: center; color: #142d50; }
+.paw-stellar-agent__caption strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; text-shadow: 0 1px 8px #fff, 0 1px 3px #fff; }
+.paw-stellar-agent__caption span { display: inline-flex; gap: 5px; align-items: center; margin-top: 3px; padding: 2px 5px; border-radius: 3px; background: rgb(240 248 255 / .86); color: #28475e; font-size: 10px; }
+.paw-stellar-agent__caption i { width: 4px; height: 4px; border-radius: 50%; background: #2a7669; }
+/* Activity is data; motion is optional. Suspension freezes the same identities. */
+.paw-stellar-scene[data-stellar-paused='true'] :is(.paw-stellar-agent__float, .paw-stellar-agent__surface) { animation-play-state: paused; }
+@keyframes paw-stellar-agent-float { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(5px, -13px, 0); } }
+@keyframes paw-stellar-agent-turn { from { transform: translateX(-9%); } to { transform: translateX(9%); } }
+@media (max-width: 700px) {
+  .paw-stellar-agent { width: calc(var(--stellar-body-size) * .55); }
+  .paw-stellar-agent__caption { width: 108px; }
+  .paw-stellar-agent__caption strong { font-size: 11px; }
+  .paw-stellar-agent__orbit { inset: -18% -32%; }
+}
+@media (prefers-reduced-motion: reduce), (hover: none), (pointer: coarse) {
+  .paw-stellar-agent :is(.paw-stellar-agent__float, .paw-stellar-agent__surface) { animation: none; }
+}
+[data-reduce-motion='true'] .paw-stellar-agent :is(.paw-stellar-agent__float, .paw-stellar-agent__surface) { animation: none; }

@@ -7,15 +7,17 @@ import {
   GitBranch,
   MessageCircle,
   Route,
+  RefreshCw,
+  Satellite,
   Send,
   ShieldCheck,
   Waypoints,
 } from 'lucide-react';
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Disclosure } from '@/components/primitives';
+import { MarkdownBody } from '@/features/agent/timeline/MarkdownRenderer';
 import {
   buildRoomFocusMesh,
-  roomFocusMeshEdgeKindLabel,
   type RoomFocusMesh,
   type RoomFocusMeshEdge,
   type RoomFocusMeshNode,
@@ -32,6 +34,7 @@ import {
   type RoomFocusWorkItem,
 } from './room-focus-projection';
 import type { RoomDispatchPlan } from './room-gravity-projection';
+import { roomFlowKindLabel, roomFlowStatusLabel, type RoomSatelliteSnapshot, type RoomSatelliteSnapshots } from './room-message-flow';
 
 type FocusSelection =
   | { kind: 'work'; id: string }
@@ -65,12 +68,18 @@ export function PawRoomFocusOverview({
   onOpenParticipant,
   onSelectParticipant,
   selectedParticipantId,
+  satellitesByParticipant = {},
+  intercomStatus,
+  onRefreshTraffic,
 }: {
   focus: RoomFocusProjection;
   hideMission?: boolean;
   onOpenParticipant?: (participantId: string, background?: boolean) => void;
   onSelectParticipant?: (participantId: string) => void;
   selectedParticipantId?: string;
+  satellitesByParticipant?: RoomSatelliteSnapshots;
+  intercomStatus?: 'loading' | 'ready' | 'error';
+  onRefreshTraffic?: () => void;
 }) {
   const defaultSelection = useMemo(() => defaultFocusSelection(focus), [focus]);
   const mesh = useMemo(() => buildRoomFocusMesh(focus), [focus]);
@@ -129,6 +138,7 @@ export function PawRoomFocusOverview({
 
       <FocusPulse counts={focus.counts} />
 
+      <div className="paw-room-focus-overview__layout">
       <FocusMeshGraph
         focus={focus}
         mesh={mesh}
@@ -136,6 +146,7 @@ export function PawRoomFocusOverview({
         onOpenParticipant={onOpenParticipant}
         onSelectParticipant={onSelectParticipant}
         selectedParticipantId={selectedParticipantId}
+        satellitesByParticipant={satellitesByParticipant}
         onSelect={setSelection}
       />
 
@@ -145,6 +156,9 @@ export function PawRoomFocusOverview({
         partners={focus.partners}
         rootId={focus.goal.rootId}
         workItems={focus.workItems}
+        intercomStatus={intercomStatus}
+        onOpenParticipant={onOpenParticipant}
+        onRefreshTraffic={onRefreshTraffic}
       />
 
       <FocusInspector
@@ -153,7 +167,9 @@ export function PawRoomFocusOverview({
         partner={selectedPartner}
         partners={focus.partners}
         work={selectedWork}
+        satellites={selectedPartner ? satellitesByParticipant[selectedPartner.participantId] : undefined}
       />
+      </div>
     </section>
   );
 }
@@ -194,6 +210,7 @@ function FocusMeshGraph({
   onSelectParticipant,
   selectedParticipantId,
   selection,
+  satellitesByParticipant,
 }: {
   focus: RoomFocusProjection;
   mesh: RoomFocusMesh;
@@ -202,132 +219,53 @@ function FocusMeshGraph({
   onSelect: (selection: FocusSelection) => void;
   selectedParticipantId?: string;
   selection: FocusSelection;
+  satellitesByParticipant: RoomSatelliteSnapshots;
 }) {
-  const hasActors = focus.partners.length > 0;
-  const arrowMarkerId = `paw-room-gravity-arrow-${useId().replace(/:/g, '')}`;
-  const nodeLabels = useMemo(
-    () => new Map(mesh.nodes.map((node) => [node.id, node.label])),
-    [mesh.nodes],
-  );
-  return (
-    <section aria-label="协作网" className="paw-room-focus-overview__section paw-room-focus-overview__mesh">
-      <header>
-        <span><Waypoints aria-hidden="true" size={14} /><strong>协作网</strong></span>
-        <small>
-          {focus.partners.length} 位行星伙伴 · {mesh.edges.length} 条已确认关系
-          {mesh.nonDagRelations.length ? ` · ${mesh.nonDagRelations.length} 条未建立尝试` : ''}
-        </small>
-      </header>
-      {hasActors ? (
-        <>
-          <div
-            aria-label="协作网状图"
-            className="paw-room-focus-overview__mesh-canvas"
-            role="group"
-            style={{ aspectRatio: `100 / ${mesh.height}` }}
-          >
-          <svg aria-hidden="true" focusable="false" preserveAspectRatio="none" viewBox={`0 0 100 ${mesh.height}`}>
-            <defs>
-              <marker
-                id={arrowMarkerId}
-                markerHeight="5"
-                markerUnits="strokeWidth"
-                markerWidth="5"
-                orient="auto"
-                overflow="visible"
-                refX="3"
-                refY="3"
-                viewBox="0 0 6 6"
-              >
-                <path d="M 0 0 L 6 3 L 0 6 Z" fill="context-stroke" />
-              </marker>
-            </defs>
-            {mesh.edges.map((edge) => (
-              <g
-                className="paw-room-focus-overview__mesh-edge"
-                data-kind={edge.kind}
-                data-state={edge.state}
-                data-selected={selection.kind === 'edge' && selection.id === edge.id || undefined}
-                key={edge.id}
-              >
-                <path
-                  d={edge.path}
-                  markerMid={`url(#${arrowMarkerId})`}
-                  vectorEffect="non-scaling-stroke"
-                />
-              </g>
-            ))}
-          </svg>
-          {mesh.edges.map((edge) => (
-            <button
-              aria-label={meshEdgeAriaLabel(edge, nodeLabels)}
-              aria-pressed={selection.kind === 'edge' && selection.id === edge.id}
-              className="paw-room-focus-overview__mesh-edge-label"
-              data-kind={edge.kind}
-              key={`${edge.id}:label`}
-              onClick={() => onSelect({ kind: 'edge', id: edge.id })}
-              style={{ left: `${edge.labelX}%`, top: `${(edge.labelY / mesh.height) * 100}%` }}
-              type="button"
-            >{edge.label}</button>
-          ))}
-          {mesh.nodes.map((node) => <FocusMeshNode
-            canvasHeight={mesh.height}
-            key={node.id}
-            node={node}
-            onOpenParticipant={onOpenParticipant}
-            onSelectParticipant={onSelectParticipant}
-            selected={selectedParticipantId
-              ? selectedParticipantId === node.refId
-              : selection.kind === 'partner' && selection.id === node.refId}
-            onSelect={onSelect}
-          />)}
+  const nodeLabels = useMemo(() => new Map(mesh.nodes.map((node) => [node.id, node.label])), [mesh.nodes]);
+  return <section aria-label="协作网" className="paw-room-focus-overview__section paw-room-focus-overview__mesh">
+    <header><span><Waypoints aria-hidden="true" size={14} /><strong>协作行星</strong></span><small>{focus.partners.length} 位伙伴 · Session 卫星</small></header>
+    <div aria-label="协作网状图" className="paw-room-focus-overview__mesh-canvas" role="group" data-view="roster">
+      {mesh.nodes.map((node) => <FocusMeshNode
+        canvasHeight={mesh.height}
+        key={node.id}
+        node={node}
+        satellites={satellitesByParticipant[node.refId]}
+        onOpenParticipant={onOpenParticipant}
+        onSelectParticipant={onSelectParticipant}
+        selected={selectedParticipantId ? selectedParticipantId === node.refId : selection.kind === 'partner' && selection.id === node.refId}
+        onSelect={onSelect}
+      />)}
+      {mesh.edges.length ? <Disclosure className="paw-room-focus-overview__relations" summary={`协作关系 · ${mesh.edges.length} 条已确认`}>
+        <div className="paw-room-focus-overview__relation-list">
+          {mesh.edges.map((edge) => <button
+            aria-label={meshEdgeAriaLabel(edge, nodeLabels)}
+            aria-pressed={selection.kind === 'edge' && selection.id === edge.id}
+            className="paw-room-focus-overview__mesh-edge-label"
+            data-kind={edge.kind}
+            key={edge.id}
+            onClick={() => onSelect({ kind: 'edge', id: edge.id })}
+            type="button"
+          ><span>{nodeLabels.get(edge.sourceId)} → {nodeLabels.get(edge.targetId)}</span><small>{edge.label} · {relationStateLabel(edge.state)}</small></button>)}
+        </div>
+      </Disclosure> : null}
+    </div>
+    {selection.kind === 'edge' ? <MeshEdgeDetail edge={mesh.edges.find((candidate) => candidate.id === selection.id)} nodeLabels={nodeLabels} onOpenParticipant={onOpenParticipant} nodes={mesh.nodes} /> : null}
+    {mesh.nonDagRelations.length ? <Disclosure aria-label="失败、等待与冲突关系" className="paw-room-focus-overview__mesh-disclosure" summary={`未确认关系 · ${mesh.nonDagRelations.length} 条传递中 / 失败 / 冲突`}>
+      <ol aria-label="未建立协作关系" className="paw-room-focus-overview__mesh-disclosure-list">
+        {mesh.nonDagRelations.map((relation) => <li data-kind={relation.kind} data-state={relation.state} key={relation.id}>
+          <div className="paw-room-focus-overview__mesh-disclosure-route"><strong>{nodeLabels.get(relation.sourceId) ?? relation.sourceId}</strong><span aria-hidden="true">→</span><strong>{nodeLabels.get(relation.targetId) ?? relation.targetId}</strong><span>{relation.label} · {relationStateLabel(relation.state)}</span></div>
+          <p className="paw-room-focus-overview__mesh-disclosure-reason">{relation.reason}</p>
+          <p className="paw-room-focus-overview__mesh-disclosure-summary">{readableActivity(relation.summary, '等待下一条通信回执')}</p>
+          <div className="paw-room-focus-overview__mesh-disclosure-provenance">
+            {relation.provenance.eventIds.map((value) => <code key={`event:${value}`}>事件 {value}</code>)}
+            {relation.provenance.workItemIds.map((value) => <code key={`work:${value}`}>任务 {value}</code>)}
+            {relation.provenance.dispatchIds.map((value) => <code key={`dispatch:${value}`}>分派 {value}</code>)}
           </div>
-          {selection.kind === 'edge' ? (
-            <MeshEdgeDetail
-              edge={mesh.edges.find((candidate) => candidate.id === selection.id)}
-              nodeLabels={nodeLabels}
-              onOpenParticipant={onOpenParticipant}
-              nodes={mesh.nodes}
-            />
-          ) : null}
-          {mesh.nonDagRelations.length ? (
-            <Disclosure
-              aria-label="失败、等待与冲突关系"
-              className="paw-room-focus-overview__mesh-disclosure"
-              summary={`未进入成功 DAG · ${mesh.nonDagRelations.length} 条传递中 / 失败 / 冲突`}
-            >
-              <ol aria-label="未建立协作关系" className="paw-room-focus-overview__mesh-disclosure-list">
-                {mesh.nonDagRelations.map((relation) => (
-                  <li data-kind={relation.kind} data-state={relation.state} key={relation.id}>
-                    <div className="paw-room-focus-overview__mesh-disclosure-route">
-                      <strong>{nodeLabels.get(relation.sourceId) ?? relation.sourceId}</strong>
-                      <span aria-hidden="true">→</span>
-                      <strong>{nodeLabels.get(relation.targetId) ?? relation.targetId}</strong>
-                      <span>{relation.label} · {relationStateLabel(relation.state)}</span>
-                    </div>
-                    <p className="paw-room-focus-overview__mesh-disclosure-reason">{relation.reason}</p>
-                    <p className="paw-room-focus-overview__mesh-disclosure-summary">{relation.summary}</p>
-                    <div className="paw-room-focus-overview__mesh-disclosure-provenance">
-                      {relation.provenance.eventIds.map((value) => <code key={`event:${value}`}>事件 {value}</code>)}
-                      {relation.provenance.workItemIds.map((value) => <code key={`work:${value}`}>任务 {value}</code>)}
-                      {relation.provenance.dispatchIds.map((value) => <code key={`dispatch:${value}`}>分派 {value}</code>)}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </Disclosure>
-          ) : null}
-        </>
-      ) : <p className="paw-room-focus-overview__empty">还没有任务。把目标发给 Room，协作网会从这里生长。</p>}
-      {mesh.edgeKinds.length ? (
-        <ul aria-label="关系图例" className="paw-room-focus-overview__mesh-legend">
-          {mesh.edgeKinds.map((kind) => (
-            <li data-kind={kind} key={kind}><i aria-hidden="true" />{roomFocusMeshEdgeKindLabel(kind)}</li>
-          ))}
-        </ul>
-      ) : null}
-    </section>
-  );
+        </li>)}
+      </ol>
+    </Disclosure> : null}
+    {!focus.partners.length ? <p className="paw-room-focus-overview__empty">还没有行星伙伴。添加伙伴后，这里会显示各自的工作与卫星。</p> : null}
+  </section>;
 }
 
 function relationStateLabel(state: string): string {
@@ -435,6 +373,7 @@ function FocusMeshNode({
   onSelectParticipant,
   onSelect,
   selected,
+  satellites,
 }: {
   canvasHeight: number;
   node: RoomFocusMeshNode;
@@ -442,6 +381,7 @@ function FocusMeshNode({
   onSelectParticipant?: (participantId: string) => void;
   onSelect: (selection: FocusSelection) => void;
   selected: boolean;
+  satellites?: RoomSatelliteSnapshot;
 }) {
   const position = { left: `${node.x}%`, top: `${Math.round((node.y / canvasHeight) * 10000) / 100}%` };
   const stateLabel = roomFocusStateLabel(node.state);
@@ -455,8 +395,8 @@ function FocusMeshNode({
       onClick={() => {
         onSelect({ kind: 'partner', id: node.refId });
         onSelectParticipant?.(node.refId);
-        /* A planet is the direct doorway to its one canonical Partner
-         * satellite. The desktop raises an existing target when present, so
+        /* A planet is the direct doorway to its canonical Partner Session.
+         * The desktop raises an existing target when present, so
          * foregrounding it never creates a second conversation identity. */
         onOpenParticipant?.(node.refId);
       }}
@@ -464,11 +404,16 @@ function FocusMeshNode({
       title={`${node.label} · ${node.sublabel} · ${node.responsibility}`}
       type="button"
     >
-      <i aria-hidden="true" />
+      <i aria-hidden="true" className="paw-room-focus-overview__planet-body" style={planetTexture(node.label)} />
       <span>
         <strong>{node.label}</strong>
         <small>{node.sublabel}</small>
-        <em>{node.responsibility}</em>
+        <em>{readableActivity(node.responsibility, '等待新的工作项')}</em>
+        <span className="paw-room-focus-overview__satellite-count" data-known={satellites?.status === 'ready' || undefined}>
+          <Satellite aria-hidden="true" size={12} />
+          {satellites?.status === 'ready' ? `卫星 ${satellites.satellites.length}` : satellites?.status === 'loading' ? '卫星读取中' : satellites?.status === 'error' ? '卫星暂不可用' : '卫星数量未知'}
+        </span>
+        {satellites?.status === 'ready' && satellites.satellites.length > 0 ? <span className="paw-room-focus-overview__satellite-breakdown">{satelliteBreakdown(satellites)}</span> : null}
       </span>
     </button>
   );
@@ -477,71 +422,95 @@ function FocusMeshNode({
 /** Chronological ledger of what really moved between Sol and the planets:
  * public messages, approvals, dispatches, context transfers and WorkItem
  * revisions, in real event order. */
-function FocusFlowLedger({
+export function FocusFlowLedger({
   flow,
   originLabel,
   partners,
   rootId,
   workItems,
+  intercomStatus,
+  onOpenParticipant,
+  onRefreshTraffic,
 }: {
   flow: RoomFocusPacket[];
   originLabel: string;
   partners: RoomFocusPartner[];
   rootId: string;
   workItems: RoomFocusWorkItem[];
+  intercomStatus?: 'loading' | 'ready' | 'error';
+  onOpenParticipant?: (participantId: string) => void;
+  onRefreshTraffic?: () => void;
 }) {
   const [selectedPacketId, setSelectedPacketId] = useState('');
+  const detailRef = useRef<HTMLDivElement>(null);
+  const selectPacket = (id: string) => {
+    setSelectedPacketId(id);
+    detailRef.current?.scrollIntoView?.({ block: 'start', behavior: 'auto' });
+  };
   const [showAllPackets, setShowAllPackets] = useState(false);
+  const [filterParticipant, setFilterParticipant] = useState('');
+  const [category, setCategory] = useState('communication');
   useEffect(() => {
     setShowAllPackets(false);
     setSelectedPacketId('');
+    setFilterParticipant('');
   }, [rootId]);
-  const selectedPacket = flow.find((packet) => packet.id === selectedPacketId) ?? flow.at(-1);
-  const visiblePackets = showAllPackets ? flow : flow.slice(-FLOW_PACKET_WINDOW);
+  const categoryPackets = category === 'all' ? flow : flow.filter((packet) => category === 'communication'
+    ? ['request', 'intercom', 'question', 'answer', 'dispatch', 'context'].includes(packet.kind)
+    : ['plan', 'document', 'result'].includes(packet.kind));
+  const filteredPackets = filterParticipant
+    ? categoryPackets.filter((packet) => packet.sourceParticipantId === filterParticipant || packet.targetParticipantIds.includes(filterParticipant))
+    : categoryPackets;
+  const selectedPacket = filteredPackets.find((packet) => packet.id === selectedPacketId) ?? filteredPackets.at(-1);
+  const visiblePackets = showAllPackets ? filteredPackets : filteredPackets.slice(-FLOW_PACKET_WINDOW);
   const actorName = (actorId: string) => actorId === 'root'
     ? originLabel
     : partners.find((partner) => partner.participantId === actorId)?.celestialName ?? actorId;
+  const replyTo = selectedPacket?.replyToPacketId ? flow.find((packet) => packet.id === selectedPacket.replyToPacketId) : undefined;
+  const replies = selectedPacket ? flow.filter((packet) => packet.replyToPacketId === selectedPacket.id) : [];
 
   return (
     <section aria-label="往来记录" className="paw-room-focus-overview__section paw-room-focus-overview__flow">
       <header>
-        <span><GitBranch aria-hidden="true" size={14} /><strong>往来记录</strong></span>
+        <span><GitBranch aria-hidden="true" size={14} /><strong>消息流转</strong></span>
         <span className="paw-room-focus-overview__flow-window">
-          <small>最近 {visiblePackets.length} / 共 {flow.length} 条</small>
-          {flow.length > visiblePackets.length ? <button onClick={() => setShowAllPackets(true)} type="button">显示全部</button> : null}
+          <small>最近 {visiblePackets.length} / 共 {filteredPackets.length} 条</small>
+          {filteredPackets.length > visiblePackets.length ? <button onClick={() => setShowAllPackets(true)} type="button">显示全部</button> : null}
         </span>
       </header>
-      {flow.length ? (
-        <ol aria-label="往来事件" className="paw-room-focus-overview__packets">
-          {visiblePackets.map((packet, index) => (
-            <li data-kind={packet.kind} data-status={packet.status} key={packet.id}>
-              <button
-                aria-pressed={packet.id === selectedPacket?.id}
-                onClick={() => setSelectedPacketId(packet.id)}
-                type="button"
-              >
-                <span aria-hidden="true" className="paw-room-focus-overview__packet-icon">{packetIcon(packet.kind)}</span>
-                <span className="paw-room-focus-overview__packet-copy">
-                  <strong>{packetKindLabel(packet.kind)}</strong>
-                  <p>{packet.summary}</p>
-                  <small>
-                    #{flow.length - visiblePackets.length + index + 1}
-                    {' · '}{actorName(packet.sourceParticipantId)} → {packet.targetParticipantIds.map(actorName).join('、') || 'Room'}
-                    {packet.createdAtMs ? ` · ${packetClock(packet.createdAtMs)}` : ''}
-                  </small>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ol>
-      ) : <p className="paw-room-focus-overview__empty">还没有公开往来。第一条消息发出后，这里会记下谁把什么交给了谁。</p>}
+      <div className="paw-room-focus-overview__flow-controls">
+        <label>内容<select aria-label="消息类型" onChange={(event) => { setCategory(event.target.value); setSelectedPacketId(''); }} value={category}>
+          <option value="communication">协作往返</option><option value="public">公开汇报</option><option value="all">全部事件</option>
+        </select></label>
+        <label>查看往来<select aria-label="按行星筛选消息" onChange={(event) => { setFilterParticipant(event.target.value); setSelectedPacketId(''); }} value={filterParticipant}>
+          <option value="">全部行星</option>
+          {partners.map((partner) => <option key={partner.participantId} value={partner.participantId}>{partner.celestialName}</option>)}
+        </select></label>
+        {onRefreshTraffic ? <button aria-label="刷新消息与卫星" onClick={onRefreshTraffic} type="button"><RefreshCw aria-hidden="true" size={13} />刷新</button> : null}
+      </div>
+      {intercomStatus ? <p className="paw-room-focus-overview__traffic-source" data-status={intercomStatus}>
+        {intercomStatus === 'error' ? '直接通信暂时无法更新，已保留可读取的记录。' : intercomStatus === 'loading' ? '正在读取直接通信记录…' : '本轮公开记录与最近 200 条直接通信'}
+      </p> : null}
       {selectedPacket ? (
+        <div className="paw-room-focus-overview__selected-message" ref={detailRef}>
+        <FocusTrafficRoute actorName={actorName} packet={selectedPacket} onOpenParticipant={onOpenParticipant} />
         <div className="paw-room-focus-overview__packet-detail">
           <header>
             <strong>{packetKindLabel(selectedPacket.kind)}</strong>
-            <span data-status={selectedPacket.status}>{flowStatusLabel(selectedPacket.status)}</span>
+            <span data-status={selectedPacket.status}>{flowStatusLabel(selectedPacket.status, selectedPacket)}</span>
           </header>
-          <p>{selectedPacket.summary}</p>
+          <div className="paw-room-focus-overview__message-content"><MarkdownBody
+            documentKey={selectedPacket.id}
+            sessionId={partners.find((partner) => partner.participantId === selectedPacket.sourceParticipantId)?.sessionId}
+            text={packetSummary(selectedPacket)}
+          /></div>
+          {selectedPacket.error ? <p className="paw-room-focus-overview__delivery-error">{selectedPacket.error}</p> : null}
+          {selectedPacket.replyToPacketId ? <div className="paw-room-focus-overview__reply-link">
+            <span>回复的消息</span>
+            {replyTo ? <button onClick={() => selectPacket(replyTo.id)} type="button">{actorName(replyTo.sourceParticipantId)}：{replyTo.summary}</button>
+              : <span>原消息不在已读取的记录中 · {selectedPacket.replyToPacketId.replace(/^intercom:/, '')}</span>}
+          </div> : null}
+          {replies.length ? <div className="paw-room-focus-overview__reply-link"><span>已收到 {replies.length} 条回复</span>{replies.map((reply) => <button key={reply.id} onClick={() => selectPacket(reply.id)} type="button">查看 {actorName(reply.sourceParticipantId)} 的回复</button>)}</div> : null}
           {selectedPacket.dispatchPlan ? (
             <FocusDispatchPlan
               actorName={actorName}
@@ -550,17 +519,71 @@ function FocusFlowLedger({
               workItems={workItems}
             />
           ) : null}
-          {selectedPacket.dispatchId || selectedPacket.workItemId || selectedPacket.refs.length ? (
+          <Disclosure className="paw-room-focus-overview__message-evidence" summary="消息证据">
             <dl>
+              <dt>消息</dt><dd>{selectedPacket.intercomId || selectedPacket.id}</dd>
+              <dt>发送时间</dt><dd>{packetTimestamp(selectedPacket.createdAtMs)}</dd>
+              {selectedPacket.deliveredAtMs ? <><dt>送达时间</dt><dd>{packetTimestamp(selectedPacket.deliveredAtMs)}</dd></> : null}
+              {selectedPacket.repliedAtMs ? <><dt>回复时间</dt><dd>{packetTimestamp(selectedPacket.repliedAtMs)}</dd></> : null}
+              {selectedPacket.receiptIds?.length ? <><dt>回执事件</dt><dd>{selectedPacket.receiptIds.join('\n')}</dd></> : null}
               {selectedPacket.dispatchId ? <><dt>分派</dt><dd>{selectedPacket.dispatchId}</dd></> : null}
               {selectedPacket.workItemId ? <><dt>任务</dt><dd>{selectedPacket.workItemId}</dd></> : null}
               {selectedPacket.refs.length ? <><dt>上下文 / 文档</dt><dd>{selectedPacket.refs.join('\n')}</dd></> : null}
             </dl>
-          ) : null}
+          </Disclosure>
+        </div>
         </div>
       ) : null}
+      <div className="paw-room-focus-overview__history-label">消息记录</div>
+      {filteredPackets.length ? (
+        <ol aria-label="往来事件" className="paw-room-focus-overview__packets">
+          {visiblePackets.map((packet, index) => (
+            <li data-kind={packet.kind} data-status={packet.status} key={packet.id}>
+              <button
+                aria-pressed={packet.id === selectedPacket?.id}
+                onClick={() => selectPacket(packet.id)}
+                type="button"
+              >
+                <span aria-hidden="true" className="paw-room-focus-overview__packet-icon">{packetIcon(packet.kind)}</span>
+                <span className="paw-room-focus-overview__packet-copy">
+                  <strong className="paw-room-focus-overview__packet-route">{actorName(packet.sourceParticipantId)} → {packet.targetParticipantIds.map(actorName).join('、') || 'Room'}</strong>
+                  <p>{packetSummary(packet)}</p>
+                  <small>
+                    {packetKindLabel(packet.kind)}
+                    {' · '}<span data-status={packet.status}>{flowStatusLabel(packet.status, packet)}</span>
+                    {packet.createdAtMs ? ` · ${packetClock(packet.createdAtMs)}` : ''}
+                    <span className="paw-room-focus-overview__packet-number"> · #{filteredPackets.length - visiblePackets.length + index + 1}</span>
+                  </small>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      ) : <p className="paw-room-focus-overview__empty">{intercomStatus === 'loading' ? '正在恢复 Room 的直接通信与消息记录…' : intercomStatus === 'error' ? '消息记录暂时无法读取，点击刷新重试。' : filterParticipant ? '这颗行星在当前筛选下没有往来记录。' : '当前筛选没有可读取的往来。消息发出后，这里会展示发送方、接收方和投递状态。'}</p>}
+
     </section>
   );
+}
+
+/** One selected message has an explicit source and arrow into every actual
+ * recipient. This path includes pending/failed messages and reverse replies;
+ * it is traffic, independent of the confirmed responsibility graph above. */
+function FocusTrafficRoute({ actorName, packet, onOpenParticipant }: {
+  actorName: (id: string) => string;
+  packet: RoomFocusPacket;
+  onOpenParticipant?: (id: string) => void;
+}) {
+  const actor = (id: string) => <button
+    className="paw-room-focus-overview__route-actor"
+    disabled={id === 'root' || !onOpenParticipant}
+    onClick={() => onOpenParticipant?.(id)}
+    type="button"
+  ><i aria-hidden="true" style={planetTexture(actorName(id))} /><strong>{actorName(id)}</strong></button>;
+  return <div aria-label="选中消息的流转方向" className="paw-room-focus-overview__traffic-route" data-status={packet.status}>
+    {actor(packet.sourceParticipantId)}
+    <span className="paw-room-focus-overview__route-track"><span>{packetKindLabel(packet.kind)}</span><i aria-hidden="true"><ArrowRight size={16} /></i><strong>{flowStatusLabel(packet.status, packet)}</strong></span>
+    <span className="paw-room-focus-overview__route-targets">{packet.targetParticipantIds.map((id) => <span key={id}>{actor(id)}</span>)}</span>
+  </div>;
 }
 
 /** A route_decision as a readable plan: who exerted the gravity on whom, why,
@@ -619,15 +642,19 @@ function FocusInspector({
   partner,
   partners,
   work,
+  satellites,
 }: {
   onOpenParticipant?: (participantId: string) => void;
   originLabel: string;
   partner?: RoomFocusPartner;
   partners: RoomFocusPartner[];
   work?: RoomFocusWorkItem;
+  satellites?: RoomSatelliteSnapshot;
 }) {
   const state = work?.state ?? partner?.state ?? 'idle';
-  const action = workAction(work) || partner?.currentAction || '等待新的工作项';
+  const action = readableActivity(workAction(work) || partner?.currentAction || '', work?.objective || '等待新的工作项');
+  const title = work?.objective || partner?.celestialName || originLabel;
+  const hasLongInstruction = title.length > 100 || action.length > 180;
   const evidence = work?.evidence ?? [];
   const verifier = work?.review
     ? partners.find((candidate) => candidate.participantId === work.review?.reviewerParticipantId)
@@ -640,8 +667,12 @@ function FocusInspector({
       </header>
       <div className="paw-room-focus-overview__inspector-copy">
         <small>{work ? '当前任务' : '当前伙伴'}</small>
-        <strong>{work?.objective || partner?.celestialName || originLabel}</strong>
-        <p>{action}</p>
+        <strong title={title}>{title}</strong>
+        {action !== title ? <p>{action}</p> : null}
+        {hasLongInstruction ? <Disclosure summary="完整任务与进展" className="paw-room-focus-overview__full-task">
+          <MarkdownBody documentKey={`${work?.id ?? partner?.participantId}:task`} sessionId={partner?.sessionId} text={title} />
+          {action !== title ? <MarkdownBody documentKey={`${work?.id ?? partner?.participantId}:action`} sessionId={partner?.sessionId} text={action} /> : null}
+        </Disclosure> : null}
       </div>
       {work?.wave ? (
         <p className="paw-room-focus-overview__inspector-wave">
@@ -653,9 +684,25 @@ function FocusInspector({
       {partner ? (
         <dl>
           <div><dt>负责人</dt><dd>{partner.celestialName} · {roomFocusStateLabel(partner.state)}</dd></div>
-          {partner.latestReceipt ? <div><dt>最近回执</dt><dd>{partner.latestReceipt}</dd></div> : null}
+          {partner.latestReceipt ? <div><dt>最近回执</dt><dd>{readableActivity(partner.latestReceipt, '已收到工作回执')}</dd></div> : null}
         </dl>
       ) : null}
+      {partner ? <section aria-label={`${partner.celestialName} 的 Session 卫星`} className="paw-room-focus-overview__satellites">
+        <header><Satellite aria-hidden="true" size={14} /><strong>Session 卫星</strong><span>{satellites?.status === 'ready' ? `${satellites.satellites.length} 个` : satellites?.status === 'loading' ? '正在读取' : satellites?.status === 'error' ? '暂不可用' : '数量未知'}</span></header>
+        {satellites?.status === 'ready' && satellites.error ? <p>显示上次读取的卫星状态，暂时无法更新。</p> : null}
+        {satellites?.status !== 'ready' ? <p>{satellites?.status === 'error' ? '暂时无法读取，数量未知。刷新后可重试。' : satellites?.status === 'loading' ? '正在读取这个 Session 的卫星记录…' : '尚未取得这个 Session 的卫星记录。'}</p>
+          : !satellites.satellites.length ? <p>已读取该 Session，当前没有保留的 Tool Agent 节点。</p>
+            : <>
+              <p>{satelliteBreakdown(satellites)} · 按节点统计，重试合并到原卫星</p>
+              <ul>{satellites.satellites.map((satellite) => <li key={satellite.nodeId || satellite.id} data-state={satellite.state}>
+                <Disclosure summary={<><i aria-hidden="true" /><span>{satellite.task}</span><strong>{satellite.stateLabel}</strong></>}>
+                  {satellite.result ? <p>{satellite.result}</p> : null}
+                  {satellite.error ? <p className="paw-room-focus-overview__delivery-error">{satellite.error}</p> : null}
+                  <dl><dt>节点</dt><dd>{satellite.nodeId || satellite.id}</dd><dt>本次执行</dt><dd>{satellite.id}</dd><dt>Session</dt><dd>{satellite.sessionId}</dd><dt>层级</dt><dd>{satellite.depth}</dd></dl>
+                </Disclosure>
+              </li>)}</ul>
+            </>}
+      </section> : null}
       {work?.expectedOutput ? (
         <p className="paw-room-focus-overview__expected"><span>期望交付</span>{work.expectedOutput}</p>
       ) : null}
@@ -729,38 +776,41 @@ function packetIcon(kind: RoomFocusPacketKind): ReactNode {
 }
 
 function packetKindLabel(kind: RoomFocusPacketKind): string {
-  return ({
-    request: '需求',
-    intercom: '伙伴请求',
-    question: '问题',
-    answer: '答复',
-    plan: '计划',
-    document: '文档',
-    context: '上下文',
-    result: '公开结果',
-    dispatch: '任务分派',
-    approval: '审批',
-    review: '复核',
-  } satisfies Record<RoomFocusPacketKind, string>)[kind];
+  return roomFlowKindLabel(kind);
 }
 
-function flowStatusLabel(status: string): string {
-  return ({
-    queued: '等待送达',
-    running: '传递中',
-    waiting: '等待批准',
-    active: '进行中',
-    review: '待复核',
-    completed: '已送达',
-    done: '已完成',
-    failed: '失败',
-    aborted: '已停止',
-    blocked: '受阻',
-  } as Record<string, string>)[status] ?? status;
+function flowStatusLabel(status: string, packet?: RoomFocusPacket): string {
+  return roomFlowStatusLabel(status, Boolean(packet?.intercomId));
+}
+
+function packetSummary(packet: RoomFocusPacket): string {
+  if (packet.intercomId || packet.id.startsWith('message:')) return packet.summary;
+  return readableActivity(packet.summary, `${packetKindLabel(packet.kind)} · ${flowStatusLabel(packet.status, packet)}`);
+}
+
+function readableActivity(value: string, fallback: string): string {
+  return /^(?:participant_activity|approval_[a-z_]+|tool_[a-z_]+|route_decision)$/.test(value.trim()) ? fallback : value;
 }
 
 function packetClock(timestamp: number): string {
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp));
+}
+
+function packetTimestamp(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(timestamp));
+}
+
+function planetTexture(name: string) {
+  const texture = ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune'].find((planet) => name.toLowerCase() === planet);
+  return texture ? { backgroundImage: `url("/paw-media/starfield/${texture}-1k.jpg")` } : undefined;
+}
+
+function satelliteBreakdown(snapshot: RoomSatelliteSnapshot): string {
+  const labels: Record<string, string> = { queued: '等待', running: '进行', completed: '完成', returned: '已返回', contract_invalid: '合同无效', failed: '失败', aborted: '停止', timed_out: '超时' };
+  return Object.entries(labels).flatMap(([state, label]) => {
+    const count = snapshot.satellites.filter((satellite) => satellite.state === state).length;
+    return count ? [`${label} ${count}`] : [];
+  }).join(' · ');
 }
 
 function defaultFocusSelection(focus: RoomFocusProjection): FocusSelection {

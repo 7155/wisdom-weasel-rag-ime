@@ -29,7 +29,7 @@
 .paw-app-icon__sheen { opacity: .82; }
 
 /* The PAW system mark is monochrome and follows the surrounding text colour.
-   Optical nudge keeps the glacial paw sitting on the wordmark baseline. */
+   The static orbital mark sits on the wordmark baseline. */
 .paw-brand-mark {
   display: block;
   flex: 0 0 auto;

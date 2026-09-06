@@ -1,31 +1,102 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { forwardRef, type ForwardedRef, type Key, type ReactNode } from 'react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ControlTransportProvider } from '@/app/control-transport';
-import { MockControlTransport } from '@/test/mock-transport';
+import { TooltipProvider } from '@/components/primitives';
+import { useAgentLiveStore } from '@/features/agent/state/live-store';
+import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import type { ControlRequest } from '@/platform/transport';
 import manifest from './pawos-app.json';
 import ZhangguiWenshuApp from './App';
 
-const { sessionWorkspaceProps } = vi.hoisted(() => ({
+const { sessionWorkspaceProps, renderRealWorkspace } = vi.hoisted(() => ({
   sessionWorkspaceProps: vi.fn(),
+  renderRealWorkspace: { current: false },
 }));
 
-vi.mock('@/paw-os/apps/PawSessionWorkspace', () => ({
-  PawSessionWorkspace: (props: { recordId: string; appearance?: string; composerPlaceholder?: string }) => {
-    sessionWorkspaceProps(props);
-    return <section data-testid="shared-session">Session {props.recordId}</section>;
-  },
+vi.mock('@/paw-os/apps/PawSessionWorkspace', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/paw-os/apps/PawSessionWorkspace')>();
+  return {
+    ...actual,
+    PawSessionWorkspace: (props: Parameters<typeof actual.PawSessionWorkspace>[0]) => {
+      sessionWorkspaceProps(props);
+      return renderRealWorkspace.current
+        ? <actual.PawSessionWorkspace {...props} />
+        : <section data-testid="shared-session">Session {props.recordId}</section>;
+    },
+  };
+});
+
+// jsdom has no row height; keep the real Session, timeline, and recovery actions
+// while rendering the virtualizer's rows so these checks see the user's text.
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: forwardRef(function MockVirtuoso({ components, computeItemKey, context, data, itemContent, scrollerRef }: {
+    components?: { Header?: (props: { context?: unknown }) => ReactNode; Footer?: () => ReactNode };
+    computeItemKey?: (index: number, item: string) => Key;
+    context?: unknown;
+    data: string[];
+    itemContent: (index: number, item: string) => ReactNode;
+    scrollerRef?: (scroller: HTMLElement | Window | null) => void;
+  }, _ref: ForwardedRef<unknown>) {
+    const Header = components?.Header;
+    const Footer = components?.Footer;
+    return <div ref={(node) => scrollerRef?.(node)}>
+      {Header ? <Header context={context} /> : null}
+      {data.map((item, index) => <div key={computeItemKey?.(index, item) ?? index}>{itemContent(index, item)}</div>)}
+      {Footer ? <Footer /> : null}
+    </div>;
+  }),
 }));
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
   sessionWorkspaceProps.mockClear();
+  renderRealWorkspace.current = false;
+  useAgentLiveStore.setState({ projections: {} });
 });
 
 describe('掌柜问数 Extension App', () => {
+  it('preserves each unsent mode draft while tabs support keyboard navigation', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: { 'agent.sessions.list': { ok: true, items: [] } } });
+    renderApp(transport);
+    await user.type(await screen.findByRole('textbox', { name: '问数问题' }), '本月收入是多少');
+    screen.getByRole('tab', { name: '问数' }).focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: '对账' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: '问数' })).toHaveAttribute('tabindex', '-1');
+    await user.type(screen.getByRole('textbox', { name: '对账问题' }), '核对两份报表');
+    await user.click(screen.getByRole('tab', { name: '问数' }));
+    expect(screen.getByRole('textbox', { name: '问数问题' })).toHaveValue('本月收入是多少');
+    await user.click(screen.getByRole('tab', { name: '对账' }));
+    expect(screen.getByRole('textbox', { name: '对账问题' })).toHaveValue('核对两份报表');
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.sessions.create')).toBe(false);
+  });
+
+  it('retries a failed owner-scoped history read without creating another conversation', async () => {
+    const user = userEvent.setup();
+    let offline = true;
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': () => {
+        if (offline) throw new Error('对话记录暂时不可用');
+        return { ok: true, items: [{
+          id: 'session-restored', title: '问数记录', mode: 'assistant', status: 'idle', updatedAtMs: 1,
+          surfaceKind: 'extension_app', ownerAppId: manifest.id, surfaceKey: 'ask',
+        }] };
+      },
+    } });
+    renderApp(transport);
+    const alert = await screen.findByRole('alert');
+    offline = false;
+    await user.click(within(alert).getByRole('button', { name: '重新读取' }));
+    expect(await screen.findByTestId('shared-session')).toHaveTextContent('session-restored');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.sessions.create')).toBe(false);
+  });
+
   it('keeps three conversation modes in one source-isolated App surface', async () => {
     renderApp(new MockControlTransport({ routes: {
       'agent.sessions.list': { ok: true, items: [] },
@@ -48,7 +119,7 @@ describe('掌柜问数 Extension App', () => {
     renderApp(transport);
 
     expect(await screen.findByText('掌柜问数受控数据')).toBeInTheDocument();
-    expect(screen.getByText('受控数据已连接')).toBeInTheDocument();
+    expect(screen.getByText('已选择受控数据')).toBeInTheDocument();
     expect(screen.getByText(/默认绑定掌柜问数受控数据.*SGG.*fixture-v2.*只读沙箱/)).toBeInTheDocument();
     expect(transport.filePickCalls).toEqual([]);
   });
@@ -93,7 +164,7 @@ describe('掌柜问数 Extension App', () => {
       selection: 'directory',
     })]);
     expect(await screen.findByText('sales-data')).toBeInTheDocument();
-    expect(screen.getByText('数据目录已连接')).toBeInTheDocument();
+    expect(screen.getByText('已选择数据目录')).toBeInTheDocument();
   });
 
   it('creates one ordinary Pi Session, enables the App Skill, and sends the selected mode contract', async () => {
@@ -171,6 +242,196 @@ describe('掌柜问数 Extension App', () => {
     expect(String((prompt.body as Record<string, unknown>).message)).toContain('核对销售台账与回款表');
     expect(window.localStorage.length).toBe(0);
     expect(screen.queryByRole('button', { name: '打开运行详情' })).not.toBeInTheDocument();
+  });
+
+  it.each(['mode', 'sandbox'] as const)('reuses the created Session after %s preparation fails and explicitly resumes every unfinished step before prompting', async (failedStep) => {
+    const user = userEvent.setup();
+    let modeCalls = 0;
+    let sandboxCalls = 0;
+    const sessionId = `session-preparing-${failedStep}`;
+    const transport = firstPromptTransport(sessionId, { ok: true }, {
+      'agent.session.mode.update': () => {
+        modeCalls += 1;
+        if (failedStep === 'mode' && modeCalls === 1) throw new Error('模式准备失败');
+        return { ok: true };
+      },
+      'extension.sandbox.experiment.run': () => {
+        sandboxCalls += 1;
+        if (failedStep === 'sandbox' && sandboxCalls === 1) throw new Error('沙箱准备失败');
+        return {
+          schemaVersion: 'rag-ime.extension-sandbox-experiment-receipt.v1', ok: true,
+          sessionId, ownerAppId: manifest.id, candidateBindingSha256: manifest.bindingSha256,
+          requestedDecision: 'run', executed: true, executionStatus: 'completed',
+          sandboxRunId: 'sandbox-prepared', traceId: 'trace-prepared', evalRunId: 'eval-prepared',
+        };
+      },
+    });
+    renderApp(transport);
+    await user.click(await screen.findByRole('checkbox', { name: '启动前运行受管沙箱自测' }));
+    await user.type(screen.getByRole('textbox', { name: '问数问题' }), '保留准备失败后的原问题');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(failedStep === 'mode' ? '模式准备失败' : '沙箱准备失败');
+    expect(screen.getByRole('textbox', { name: '问数问题' })).toHaveValue('保留准备失败后的原问题');
+    expect(promptRequests(transport)).toHaveLength(0);
+    expect(sandboxCalls).toBe(failedStep === 'mode' ? 0 : 1);
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await screen.findByTestId('shared-session');
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
+    expect(modeCalls).toBe(failedStep === 'mode' ? 2 : 1);
+    expect(sandboxCalls).toBe(failedStep === 'sandbox' ? 2 : 1);
+    expect(promptRequests(transport)).toHaveLength(1);
+    expect(promptRequests(transport)[0].params).toEqual({ sessionId });
+    const preparations = transport.requests.filter(({ request }) => request.pathId === 'extension.sandbox.experiment.run').map(({ request }) => request);
+    for (const request of preparations) expect(request.body).toMatchObject({ sessionId, requestedDecision: 'run' });
+    if (failedStep === 'sandbox') expect(preparations[1].body).toEqual(preparations[0].body);
+  });
+
+  it('keeps the first question in the only input until its admission receipt arrives', async () => {
+    const user = userEvent.setup();
+    const receipt = deferred<unknown>();
+    const transport = firstPromptTransport('session-first-pending', () => receipt.promise);
+    renderRealWorkspace.current = true;
+    renderApp(transport);
+    await user.type(await screen.findByRole('textbox', { name: '问数问题' }), '保留正在发送的原始问题');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(promptRequests(transport)).toHaveLength(1));
+    expect(screen.getByRole('textbox', { name: '问数问题' })).toHaveValue('保留正在发送的原始问题');
+    expect(screen.getByRole('textbox', { name: '问数问题' })).toHaveAttribute('readonly');
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(promptRequests(transport)).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
+
+    await act(async () => receipt.resolve({ ok: true }));
+    expect(await screen.findByText('保留正在发送的原始问题')).toBeVisible();
+  });
+
+  it.each(['conflict', 'cancelled'] as const)('retains a %s first prompt in the original input and sends only an explicit new request to the already prepared Session', async (outcome) => {
+    const user = userEvent.setup();
+    let attempts = 0;
+    const transport = firstPromptTransport(`session-first-${outcome}`, (request: ControlRequest) => {
+      attempts += 1;
+      if (attempts > 1) return { ok: true };
+      if (outcome === 'cancelled') return { accepted: false, cancelled: true, admissionCancelled: true };
+      throw Object.assign(new Error('消息内容冲突'), {
+        status: 409,
+        payload: {
+          code: 'AGENT_COMMAND_CONFLICT',
+          commandReceipt: { state: 'conflict', recoveryState: 'new_command_required', clientMessageId: (request.body as Record<string, unknown>).clientMessageId },
+        },
+      });
+    });
+    renderRealWorkspace.current = true;
+    renderApp(transport);
+    await user.type(await screen.findByRole('textbox', { name: '问数问题' }), '明确未接收时保留的原问题');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(outcome === 'cancelled' ? '已取消' : '输入已保留');
+    const input = screen.getByRole('textbox', { name: '问数问题' });
+    expect(input).toHaveValue('明确未接收时保留的原问题');
+    expect(screen.queryByText('本轮未完成')).not.toBeInTheDocument();
+    expect(promptRequests(transport)).toHaveLength(1);
+    const original = promptRequests(transport)[0];
+    await user.type(input, '，补充口径');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(promptRequests(transport)).toHaveLength(2));
+    const next = promptRequests(transport)[1];
+    expect(next.params).toEqual(original.params);
+    expect((next.body as Record<string, unknown>).message).toContain('明确未接收时保留的原问题，补充口径');
+    expect((next.body as Record<string, unknown>).clientMessageId).not.toBe((original.body as Record<string, unknown>).clientMessageId);
+    expect(next.body).not.toHaveProperty('retryOfClientMessageId');
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'extension.sandbox.experiment.run')).toHaveLength(1);
+  });
+
+  it('recovers a definitively rejected first prompt through the existing same-Session retry with its exact App context', async () => {
+    const user = userEvent.setup();
+    let attempts = 0;
+    const transport = firstPromptTransport('session-first-rejected', (request: ControlRequest) => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error('本次发送被拒绝'), {
+        status: 400,
+        payload: {
+          code: 'AGENT_COMMAND_FAILED',
+          commandReceipt: { state: 'failed', clientMessageId: (request.body as Record<string, unknown>).clientMessageId },
+        },
+      });
+      return { ok: true };
+    });
+    renderRealWorkspace.current = true;
+    renderApp(transport);
+    await user.type(await screen.findByRole('textbox', { name: '问数问题' }), '明确拒绝后仍能恢复的问题');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    const retry = await screen.findByRole('button', { name: '重试本轮' });
+    expect(screen.getByText('明确拒绝后仍能恢复的问题')).toBeVisible();
+    expect(promptRequests(transport)).toHaveLength(1);
+    const original = promptRequests(transport)[0];
+    await user.click(retry);
+    await waitFor(() => expect(promptRequests(transport)).toHaveLength(2));
+    const retried = promptRequests(transport)[1];
+    expect(retried.params).toEqual(original.params);
+    expect(retried.body).toMatchObject({
+      message: (original.body as Record<string, unknown>).message,
+      retryOfClientMessageId: (original.body as Record<string, unknown>).clientMessageId,
+    });
+    expect((retried.body as Record<string, unknown>).clientMessageId).not.toBe((original.body as Record<string, unknown>).clientMessageId);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'extension.sandbox.experiment.run')).toHaveLength(1);
+  });
+
+  it.each(['in_flight', 'unresolved'] as const)('keeps a %s first-prompt receipt visible without offering an automatic or duplicate send', async (recoveryState) => {
+    const user = userEvent.setup();
+    const transport = firstPromptTransport(`session-first-${recoveryState}`, (request: ControlRequest) => {
+      throw Object.assign(new Error('接收状态尚未确认'), {
+        status: 409,
+        payload: {
+          code: 'AGENT_COMMAND_PENDING',
+          commandReceipt: { state: 'pending', recoveryState, clientMessageId: (request.body as Record<string, unknown>).clientMessageId },
+        },
+      });
+    });
+    renderRealWorkspace.current = true;
+    renderApp(transport);
+    await user.type(await screen.findByRole('textbox', { name: '问数问题' }), '保留接收状态未知的问题');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('正在确认接收状态')).toBeVisible();
+    expect(screen.getByText('保留接收状态未知的问题')).toBeVisible();
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+    expect(screen.queryByText('本轮未完成')).not.toBeInTheDocument();
+    expect(promptRequests(transport)).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
+  });
+
+  it('verifies an ambiguous first prompt only on explicit retry and reconciles a matching durable receipt into one visible question', async () => {
+    const user = userEvent.setup();
+    const sessionId = 'session-first-ambiguous';
+    const transport = firstPromptTransport(sessionId, () => { throw new TypeError('fetch failed'); });
+    renderRealWorkspace.current = true;
+    renderApp(transport);
+    await user.type(await screen.findByRole('textbox', { name: '问数问题' }), '网络回执丢失时的原始问题');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText(/暂时无法确认是否已接收/)).toBeVisible();
+    expect(screen.getByText('网络回执丢失时的原始问题')).toBeVisible();
+    expect(screen.queryByText('掌柜问数没有开始，请重试。')).not.toBeInTheDocument();
+    expect(promptRequests(transport)).toHaveLength(1);
+    const body = promptRequests(transport)[0].body as Record<string, unknown>;
+    await user.click(screen.getByRole('button', { name: '重试本轮' }));
+    await waitFor(() => expect(promptRequests(transport)).toHaveLength(2));
+    expect(promptRequests(transport)[1].body).toMatchObject({ message: body.message, clientMessageId: body.clientMessageId });
+    expect(promptRequests(transport)[1].body).not.toHaveProperty('retryOfClientMessageId');
+    expect(await screen.findByText(/暂时无法确认是否已接收/)).toBeVisible();
+    const local = Object.values(useAgentLiveStore.getState().projections[sessionId].messagesById)[0];
+    act(() => useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [{ ...local, id: 'durable-first-question', status: 'completed', admissionState: undefined, clientMessageId: body.clientMessageId }],
+      liveEvents: [], lastSequence: 1, resumeToken: `${sessionId}:1`, status: 'idle',
+    }));
+    expect(screen.getAllByText('网络回执丢失时的原始问题')).toHaveLength(1);
+    expect(screen.queryByText(/暂时无法确认是否已接收/)).not.toBeInTheDocument();
+    expect(promptRequests(transport)).toHaveLength(2);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
   });
 
   it('runs the selected managed sandbox before handing the first prompt to Pi', async () => {
@@ -284,7 +545,7 @@ describe('掌柜问数 Extension App', () => {
       surfaceKind: 'extension_app',
       ownerAppId: manifest.id,
     });
-    expect(screen.getByText('受控数据已连接')).toBeInTheDocument();
+    expect(screen.getByText('已选择受控数据')).toBeInTheDocument();
     expect(screen.queryByText('对话已连接')).not.toBeInTheDocument();
   });
 });
@@ -292,9 +553,39 @@ describe('掌柜问数 Extension App', () => {
 function renderApp(transport: MockControlTransport) {
   return render(
     <ControlTransportProvider transport={transport}>
-      <ZhangguiWenshuApp manifest={manifest as never} />
+      <TooltipProvider><ZhangguiWenshuApp manifest={manifest as never} /></TooltipProvider>
     </ControlTransportProvider>,
   );
+}
+
+function firstPromptTransport(sessionId: string, prompt: MockRouteHandler, routes: Partial<Record<ControlRequest['pathId'], MockRouteHandler>> = {}): MockControlTransport {
+  return new MockControlTransport({ routes: {
+    'agent.sessions.list': { ok: true, items: [] },
+    'agent.sessions.create': { ok: true, session: { id: sessionId, title: '掌柜问数 · 问数', mode: 'assistant', status: 'idle', updatedAtMs: 1 } },
+    'agent.session.mode.update': { ok: true },
+    'extension.sandbox.experiment.run': {
+      schemaVersion: 'rag-ime.extension-sandbox-experiment-receipt.v1', ok: true,
+      sessionId, ownerAppId: manifest.id, candidateBindingSha256: manifest.bindingSha256,
+      requestedDecision: 'skip', executed: false, executionStatus: 'skipped',
+    },
+    'agent.session.prompt': prompt,
+    'agent.session.snapshot': { messages: [], liveEvents: [], lastSequence: 0, resumeToken: '', status: 'idle' },
+    'agent.session.models': {},
+    'agent.session.commands': {},
+    'agent.tools.list': {},
+    'agent.runtime.get': {},
+    ...routes,
+  } });
+}
+
+function promptRequests(transport: MockControlTransport): ControlRequest[] {
+  return transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt').map(({ request }) => request);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
 }
 
 function requestFor(transport: MockControlTransport, pathId: ControlRequest['pathId']): ControlRequest {

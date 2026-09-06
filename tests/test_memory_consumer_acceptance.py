@@ -178,7 +178,9 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertIn(NEW_FACT, session_context)
         self.assertIn(BOOK_SUMMARY, session_context)
         self.assertNotIn(NEW_ATOM_ID, session_context)
-        self.assertNotIn(BOOK_ID, session_context)
+        # The current recall contract keeps the stable Book source reference
+        # so a later correction can be traced, while superseded Atoms stay out.
+        self.assertIn(f"来源：{BOOK_ID}", session_context)
         self.assertNotIn(OLD_ATOM_ID, session_context)
         self.assertNotIn(OLD_FACT, session_context)
         self.assertNotIn("命中通道", session_context)

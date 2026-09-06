@@ -38,6 +38,22 @@ function room(overrides: Partial<WayfinderWorkRoomSource> & { id: string }): Way
 }
 
 describe('projectWayfinderWork', () => {
+  it('reports only recorded fresh Room task counts and never infers Session percentages', () => {
+    const input = {
+      nowMs: NOW,
+      rooms: [room({ id: 'room-progress', workItems: [
+        { state: 'done', updatedAtMs: NOW },
+        { state: 'active', updatedAtMs: NOW },
+        { state: 'blocked', updatedAtMs: NOW },
+      ] })],
+      sessions: [session({ id: 'session-progress', status: 'busy' })],
+    };
+    const rows = projectWayfinderWork(input).projects.flatMap((project) => project.items);
+    expect(rows.find((item) => item.id === 'room-progress')?.progress).toEqual({ completed: 1, total: 3 });
+    expect(rows.find((item) => item.id === 'session-progress')?.progress).toBeUndefined();
+    const stale = projectWayfinderWork({ ...input, roomStatusFresh: false }).projects.flatMap((project) => project.items);
+    expect(stale.find((item) => item.id === 'room-progress')?.progress).toBeUndefined();
+  });
   it('does not synthesize a Room row when the canonical Room record is absent', () => {
     const view = projectWayfinderWork({
       nowMs: NOW,

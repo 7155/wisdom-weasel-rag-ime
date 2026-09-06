@@ -132,18 +132,14 @@ describe('PAWOS approved App identity icons', () => {
     expect(small).toHaveAttribute('focusable', 'false');
   });
 
-  it('ships the monochrome glacial paw-print system mark outside the App colour system', () => {
+  it('keeps the stellar system mark decorative or explicitly named outside the App colour system', () => {
     const { container, getByRole, rerender } = render(<PawBrandMark />);
     const mark = container.querySelector('svg.paw-brand-mark');
     expect(mark).toHaveAttribute('aria-hidden', 'true');
     expect(mark).toHaveAttribute('fill', 'currentColor');
     expect(mark).toHaveAttribute('viewBox', '0 0 48 48');
-    expect(mark?.querySelectorAll('ellipse, path')).toHaveLength(4);
-    expect(mark?.querySelectorAll('ellipse')).toHaveLength(3);
+    expect(mark).toHaveAttribute('data-paw-brand', 'stellar');
     expect(mark?.hasAttribute('data-paw-app-icon')).toBe(false);
-    const toes = [...mark!.querySelectorAll('ellipse')].map((el) => Number(el.getAttribute('cx')));
-    expect(toes[1]! - toes[0]!).toBeGreaterThanOrEqual(12);
-    expect(toes[2]! - toes[1]!).toBeGreaterThanOrEqual(12);
     rerender(<PawBrandMark title="PAW" />);
     expect(getByRole('img', { name: 'PAW' })).toBeInTheDocument();
   });

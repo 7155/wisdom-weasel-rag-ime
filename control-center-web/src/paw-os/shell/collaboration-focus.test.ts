@@ -1,18 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { createElement } from 'react';
 import { createRoomProjection, type RoomActivityProjection } from '@/contracts/room-reducer';
 import {
   createPawDesktopStore,
-  PAW_WINDOW_MIN_HEIGHT,
-  PAW_WINDOW_MIN_WIDTH,
   type PawWindowNode,
 } from '../runtime/desktop-store';
 import {
   isCollaborationSatellite,
   layoutCollaborationFocus,
   normalizeCollaborationFocusFrames,
-  PawRoomWindowFlowLayer,
   roomWindowFlowGroups,
   windowBelongsToFocus,
   windowFlowArrivalPulse,
@@ -133,183 +128,63 @@ describe('PAWOS collaboration focus', () => {
     expect(store.getState().collaborationFocusReturnWindowId).toBeNull();
   });
 
-  it('projects only the current Room into non-overlapping focus regions', () => {
-    const main = windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' });
-    const left = windowNode('participant-a', {
-      kind: 'participant', id: 'participant-a', roomId: 'room-a', title: '伙伴 A',
-    });
-    const right = windowNode('participant-b', {
-      kind: 'participant', id: 'participant-b', roomId: 'room-a', title: '伙伴 B',
-    });
-    const otherRoom = windowNode('other-room', { kind: 'room', id: 'room-b', title: 'Room B' });
-    const current = [main, left, right, otherRoom].filter((node) => windowBelongsToFocus(node, 'room:room-a'));
-    const frames = layoutCollaborationFocus(current, { width: 1280, height: 720 });
-
-    expect(current.map((node) => node.id)).toEqual(['main', 'participant-a', 'participant-b']);
-    expect(frames.size).toBe(3);
-    const regions = [...frames.values()];
-    for (let index = 0; index < regions.length; index += 1) {
-      for (let otherIndex = index + 1; otherIndex < regions.length; otherIndex += 1) {
-        expect(overlaps(regions[index]!, regions[otherIndex]!)).toBe(false);
-      }
-    }
-    expect(frames.get('main')!.width).toBeGreaterThan(frames.get('participant-a')!.width);
-  });
-
   it.each([
-    { width: 1280, height: 720, planetCount: 2 },
-    { width: 1440, height: 900, planetCount: 8 },
-  ])('keeps the reduced Room central and places $planetCount complete participant Sessions around it at $width×$height', ({ width, height, planetCount }) => {
-    const nodes = [
-      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: planetCount }, (_, index) => windowNode(`participant-${index}`, {
-        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
-      })),
-    ];
-    const frames = layoutCollaborationFocus(nodes, { width, height }, { modeBarHeight: 46, ledgerHeight: 198 });
-    const main = frames.get('main')!;
+    { width: 1280, height: 720 },
+    { width: 934, height: 867 },
+    { width: 390, height: 720 },
+  ])('gives the main Room the full canvas at $width×$height when no partner window is open', ({ width, height }) => {
+    const frames = layoutCollaborationFocus(roomFocusNodes(0), { width, height }, { modeBarHeight: 46 });
+    expect([...frames.keys()]).toEqual(['main']);
+    expect(frames.get('main')).toEqual({ x: 10, y: 104, width: width - 20, height: height - 114 });
+  });
 
-    expect(frames.size).toBe(nodes.length);
-    expect(main.width).toBeLessThan(width * .8);
-    expect(main.height).toBeGreaterThanOrEqual(PAW_WINDOW_MIN_HEIGHT);
-    expect(Math.max(...[...frames.values()].map((frame) => frame.y + frame.height))).toBe(height - 10);
-    expect(Math.min(...[...frames.values()].map((frame) => frame.width))).toBeGreaterThanOrEqual(PAW_WINDOW_MIN_WIDTH);
-    expect(Math.min(...[...frames.values()].map((frame) => frame.height))).toBeGreaterThanOrEqual(PAW_WINDOW_MIN_HEIGHT);
-    for (const frame of frames.values()) {
-      expect(frame.x).toBeGreaterThanOrEqual(0);
-      expect(frame.y).toBeGreaterThanOrEqual(46);
-      expect(frame.x + frame.width).toBeLessThanOrEqual(width);
-      expect(frame.y + frame.height).toBeLessThanOrEqual(height);
+  it('shows four independent partners beside the Room without hiding the previously focused partner', () => {
+    const nodes = roomFocusNodes(4);
+    const viewport = { width: 1280, height: 720 };
+    const first = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46, selectedParticipantId: 'participant-2' });
+    const second = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46, selectedParticipantId: 'participant-3' });
+    expect([...first.keys()]).toEqual(nodes.map((node) => node.id));
+    expect(second).toEqual(first);
+    expect(first.get('main')!.width).toBeGreaterThanOrEqual(640);
+    const frames = [...first.values()];
+    for (let index = 0; index < frames.length; index += 1) {
+      for (const other of frames.slice(index + 1)) expect(overlaps(frames[index]!, other)).toBe(false);
     }
-    const regions = [...frames.values()];
-    for (let index = 0; index < regions.length; index += 1) {
-      for (let otherIndex = index + 1; otherIndex < regions.length; otherIndex += 1) {
-        expect(overlaps(regions[index]!, regions[otherIndex]!)).toBe(false);
+    for (const frame of first.values()) {
+      expect(frame.x + frame.width).toBeLessThanOrEqual(viewport.width - 10);
+      expect(frame.y + frame.height).toBeLessThanOrEqual(viewport.height - 10);
+    }
+  });
+
+  it.each([{ width: 934, height: 867 }, { width: 390, height: 720 }])(
+    'keeps every partner below the main composer in an accessible rail at $width×$height',
+    (viewport) => {
+      const nodes = roomFocusNodes(4);
+      const frames = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
+      expect([...frames.keys()]).toEqual(nodes.map((node) => node.id));
+      const main = frames.get('main')!;
+      for (const node of nodes.slice(1)) {
+        const detail = frames.get(node.id)!;
+        expect(detail.y).toBeGreaterThan(main.y + main.height);
+        expect(detail.y + detail.height).toBeLessThanOrEqual(viewport.height - 10);
+        expect(detail.width).toBeGreaterThanOrEqual(280);
       }
-    }
-  });
+      expect(frames.get('participant-3')!.x).toBeGreaterThan(frames.get('participant-0')!.x);
+    },
+  );
 
-  it('contains five Room planet windows when a stale focus override is outside the desktop', () => {
-    const viewport = { width: 1440, height: 940 };
-    const nodes = [
-      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: 5 }, (_, index) => windowNode(`participant-${index}`, {
-        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
-      })),
-    ];
-    const computed = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
-    const overrides = {
-      'participant-0': { ...computed.get('participant-0')!, x: -117.5 },
-    };
-
-    const frames = normalizeCollaborationFocusFrames(computed, overrides, viewport, { modeBarHeight: 46 }, true);
-
-    expect(frames.size).toBe(6);
-    for (const frame of frames.values()) {
-      expect(frame.x).toBeGreaterThanOrEqual(0);
-      expect(frame.y).toBeGreaterThanOrEqual(46);
-      expect(frame.x + frame.width).toBeLessThanOrEqual(viewport.width);
-      expect(frame.y + frame.height).toBeLessThanOrEqual(viewport.height);
-    }
-    expect(frames.get('participant-0')!.x).toBe(0);
-  });
-
-  it('lets wide focus canvases grow the perimeter slots instead of leaving thumbnail-sized planets', () => {
-    const width = 1920;
-    const height = 1080;
-    const nodes = [
-      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: 4 }, (_, index) => windowNode(`participant-${index}`, {
-        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
-      })),
-    ];
-    const frames = layoutCollaborationFocus(nodes, { width, height }, { modeBarHeight: 46 });
-    const main = frames.get('main')!;
-    const planets = nodes.slice(1).map((node) => frames.get(node.id)!);
-
-    expect(Math.min(...planets.map((frame) => frame.width))).toBeGreaterThan(300);
-    expect(Math.min(...planets.map((frame) => frame.height))).toBeGreaterThan(400);
-    expect(main.x).toBeGreaterThan(300);
-    expect(main.x + main.width).toBeLessThan(width - 300);
-    expect(Math.max(...[...frames.values()].map((frame) => frame.y + frame.height))).toBe(height - 10);
-    for (let index = 0; index < planets.length; index += 1) {
-      for (let otherIndex = index + 1; otherIndex < planets.length; otherIndex += 1) {
-        expect(overlaps(planets[index]!, planets[otherIndex]!)).toBe(false);
-      }
-    }
-  });
-
-  it('uses an ordered horizontal rail when a narrow Room cannot surround its planets', () => {
-    const nodes = [
-      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: 8 }, (_, index) => windowNode(`participant-${index}`, {
-        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
-      })),
-    ];
-    const frames = layoutCollaborationFocus(nodes, { width: 390, height: 720 }, { modeBarHeight: 46 });
-    const main = frames.get('main')!;
-    const planets = nodes.slice(1).map((node) => frames.get(node.id)!);
-
-    expect(main.x).toBe(10);
-    expect(main.width).toBe(370);
-    expect(planets.every((frame) => frame.y === planets[0]!.y)).toBe(true);
-    expect(planets.every((frame, index) => index === 0 || frame.x > planets[index - 1]!.x)).toBe(true);
-    expect(planets.at(-1)!.x + planets.at(-1)!.width).toBeGreaterThan(390);
-  });
-
-  it('preserves intentional narrow Room rail overflow during focus-frame normalization', () => {
-    const viewport = { width: 390, height: 720 };
-    const nodes = [
-      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: 8 }, (_, index) => windowNode(`participant-${index}`, {
-        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
-      })),
-    ];
-    const computed = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
-    const frames = normalizeCollaborationFocusFrames(computed, {}, viewport, { modeBarHeight: 46 }, true);
-    const planets = nodes.slice(1).map((node) => frames.get(node.id)!);
-
-    expect(planets.every((frame) => frame.y === planets[0]!.y)).toBe(true);
-    expect(planets.every((frame, index) => index === 0 || frame.x > planets[index - 1]!.x)).toBe(true);
-    expect(planets.at(-1)!.x + planets.at(-1)!.width).toBeGreaterThan(viewport.width);
-  });
-
-  it('contains a stale Room rail override without collapsing the remaining rail', () => {
-    const viewport = { width: 390, height: 720 };
-    const nodes = [
-      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: 8 }, (_, index) => windowNode(`participant-${index}`, {
-        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
-      })),
-    ];
-    const computed = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
-    const frames = normalizeCollaborationFocusFrames(computed, {
-      'participant-0': { ...computed.get('participant-0')!, x: -500 },
+  it('constrains user adjustments to the partner area without moving the main or persisted windows', () => {
+    const viewport = { width: 934, height: 867 };
+    const nodes = roomFocusNodes(4);
+    const before = nodes.map((node) => ({ ...node.bounds }));
+    const computed = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46, selectedParticipantId: 'removed' });
+    const normalized = normalizeCollaborationFocusFrames(computed, {
+      main: { x: -117, y: 400, width: 300, height: 250 },
+      'participant-0': { x: 700, y: 20, width: 280, height: 500 },
     }, viewport, { modeBarHeight: 46 }, true);
-    const planets = nodes.slice(1).map((node) => frames.get(node.id)!);
-
-    expect(frames.get('participant-0')!.x).toBe(0);
-    expect(planets.at(-1)!.x + planets.at(-1)!.width).toBeGreaterThan(viewport.width);
-    expect(planets.slice(1).every((frame, index) => frame.x > planets[index]!.x)).toBe(true);
-  });
-
-  it('keeps the Room reduced and centered when collaboration has no running participant Sessions', () => {
-    const width = 1400;
-    const height = 900;
-    const frames = layoutCollaborationFocus([
-      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-    ], { width, height }, { modeBarHeight: 46 });
-    const main = frames.get('main')!;
-
-    expect(frames.size).toBe(1);
-    expect(main.width).toBeLessThan(width * .8);
-    expect(main.height).toBeLessThan(height - 46 - 20);
-    expect(main.x).toBeGreaterThan(10);
-    expect(main.x + main.width).toBeLessThan(width - 10);
-    expect(main.y).toBeGreaterThan(46);
-    expect(main.y + main.height).toBeLessThan(height - 10);
-    expect(main.x + main.width / 2).toBeCloseTo(width / 2, 1);
-    expect(main.y + main.height / 2).toBeCloseTo((46 + height) / 2, 1);
+    expect(normalized.get('main')).toEqual(computed.get('main'));
+    for (const node of nodes.slice(1)) expect(overlaps(normalized.get('main')!, normalized.get(node.id)!)).toBe(false);
+    expect(nodes.map((node) => node.bounds)).toEqual(before);
   });
 
   it('does not leak unowned documents or results into the current Room', () => {
@@ -529,75 +404,7 @@ describe('PAWOS collaboration focus', () => {
     expect(windowFlowArrivalPulse([group], new Set(['message:answer-a:completed:12'])).packetPulseKeys.size).toBe(0);
   });
 
-  it('keeps Room flow in the compact ledger without drawing a cross-window overlay', () => {
-    const pulseKey = 'message:answer-a:completed:12';
-    const group = {
-      roomId: 'room-a',
-      points: new Map([
-        ['root', { x: 10, y: 10 }],
-        ['participant-a', { x: 100, y: 100 }],
-      ]),
-      windowIds: new Map([
-        ['root', 'main'],
-        ['participant-a', 'participant'],
-      ]),
-      packets: [{
-        id: 'message:answer-a', pulseKey,
-        sourceId: 'participant-a', targetIds: ['root'], kind: 'answer' as const,
-        summary: '迁移完成', status: 'completed', createdAtMs: 12,
-      }],
-    };
-
-    const { container, unmount } = render(createElement(PawRoomWindowFlowLayer, {
-      focusGroup: 'room:room-a',
-      groups: [group],
-    }));
-
-    expect(container.querySelector('.paw-room-window-flow')).toBeNull();
-    expect(container.querySelector('.paw-room-window-flow__label')).toBeNull();
-    expect(screen.getByLabelText('Room 流转记录')).toBeInTheDocument();
-    unmount();
-  });
-
-  it('keeps the bottom Room flow ledger collapsed until the user asks for it', () => {
-    const group = {
-      roomId: 'room-a',
-      points: new Map([
-        ['root', { x: 10, y: 10 }],
-        ['participant-a', { x: 100, y: 100 }],
-      ]),
-      windowIds: new Map([
-        ['root', 'main'],
-        ['participant-a', 'participant'],
-      ]),
-      actorNames: new Map([
-        ['root', '主 Room'],
-        ['participant-a', '实现伙伴'],
-      ]),
-      packets: [{
-        id: 'message:answer-a', pulseKey: 'message:answer-a:completed:12',
-        sourceId: 'participant-a', targetIds: ['root'], kind: 'answer' as const,
-        summary: '迁移完成', status: 'completed', createdAtMs: 12,
-      }],
-    };
-    render(createElement(PawRoomWindowFlowLayer, { focusGroup: 'room:room-a', groups: [group] }));
-
-    const ledger = screen.getByLabelText('Room 流转记录');
-    const summary = within(ledger).getByText('流转记录').closest('summary')!;
-    const reveal = ledger.querySelector('.ui-disclosure__reveal')!;
-    expect(ledger).toHaveClass('ui-disclosure');
-    expect(ledger).not.toHaveAttribute('open');
-    expect(summary).toHaveAttribute('aria-expanded', 'false');
-    expect(reveal).toHaveAttribute('inert');
-    fireEvent.click(summary);
-    expect(ledger).toHaveAttribute('open');
-    expect(summary).toHaveAttribute('aria-expanded', 'true');
-    fireEvent.click(summary);
-    expect(summary).toHaveAttribute('aria-expanded', 'false');
-    expect(reveal).toHaveAttribute('inert');
-  });
-
-  it('uses a collapsed flow ledger as an overlay instead of reserving an empty bottom band', () => {
+  it('keeps the composer above the lower edge without an old flow ledger overlay', () => {
     const frames = layoutCollaborationFocus([
       windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
       windowNode('participant-a', {
@@ -648,4 +455,13 @@ function overlaps(left: PawWindowNode['bounds'], right: PawWindowNode['bounds'])
     && left.x + left.width > right.x
     && left.y < right.y + right.height
     && left.y + left.height > right.y;
+}
+
+function roomFocusNodes(count: number): PawWindowNode[] {
+  return [
+    windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
+    ...Array.from({ length: count }, (_, index) => windowNode(`participant-${index}`, {
+      kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
+    })),
+  ];
 }

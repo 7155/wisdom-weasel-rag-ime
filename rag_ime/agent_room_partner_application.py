@@ -810,15 +810,20 @@ class RoomPartnerApplicationService:
             callable(command_acceptance_lookup)
             or callable(acceptance_lookup)
         ):
-            for record in self.dispatch_store.inflight():
-                self._recover_dispatch_from_session_ledger(
-                    record,
-                    acceptance_lookup=acceptance_lookup,
-                    command_acceptance_lookup=(
-                        command_acceptance_lookup
-                    ),
-                    terminal_lookup=terminal_lookup,
-                )
+            cursor = ""
+            while records := self.dispatch_store.runtime_recovery_candidates(
+                after_child_dispatch_id=cursor,
+            ):
+                cursor = str(records[-1]["childDispatchId"])
+                for record in records:
+                    self._recover_dispatch_from_session_ledger(
+                        record,
+                        acceptance_lookup=acceptance_lookup,
+                        command_acceptance_lookup=(
+                            command_acceptance_lookup
+                        ),
+                        terminal_lookup=terminal_lookup,
+                    )
         for record in self.dispatch_store.pending_wakes():
             self._schedule_completion_wake(record)
         if self.wake_schedules is not None:
@@ -1665,7 +1670,13 @@ class RoomPartnerApplicationService:
         terminal: Mapping[str, object] | None = None,
     ) -> None:
         terminal = terminal or {}
-        self.room_events.publish(
+        publish = self.room_events.publish_child_terminal if terminal else self.room_events.publish
+        projection_args = {
+            "runtime_event_id": str(terminal.get("eventId") or record.get("targetSessionTurnId") or ""),
+            "dispatch_id": str(record["childDispatchId"]),
+        } if terminal else {}
+        publish(
+            **projection_args,
             room_id=str(record["roomId"]),
             event_type="participant_activity",
             payload={

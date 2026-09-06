@@ -29,7 +29,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
-  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -105,20 +104,28 @@ function useActivityDisclosure(
   key: string,
   initiallyOpen: boolean,
 ): [boolean, Dispatch<SetStateAction<boolean>>] {
-  const [open, setOpenState] = useState(() => activityDisclosureOverrides.get(key) ?? initiallyOpen);
+  const [state, setOpenState] = useState(() => ({
+    key,
+    open: activityDisclosureOverrides.get(key) ?? initiallyOpen,
+  }));
+  // A virtualized component can be reused for a different Session/turn. Reset
+  // before committing that render, so the previous row never flashes open.
+  if (state.key !== key) {
+    setOpenState({ key, open: activityDisclosureOverrides.get(key) ?? initiallyOpen });
+  }
   const setOpen = useCallback<Dispatch<SetStateAction<boolean>>>((nextValue) => {
     setOpenState((current) => {
-      const next = typeof nextValue === 'function' ? nextValue(current) : nextValue;
+      const next = typeof nextValue === 'function' ? nextValue(current.open) : nextValue;
       if (activityDisclosureOverrides.size >= activityDisclosureOverrideLimit
         && !activityDisclosureOverrides.has(key)) {
         const oldest = activityDisclosureOverrides.keys().next().value;
         if (typeof oldest === 'string') activityDisclosureOverrides.delete(oldest);
       }
       activityDisclosureOverrides.set(key, next);
-      return next;
+      return { key, open: next };
     });
   }, [key]);
-  return [open, setOpen];
+  return [state.open, setOpen];
 }
 
 export function ActivitySummary({
@@ -166,7 +173,7 @@ export function ActivitySummary({
   // decision opens automatically so the required controls cannot be missed.
   const activityGroupId = activities[0]?.id ?? 'empty';
   const [inlineOpen, setInlineOpen] = useActivityDisclosure(
-    `group:${activityGroupId}`,
+    `group:${sessionId}:${activities[0]?.turnId ?? ''}:${activityGroupId}`,
     Boolean(pendingApprovalId),
   );
   const [inlinePresence, setInlinePresence] = useState(inlineOpen);
@@ -241,7 +248,10 @@ export function ActivitySummary({
        the transcript has to mean the Runtime is still working, and a settled
        group keeps the glyph that says what it was. */
     const inlinePlanetState: ConversationPlanetState | null = running
-      ? 'running'
+      ? activities.some((activity) => activity.status === 'running' && activity.kind === 'reasoning_summary')
+        && !activities.some((activity) => activity.status === 'running' && ['tool_started', 'tool_progress'].includes(activity.kind))
+        ? 'thinking'
+        : 'running'
       : waiting
         ? 'waiting'
         : null;
@@ -275,6 +285,7 @@ export function ActivitySummary({
             <span className="agent-activity__inline-tools">{inlineSummary}</span>
             <span className="agent-activity__inline-status agent-fx-pill" data-status={state} data-tone={state === 'done' ? 'ok' : state === 'running' ? 'run' : state === 'waiting' ? 'wait' : state === 'failed' ? 'danger' : 'warn'}>
               <ConversationPlanetMark
+                motionActive={false}
                 size="sm"
                 state={inlinePlanetState ?? (state === 'failed' ? 'failed' : state === 'done' ? 'done' : 'idle')}
               />
@@ -432,7 +443,7 @@ const ActivityRow = memo(function ActivityRow({
   const routePlan = useMemo(() => routeDecisionPlanView(payload), [payload]);
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
   const [rowOpen, setRowOpen] = useActivityDisclosure(
-    `row:${activity.turnId}:${activity.id}`,
+    `row:${sessionId}:${activity.turnId}:${activity.id}`,
     // Tool payloads are supporting evidence. Even a running, failed, or
     // approval-bound tool starts folded so a short receipt cannot take over
     // the conversation viewport. A human click is still remembered across a
@@ -561,138 +572,6 @@ function isAuthorizedRoomExecutionBridge(payload: Record<string, unknown>): bool
     && Boolean(text(causal.dispatchId));
 }
 
-/* One rule for every live surface in the conversation: a still-working row
-   shows a planet, a settled row keeps its ordinary glyph or dot. `thinking`
-   turns slower than `running` so a reasoning stream and a Tool call are
-   distinguishable without reading their labels. */
-function livePlanetState(
-  status: AgentActivityProjection['status'],
-  reasoning = false,
-): ConversationPlanetState | null {
-  if (status === 'waiting') return 'waiting';
-  if (status !== 'running') return null;
-  return reasoning ? 'thinking' : 'running';
-}
-
-interface PublicActivityFeedEntry {
-  id: string;
-  kind: 'reasoning' | 'tool';
-  label: string;
-  status: AgentActivityProjection['status'];
-  summary: string;
-  timestamp: number;
-}
-
-/** A live-only, bounded projection. Historical detail remains in the adjacent
- * disclosures, while this log follows new public updates until the reader
- * deliberately scrolls away from its end. */
-export function PublicActivityFeed({
-  activities,
-}: {
-  activities: AgentActivityProjection[];
-}) {
-  const entries = publicActivityFeedEntries(activities);
-  const active = activities.some((activity) => (
-    activity.status === 'running' || activity.status === 'waiting'
-  ));
-  if (!active || entries.length === 0) return null;
-  return (
-    <section className="agent-public-activity" role="status" aria-label="本轮最新进展" aria-live="polite">
-      <header>
-        <span>
-          <strong>最新进展</strong>
-          <small>本轮最近的思考摘要与工具状态</small>
-        </span>
-      </header>
-      <div
-        className="agent-public-activity__feed"
-      >
-        {entries.map((entry) => {
-          const planet = livePlanetState(entry.status, entry.kind === 'reasoning');
-          return (
-            <article data-kind={entry.kind} data-state={entry.status} key={entry.id}>
-              <span aria-hidden="true">
-                {planet
-                  ? <ConversationPlanetMark size="md" state={planet} />
-                  : entry.kind === 'reasoning' ? <Brain size={14} /> : <Wrench size={14} />}
-              </span>
-              <span>
-                <strong>{entry.label}</strong>
-                <small>{entry.summary}</small>
-              </span>
-              <i>{statusLabel(entry.status)}</i>
-            </article>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function publicActivityFeedEntries(
-  activities: AgentActivityProjection[],
-): PublicActivityFeedEntry[] {
-  const entries: Array<PublicActivityFeedEntry & { order: number }> = [];
-  let order = 0;
-  for (const activity of activities) {
-    if (
-      activity.kind === 'reasoning_summary'
-      && text(activity.payload.source) === 'provider_reasoning_summary'
-    ) {
-      for (const [index, item] of reasoningItemsFromPayload(activity.payload, activity.summary).entries()) {
-        entries.push({
-          id: `${activity.id}:reasoning:${index}`,
-          kind: 'reasoning',
-          label: '公开思考摘要',
-          status: activity.status,
-          summary: boundedInlineSummary(item),
-          timestamp: activity.updatedAtMs,
-          order: order++,
-        });
-      }
-      continue;
-    }
-    if (!['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind)) continue;
-    const history = agentToolProgressHistory(activity.payload.progressHistory);
-    const view = publicToolResultView(activity);
-    if (history.length) {
-      for (const entry of history) {
-        entries.push({
-          id: `${activity.id}:${entry.eventId}`,
-          kind: 'tool',
-          label: view.toolLabel,
-          status: entry.status,
-          summary: boundedInlineSummary(entry.summary, 180),
-          timestamp: entry.createdAtMs,
-          order: order++,
-        });
-      }
-      continue;
-    }
-    entries.push({
-      id: `${activity.id}:${activity.kind}`,
-      kind: 'tool',
-      label: view.toolLabel,
-      status: activity.status,
-      summary: boundedInlineSummary(
-        view.error ?? view.summary ?? publicActivitySummary(activity.summary, view.toolLabel),
-        180,
-      ),
-      timestamp: activity.updatedAtMs,
-      order: order++,
-    });
-  }
-  const ordered = entries.sort(
-    (left, right) => left.timestamp - right.timestamp || left.order - right.order,
-  );
-  const latestReasoning = [...ordered].reverse().find((entry) => entry.kind === 'reasoning');
-  const latestTool = [...ordered].reverse().find((entry) => entry.kind === 'tool');
-  return [latestReasoning, latestTool]
-    .filter((entry): entry is PublicActivityFeedEntry & { order: number } => Boolean(entry))
-    .sort((left, right) => left.timestamp - right.timestamp || left.order - right.order)
-    .map(({ order: _order, ...entry }) => entry);
-}
-
 export function ReasoningActivitySummary({
   activities,
 }: {
@@ -793,11 +672,20 @@ function useActivityClock(running: boolean): number {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!running) return undefined;
-    setNowMs(Date.now());
-    // The UI displays whole seconds once a call crosses one second. Updating
-    // four times per second only rerendered every row in long tool histories.
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
+    let timer = 0;
+    const updateVisibility = () => {
+      window.clearInterval(timer);
+      if (document.hidden) return;
+      setNowMs(Date.now());
+      // Elapsed time comes from the Runtime start, not accumulated UI ticks.
+      timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    };
+    updateVisibility();
+    document.addEventListener('visibilitychange', updateVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', updateVisibility);
+    };
   }, [running]);
   return nowMs;
 }
@@ -1672,9 +1560,7 @@ function finiteCount(value: unknown): number {
     : 0;
 }
 
-/** FX 签收稿的活动栈：一次真实活动一行安静披露（UR-016 原子顺序）。
- *  每行保留自己的详情开合；顶部控制可一次收起全部工具与思考步骤。
- *  只投影真实 reducer 活动，不合并、不重排、不发明状态。 */
+/** One quiet row per authoritative activity, in transcript order. */
 export function FxActivityStack({
   activities,
   sessionId = '',
@@ -1695,12 +1581,12 @@ export function FxActivityStack({
     disclosureKey,
     !longStack,
   );
-  useEffect(() => {
-    if (longStack && !activityDisclosureOverrides.has(disclosureKey)) setStackOpen(false);
-  }, [disclosureKey, longStack, setStackOpen]);
+  // Decide density on first presentation only. A stream crossing five items
+  // must not collapse the work someone is following or selecting.
+  const running = activities.some((activity) => activity.status === 'running');
+  const { rootRef, motionActive } = useActivityVisibility(running);
   const listId = `paw-activity-stack-${useId().replace(/:/gu, '')}`;
   if (!activities.length) return null;
-  const running = activities.some((activity) => activity.status === 'running');
   const waiting = activities.some((activity) => activity.status === 'waiting');
   const failedCount = activities.filter((activity) => activity.status === 'failed').length;
   const compactStatus = [
@@ -1712,7 +1598,10 @@ export function FxActivityStack({
     <div
       aria-label="工具与思考步骤"
       className="paw-activity-stack"
+      data-count={activities.length}
       data-expanded={stackOpen || undefined}
+      data-motion={motionActive ? 'active' : 'paused'}
+      ref={rootRef}
       role="group"
     >
       <div className="paw-activity-stack__toolbar">
@@ -1742,6 +1631,7 @@ export function FxActivityStack({
         {activities.map((activity, index) => (
           <FxActivityDisclosure
             activity={activity}
+            motionActive={motionActive && stackOpen}
             sessionId={sessionId}
             key={activity.id}
             onApprovalDecision={onApprovalDecision}
@@ -1758,6 +1648,7 @@ export function FxActivityStack({
 
 function FxActivityDisclosure({
   activity,
+  motionActive,
   sessionId = '',
   onApprovalDecision,
   onOpenApproval,
@@ -1766,6 +1657,7 @@ function FxActivityDisclosure({
   setSize,
 }: {
   activity: AgentActivityProjection;
+  motionActive: boolean;
   sessionId?: string;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
@@ -1782,7 +1674,7 @@ function FxActivityDisclosure({
    * explicit human disclosure. Non-tool lifecycle rows retain their live
    * behavior because they are the conversation state rather than tool data. */
   const [manuallyOpen, setManuallyOpen] = useActivityDisclosure(
-    `fx:${activity.turnId}:${activity.id}`,
+    `fx:${sessionId}:${activity.turnId}:${activity.id}`,
     !isToolRow && failed,
   );
   const open = manuallyOpen || (!isToolRow && (running || waiting));
@@ -1798,6 +1690,7 @@ function FxActivityDisclosure({
     [activity, isToolRow],
   );
   const label = fxActivityLabel(activity);
+  const action = fxActivityAction(activity, toolView);
   const hint = fxActivityHint(activity, toolView, label);
   const Glyph = fxActivityGlyph(activity);
   const glyphKind = fxGlyphKind(activity);
@@ -1806,8 +1699,7 @@ function FxActivityDisclosure({
   const subagent = isSubagentActivity(activity);
   const tone = failed ? 'danger' : waiting ? 'wait' : running ? 'run' : subagent ? 'vio' : 'ok';
   const statusText = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : subagent ? '后台完成' : '完成';
-  const rowPlanetState = livePlanetState(activity.status, activity.kind === 'reasoning_summary');
-  const nowMs = useActivityClock(running);
+  const nowMs = useActivityClock(running && motionActive);
   // A Tool receipt with an explicit duration stays authoritative; otherwise a
   // live row shows its real elapsed clock and a settled row its measured span.
   const meta = activityReceiptMeta(activity, nowMs, toolView);
@@ -1832,12 +1724,17 @@ function FxActivityDisclosure({
         type="button"
       >
         <span className="paw-activity__row">
-          <span className="paw-chevron">▸</span>
-          <span aria-hidden="true" className="paw-activity__glyph" data-kind={glyphKind}><Glyph size={14} /></span>
-          <span className="paw-activity__label">{label}</span>
+          <span aria-hidden="true" className="paw-activity__signal" data-state={activity.status}>
+            {running ? (
+              <ConversationPlanetMark
+                motionActive={motionActive}
+                state={activity.kind === 'reasoning_summary' ? 'thinking' : 'running'}
+              />
+            ) : <span className="paw-activity__glyph" data-kind={glyphKind}><Glyph size={14} /></span>}
+          </span>
+          <span className="paw-activity__label">{action || label}</span>
           {hint ? <span className="paw-activity__hint">{hint}</span> : null}
-          <span className={`fx-pill ${tone}`}>
-            <ConversationPlanetMark size="sm" state={rowPlanetState ?? (failed ? 'failed' : 'done')} />
+          <span className={`fx-pill ${tone}`} data-redundant={Boolean(action) && !failed && !waiting || undefined}>
             {statusText}
           </span>
           {meta ? <span className="fx-meta">{meta}</span> : null}
@@ -1855,6 +1752,7 @@ function FxActivityDisclosure({
             <span aria-hidden="true" className="paw-activity__progress-track"><i /></span>
             <small>{progress.label}</small>
           </span> : null}
+          <ChevronRight aria-hidden="true" className="paw-chevron" size={13} />
         </span>
       </button>
       <SmoothDisclosureReveal
@@ -1876,6 +1774,49 @@ function FxActivityDisclosure({
       </div></SmoothDisclosureReveal>
     </div>
   );
+}
+
+/** Pause decorative work outside the visible surface without changing Runtime
+ * state. An OS-hidden document or an offscreen/minimized window needs no ticks. */
+function useActivityVisibility(running: boolean) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(() => !document.hidden);
+  useEffect(() => {
+    if (!running) return undefined;
+    let intersecting = true;
+    const update = () => setVisible(!document.hidden && intersecting);
+    const observer = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver((entries) => {
+      intersecting = entries.some((entry) => entry.isIntersecting);
+      update();
+    });
+    if (rootRef.current) observer?.observe(rootRef.current);
+    document.addEventListener('visibilitychange', update);
+    update();
+    return () => {
+      observer?.disconnect();
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, [running]);
+  return { rootRef, motionActive: running && visible };
+}
+
+const toolActionVerbs: Record<string, string> = {
+  read: '读取', read_file: '读取', workspace_read: '读取',
+  write: '写入', write_file: '写入', workspace_write_file: '写入',
+  edit: '编辑', edit_file: '编辑', workspace_edit_file: '编辑', workspace_patch: '编辑',
+  bash: '运行', shell: '运行', workspace_shell: '运行',
+  grep: '搜索', workspace_search: '搜索',
+  find: '查找', ls: '浏览', workspace_list: '浏览',
+  skill_load: '读取技能', tool_load: '读取工具说明',
+};
+
+function fxActivityAction(activity: AgentActivityProjection, view: PublicToolResultView | null): string {
+  if (!view) return '';
+  const verb = toolActionVerbs[view.toolId];
+  if (!verb) return '';
+  return activity.status === 'running' ? `正在${verb}`
+    : activity.status === 'completed' ? `已${verb}`
+      : activity.status === 'failed' ? `${verb}失败` : verb;
 }
 
 function isSubagentActivity(activity: AgentActivityProjection): boolean {
@@ -1919,6 +1860,17 @@ function fxActivityHint(
   toolView: PublicToolResultView | null,
   label: string,
 ): string {
+  if (toolView && !toolView.error) {
+    const request = (id: string) => toolView.request.find((field) => field.id === id)?.value ?? '';
+    const family = publicToolFamily(toolView.toolId);
+    const target = toolView.target || request('path');
+    const query = request('query') || request('pattern') || request('glob');
+    const subject = family === 'terminal' ? request('command')
+      : family === 'file' ? target
+        : family === 'search' ? [query ? `“${query}”` : '', target].filter(Boolean).join(' · ')
+          : '';
+    if (subject) return boundedInlineSummary(subject, 200);
+  }
   const raw = toolView
     ? toolView.error || toolView.summary
     : activity.kind === 'turn_failed'

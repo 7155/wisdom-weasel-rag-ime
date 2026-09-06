@@ -404,6 +404,7 @@ class PersonalContextMaintenanceRunner:
         self,
         through_date: str,
         *,
+        start_date: str = "",
         now_ms: int | None = None,
         progress: object | None = None,
         max_days: int | None = None,
@@ -417,7 +418,10 @@ class PersonalContextMaintenanceRunner:
             self.db_path,
             project=self.config.project,
         )
-        pending_dates = store.dates_requiring_model_organization(through_date)
+        pending_dates = store.dates_requiring_model_organization(
+            through_date,
+            **({"start_date": start_date} if start_date else {}),
+        )
         bounded_limit = (
             len(pending_dates)
             if max_days is None

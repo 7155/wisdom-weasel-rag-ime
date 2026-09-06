@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { previewEvalLabEvidence, previewEvalLabRuns } from '@/app/preview-eval-lab-data';
 import { PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
 import { MockControlTransport } from '@/test/mock-transport';
+import type { ControlRequest } from '@/platform/transport';
 import { EvalLabFeature } from './index';
 
 vi.mock('@/paw-os/apps/PawRoomWorkspace', () => ({
@@ -209,7 +210,167 @@ function runtimeReconciledCostEnvironment({
   };
 }
 
+function sceneRecipeState(revision = 0) {
+  const sceneId = 'agent-lab.enterprise-rag.validation';
+  const incumbent = {
+    schemaVersion: 'rag-ime.agent-lab-scene-recipe-version.v1', sceneId,
+    versionId: 'enterprise-rag.validation.incumbent.v1', title: '内置默认', origin: 'runner_builtin',
+    recipe: { provider: 'openai-codex', model: 'gpt-5.6-sol', thinkingLevel: 'max', promptProfile: 'incumbent', promptContractVersion: 'rag-agent-evidence-state-budget-routing-v19', agenticSupplementalLimit: 6, answerOnly: true, developmentOnly: true, split: 'validation', candidateAware: true, unbiasedPromotionClaimAllowed: false },
+    sourceExperimentId: '', sourceCandidateRunId: '',
+  };
+  const candidate = { ...incumbent, versionId: 'enterprise-rag.validation.luna-prompt-v4-r6.v1', title: 'Luna Prompt-v4', origin: 'registered_candidate', recipe: { ...incumbent.recipe, model: 'gpt-5.6-luna', promptProfile: 'coverage-balanced-evidence-gate-v4' }, sourceExperimentId: 'enterprise-rag.luna-prompt-v4-standard-r6.v1', sourceCandidateRunId: 'enterprise-rag-luna-max-coverage-balanced-v4-20260904-r4' };
+  const active = revision === 1 ? candidate : incumbent;
+  return {
+    schemaVersion: 'rag-ime.agent-lab-scene-recipe-state.v1', ok: true, sceneId, revision,
+    activeVersion: active, previousVersion: revision === 1 ? incumbent : null, rollbackAvailable: revision === 1,
+    candidate: { available: revision !== 1, reasonCode: revision === 1 ? 'already_active' : '', reason: '', experimentId: candidate.sourceExperimentId, version: candidate },
+    lastEvent: revision ? { schemaVersion: 'rag-ime.agent-lab-scene-recipe-event.v1', eventId: `event-${revision}`, sceneId, revision, operation: revision === 1 ? 'apply' : 'rollback', clientRequestId: 'fixture-command', fromVersionId: revision === 1 ? incumbent.versionId : candidate.versionId, versionId: active.versionId, sourceExperimentId: active.sourceExperimentId, sourceCandidateRunId: active.sourceCandidateRunId, sourceExperimentRevision: '', createdAtMs: 1000, effectScope: 'future_validation_runs' } : null,
+    effectScope: 'future_validation_runs',
+  };
+}
+
+function r6AnswerEvidenceResponse() {
+  const metrics = {
+    before: {
+      agentSuccessRate: 0.75, answerJudgeCorrectnessRate: 0.5,
+      exactCitationFactsCovered: 7, citationFactCount: 9, exactCitationFactCoverage: 7 / 9,
+      answerableCitationSupportRate: 0.5, infoNotFoundAbstentionRecall: 1,
+      apiCostUsd: 2.170603, totalTokens: 892_697, costReceiptAvailable: 1, providerBillAvailable: 0,
+    },
+    after: {
+      agentSuccessRate: 1, answerJudgeCorrectnessRate: 1,
+      exactCitationFactsCovered: 9, citationFactCount: 9, exactCitationFactCoverage: 1,
+      answerableCitationSupportRate: 1, infoNotFoundAbstentionRecall: 1,
+      apiCostUsd: 0.1029376, totalTokens: 763_923, costReceiptAvailable: 1, providerBillAvailable: 0,
+    },
+  };
+  return {
+    ...answerEvidenceResponse,
+    experiments: [{
+      ...answerEvidenceResponse.experiments[0],
+      experimentId: 'enterprise-rag.luna-prompt-v4-standard-r6.v1',
+      baseline: { ...answerEvidenceResponse.experiments[0].baseline, metrics: metrics.before },
+      candidate: { ...answerEvidenceResponse.experiments[0].candidate, metrics: metrics.after },
+      frozenControls: [{
+        name: 'cost_scope',
+        value: 'full four-lane run plus frozen Judge; authority=runtime_cost_reconciled; Provider bill unavailable',
+        reason: 'Runtime requests and published pricing; offline rescore made no new calls.',
+      }],
+      optimizationEvidence: {
+        status: 'partial',
+        provenance: 'existing_run_artifacts',
+        baselineTrace: { runId: 'rag-baseline', status: 'unavailable', traceIds: [], reason: 'Trace unavailable.' },
+        patch: { status: 'unavailable', kind: 'frozen_configuration', reason: 'Patch unavailable.' },
+        caseComparisons: [0, 1, 2, 3].map((index) => ({
+          caseId: `case-0${index + 1}`,
+          before: {
+            status: index === 0 ? 'failed' : 'passed',
+            metrics: {
+              agentSuccess: index === 0 ? 0 : 1, answerJudgeCorrect: index === 0 ? 0 : 1,
+              abstentionExpected: index >= 2 ? 1 : 0, abstentionCorrect: 1,
+            } as Record<string, number>,
+          },
+          after: {
+            status: 'passed',
+            metrics: { agentSuccess: 1, answerJudgeCorrect: 1, abstentionExpected: index >= 2 ? 1 : 0, abstentionCorrect: 1 } as Record<string, number>,
+          },
+        })),
+        validationBoundary: {
+          candidateAware: true, candidateBlind: false, heldOutOpened: false,
+          unbiasedPromotionClaimAllowed: false, costAuthority: 'runtime_cost_reconciled',
+        },
+        gaps: ['Trace unavailable.'],
+      },
+    }],
+  };
+}
+
+function renderAnswerEvidenceOverview(data: ReturnType<typeof r6AnswerEvidenceResponse>) {
+  const transport = new MockControlTransport({ routes: { 'agent.eval-lab.runs': data } });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ControlTransportProvider transport={transport}>
+        <PawOsDesktopProvider openWindow={vi.fn()}>
+          <EvalLabFeature initialPage="overview" />
+        </PawOsDesktopProvider>
+      </ControlTransportProvider>
+    </QueryClientProvider>,
+  );
+}
+
 describe('Agent Lab', () => {
+  it('shows PAW selfboot measurements as their own project instead of hiding them', async () => {
+    const experiment = {
+      ...response.experiments[0],
+      experimentId: 'paw-selfboot.room-workflow.20260905',
+      title: 'PAW 自举 · Room 工作流验证',
+      vertical: 'paw-selfboot',
+      evaluationKind: 'workflow',
+      comparison: { decision: 'keep', decisionReason: '质量保持，模型调用从 3 次降至 2 次。', metricDeltas: [] },
+    } as const;
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': { ...response, experiments: [experiment], experimentTotal: 1 },
+    } });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ControlTransportProvider transport={transport}><PawOsDesktopProvider openWindow={vi.fn()}>
+        <EvalLabFeature initialPage="overview" />
+      </PawOsDesktopProvider></ControlTransportProvider>
+    </QueryClientProvider>);
+    expect(await screen.findByRole('heading', { name: 'PAW 协作与接续' })).toBeInTheDocument();
+    expect(screen.getByText('1 个项目 · 1 个当前实验 · 0 条历史记录')).toBeInTheDocument();
+    expect(screen.getByText('Room 工作流验证')).toBeInTheDocument();
+    expect(screen.getByText('质量保持，模型调用从 3 次降至 2 次。')).toBeInTheDocument();
+    expect(screen.queryByText('主要质量指标变好，并通过当前可靠性检查，因此保留。')).toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看完整报告' }));
+    expect(await screen.findByRole('heading', { name: 'Room 工作流验证', level: 2 })).toBeInTheDocument();
+  });
+
+  it('shows the observation chart first and preserves its population in experiment setup', async () => {
+    const scope = '8 类故障 × 20 次，共 160 次受控观察';
+    const experiment = { ...response.experiments[0], experimentId: 'paw-selfboot.reliability', vertical: 'paw-selfboot',
+      evaluationKind: 'tool_runtime', status: 'diagnostic', claimStatus: 'supporting',
+      dataset: { ...response.experiments[0].dataset, caseCount: 160 },
+      frozenControls: [{ name: 'observation_scope', value: scope, reason: '进程内受控观察。' }],
+      baseline: { ...response.experiments[0].baseline, metrics: {} },
+      candidate: { ...response.experiments[0].candidate, metrics: { observationPassed: 160, observationCount: 160 } },
+      comparison: { decision: 'observation', decisionReason: '160 次受控观察全部通过；没有配对基线。', metricDeltas: [] },
+    };
+    const transport = new MockControlTransport({ routes: { 'agent.eval-lab.runs': { ...response, experiments: [experiment], experimentTotal: 1 } } });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ControlTransportProvider transport={transport}><PawOsDesktopProvider openWindow={vi.fn()}>
+        <EvalLabFeature initialPage="workspace" />
+      </PawOsDesktopProvider></ControlTransportProvider>
+    </QueryClientProvider>);
+    expect(await screen.findByRole('img', { name: '受控观察通过，本轮方案 160/160' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '本轮验证已完成' })).not.toBeVisible();
+    expect(screen.getByText('查看完整指标口径').closest('details')).not.toHaveAttribute('open');
+    await userEvent.setup().click(screen.getByRole('tab', { name: '设置实验' }));
+    expect(within(screen.getByRole('complementary', { name: '固定任务与基线' })).getByText(scope)).toBeInTheDocument();
+    expect(screen.queryByText(/160 个固定任务/)).toBeNull();
+  });
+
+  it('reads the current scene trial from the run step without starting another execution', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': response,
+      'agent.eval-lab.trials.get': {
+        schemaVersion: 'rag-ime.agent-lab-trial.v1', registeredSceneIds: ['enterpriseops'], jobs: [{
+          jobId: 'trial-restored-entry', clientRequestId: 'original-entry-request', sceneId: 'enterpriseops', state: 'interrupted',
+          publicSpec: {}, cancelRequested: false, progress: 'interrupted', sessions: [{ sessionId: 'actual-session', turnId: 'actual-turn' }],
+          result: null, error: 'Execution owner stopped', resumeAvailable: false, createdAtMs: 1000, updatedAtMs: 2000,
+        }],
+      },
+    } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><ControlTransportProvider transport={transport}><PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature initialPage="workspace" /></PawOsDesktopProvider></ControlTransportProvider></QueryClientProvider>);
+    const runTab = await screen.findByRole('tab', { name: '运行' });
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.eval-lab.trials.get')).toBe(false);
+    await userEvent.setup().click(runTab);
+    expect(await screen.findByText('执行中断')).toBeInTheDocument();
+    expect(screen.getByText('actual-session · actual-turn')).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId.startsWith('agent.eval-lab.trials.')).map(({ request }) => request.pathId)).toEqual(['agent.eval-lab.trials.get']);
+    view.unmount(); client.clear();
+  });
+
   it('opens an in-app evidence panel with every public turn and the run environment', async () => {
     const sessionId = 'agent:real-2';
     const transport = new MockControlTransport({
@@ -361,7 +522,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -407,18 +568,15 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={openWindow}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
     );
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Agent 工作流实验室' })).toBeInTheDocument();
-    expect(screen.getByText('把任何能重复验收的 Agent 能力注册成测评：每个测评使用自己冻结的数据与评分标准，PAW 在统一证据框架下比较方案。')).toBeInTheDocument();
-    expect(screen.getByText('1 · 选择真实任务')).toBeInTheDocument();
-    expect(screen.getByText('2 · 一次只改一项')).toBeInTheDocument();
-    expect(screen.getByText('模型、提示词、技能、工具、检索、记忆或协作流程')).toBeInTheDocument();
-    expect(screen.getByText('3 · 按同一标准重跑')).toBeInTheDocument();
+    expect(screen.getByText('设定目标，运行候选，用同一批任务检查改善。')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Agent Lab 三步流程')).not.toBeInTheDocument();
     expect(await screen.findByRole('heading', { level: 2, name: '每一轮都回答：为什么改、改了什么、结果如何' })).toBeInTheDocument();
     expect(screen.getByText('下面按业务场景整理所有实验。先看任务是否做对、结果是否安全可靠，再比较成本；耗时只用于诊断，不阻止保留正确方案。')).toBeInTheDocument();
     const overview = screen.getByLabelText('Agent Lab 实验结果');
@@ -447,7 +605,7 @@ describe('Agent Lab', () => {
     await userEvent.setup().click(screen.getByRole('tab', { name: '优化' }));
     expect(screen.getByRole('region', { name: 'Optimization Workbench' })).toBeInTheDocument();
     expect(screen.getByText('实际改动')).toBeInTheDocument();
-    const changeDiff = screen.getByLabelText('改动 diff');
+    const changeDiff = screen.getByLabelText('方案配置摘要');
     expect(changeDiff).toHaveTextContent('修改前');
     expect(changeDiff).toHaveTextContent('修改后');
     expect(changeDiff).toHaveTextContent('直接执行');
@@ -538,7 +696,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -572,7 +730,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -629,7 +787,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -680,7 +838,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -807,7 +965,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -846,7 +1004,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={reconciledTransport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -922,7 +1080,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1002,7 +1160,7 @@ describe('Agent Lab', () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature /></PawOsDesktopProvider>
+          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature initialPage="overview" /></PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
     );
@@ -1144,7 +1302,7 @@ describe('Agent Lab', () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature /></PawOsDesktopProvider>
+          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature initialPage="overview" /></PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
     );
@@ -1199,7 +1357,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1251,7 +1409,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1308,7 +1466,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1342,7 +1500,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1394,7 +1552,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1426,13 +1584,14 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={vi.fn()}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText(/答案通过 2\/4 → 0\/4/)).toBeInTheDocument();
+    expect(await screen.findByText(/可回答题答案正确 50\.00% → 0\.00%/)).toBeInTheDocument();
+    expect(screen.queryByText(/答案通过 2\/4 → 0\/4/)).not.toBeInTheDocument();
     expect(screen.getByText(/高层事实覆盖 66\.67% → 0\.00%/)).toBeInTheDocument();
     expect(screen.getByText(/引用事实覆盖 22\.22% → 0\.00%/)).toBeInTheDocument();
     expect(screen.getByText(/可回答问题引用支持 0\.00% → 0\.00%/)).toBeInTheDocument();
@@ -1447,6 +1606,52 @@ describe('Agent Lab', () => {
     expect(screen.getAllByText('可回答引用支持').length).toBeGreaterThan(0);
     expect(screen.getByText(/当前 run enterpriseops-suite-v2-final-validation-20260901 已拒绝/)).toBeInTheDocument();
     expect(screen.queryByText('当前只证明检索显著改善；最终回答的引用门禁仍未通过，因此候选被拒绝。')).not.toBeInTheDocument();
+  });
+
+  it('summarizes r6 answer-evidence with each scored population and the recorded API estimate scope', async () => {
+    renderAnswerEvidenceOverview(r6AnswerEvidenceResponse());
+
+    expect(await screen.findByText(/任务通过 3\/4 → 4\/4/)).toBeInTheDocument();
+    expect(screen.getByText(/可回答题答案正确 1\/2 → 2\/2/)).toBeInTheDocument();
+    expect(screen.getByText(/引用事实覆盖 7\/9 → 9\/9/)).toBeInTheDocument();
+    expect(screen.getByText(/应拒答问题拒答 2\/2 → 2\/2/)).toBeInTheDocument();
+    expect(screen.queryByText(/答案通过 2\/4 → 4\/4/)).not.toBeInTheDocument();
+    expect(screen.getByText(/API 估算 \$2\.1706 → \$0\.1029/)).toBeInTheDocument();
+    expect(screen.getByText(/Runtime 对账.*完整四条 lane \+ 冻结 Judge.*非 Provider 账单/)).toBeInTheDocument();
+    expect(screen.getByText(/Token 892,697 → 763,923/)).toBeInTheDocument();
+  });
+
+  it.each(['missing case', 'duplicate case', 'missing classification'])(
+    'uses rates without inventing answer-evidence denominators for %s',
+    async (gap) => {
+      const data = r6AnswerEvidenceResponse();
+      const cases = data.experiments[0].optimizationEvidence.caseComparisons;
+      if (gap === 'missing case') cases.pop();
+      else if (gap === 'duplicate case') cases[3].caseId = cases[2].caseId;
+      else delete cases[3].before.metrics.abstentionExpected;
+      renderAnswerEvidenceOverview(data);
+
+      expect(await screen.findByText(/可回答题答案正确 50\.00% → 100\.00%/)).toBeInTheDocument();
+      expect(screen.getByText(/应拒答问题拒答 100\.00% → 100\.00%/)).toBeInTheDocument();
+      expect(screen.queryByText(/可回答题答案正确 \d\/\d/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/应拒答问题拒答 \d\/\d/)).not.toBeInTheDocument();
+      expect(screen.getByText(/引用事实覆盖 7\/9 → 9\/9/)).toBeInTheDocument();
+      if (gap !== 'missing classification') expect(screen.getByText(/任务通过 75\.00% → 100\.00%/)).toBeInTheDocument();
+    },
+  );
+
+  it('keeps another answer-evidence API estimate separate from r6 cost authority and scope', async () => {
+    const data = r6AnswerEvidenceResponse();
+    const experiment = data.experiments[0];
+    experiment.experimentId = 'other-answer-evidence-run';
+    experiment.frozenControls[0].value = 'single Agentic lane';
+    experiment.optimizationEvidence.validationBoundary.costAuthority = 'unavailable';
+    renderAnswerEvidenceOverview(data);
+
+    expect(await screen.findByText(/API 估算 \$2\.1706 → \$0\.1029/)).toBeInTheDocument();
+    expect(screen.getByText(/single Agentic lane/)).toBeInTheDocument();
+    expect(screen.queryByText(/Runtime 对账/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/完整四条 lane \+ 冻结 Judge/)).not.toBeInTheDocument();
   });
 
   it('creates a read-only App-owned Room and embeds it in the Agent Lab Session page', async () => {
@@ -1466,6 +1671,8 @@ describe('Agent Lab', () => {
           room: {
             id: 'room-eval-lab-1',
             title: 'Agent Lab · EnterpriseOps CSM',
+            ownerAppId: 'extension:agent-lab',
+            surfaceKey: 'experiment.enterpriseops-csm-v2',
             participants: [],
           },
         },
@@ -1479,7 +1686,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={openWindow}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1487,7 +1694,8 @@ describe('Agent Lab', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Agent 工作流实验室' })).toBeInTheDocument();
     await userEvent.setup().click(await screen.findByRole('button', { name: '查看完整报告' }));
-    await userEvent.setup().click(await screen.findByRole('button', { name: '在 Room 中继续下一轮' }));
+    await userEvent.setup().click(screen.getByRole('tab', { name: '实验工作区' }));
+    await userEvent.setup().click(await screen.findByRole('button', { name: '与 Agent 讨论' }));
 
     await vi.waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(
       expect.arrayContaining(['agent.roles.list', 'agent.rooms.create', 'agent.room.message']),
@@ -1537,7 +1745,7 @@ describe('Agent Lab', () => {
       'data-participant-process-location',
       'room-transcript',
     );
-    expect(screen.getByRole('tab', { name: '对话与证据' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '实验工作区' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('shows an independently recorded Room review instead of synthesizing reviewer approval', async () => {
@@ -1572,7 +1780,7 @@ describe('Agent Lab', () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature /></PawOsDesktopProvider>
+          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature initialPage="overview" /></PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
     );
@@ -1586,118 +1794,28 @@ describe('Agent Lab', () => {
     expect(await screen.findByLabelText('Agent Lab Room workspace')).toHaveAttribute('data-room-id', 'room-reviewed-candidate');
   });
 
-  it('opens a guided intake Room before any evaluation data exists', async () => {
-    const transport = new MockControlTransport({
-      routes: {
-        'agent.eval-lab.runs': {
-          schemaVersion: 'rag-ime.eval-lab-run-list.v1', ok: true, total: 0, items: [], experiments: [], experimentTotal: 0,
-        },
-        'agent.roles.list': {
-          items: [
-            persona('companion-present-v1', 'Agent 1'),
-            persona('companion-firstlight-v1', 'Agent 2'),
-            persona('companion-future-v1', 'Agent 3'),
-          ],
-        },
-        'agent.rooms.create': {
-          ok: true,
-          room: { id: 'room-eval-wizard-1', title: 'Agent Lab · 评测向导', participants: [] },
-        },
-        'agent.room.message': { ok: true },
-        'agent.rooms.list': { ok: true, items: [] },
-      },
-    });
-    const openWindow = vi.fn<(request: PawOsWindowRequest) => void>();
-
-    render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={openWindow}>
-            <EvalLabFeature />
-          </PawOsDesktopProvider>
-        </ControlTransportProvider>
-      </QueryClientProvider>,
-    );
-
+  it('opens Golden preparation before any evaluation data exists without creating a Room', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': { schemaVersion: 'rag-ime.eval-lab-run-list.v1', ok: true, total: 0, items: [], experiments: [], experimentTotal: 0 },
+      'agent.eval-lab.golden.get': { ok: true, items: [], suite: null },
+      'agent.rooms.list': { ok: true, items: [] },
+      'agent.roles.list': { items: [] },
+    } });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ControlTransportProvider transport={transport}><EvalLabFeature initialPage="overview" /></ControlTransportProvider></QueryClientProvider>);
     await userEvent.setup().click(await screen.findByRole('button', { name: '新建评测' }));
-    await vi.waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(
-      expect.arrayContaining(['agent.roles.list', 'agent.rooms.create', 'agent.room.message']),
-    ));
-    const create = transport.requests.find(({ request }) => request.pathId === 'agent.rooms.create')?.request;
-    expect(create?.body).toMatchObject({
-      title: 'Agent Lab · 评测向导',
-      roomKind: 'collaboration',
-      permissionPolicy: {
-        schemaVersion: 'rag-ime.room-permission-policy.v1',
-        room: { executionMode: 'read_only' },
-        partner: { executionMode: 'inherit' },
-        toolAgent: { executionMode: 'inherit' },
-      },
-      ownerAppId: 'extension:agent-lab',
-      surfaceKey: 'wizard',
-    });
-    expect(create?.body).not.toHaveProperty('executionMode');
-    expect((create?.body as { participants?: unknown[] } | undefined)?.participants).toHaveLength(3);
-    const message = transport.requests.find(({ request }) => request.pathId === 'agent.room.message')?.request;
-    expect(message?.body).toMatchObject({
-      message: expect.stringContaining('先提问和补数据'),
-      clientMessageId: 'eval-lab:evaluation-wizard',
-    });
-    expect(String((message?.body as Record<string, unknown> | undefined)?.message ?? '')).not.toContain(
-      '$agent-eval-room-optimizer',
-    );
-    expect(String((create?.body as Record<string, unknown> | undefined)?.scenarioPrompt ?? '')).toContain(
-      '$agent-eval-room-optimizer',
-    );
-    expect(openWindow).not.toHaveBeenCalled();
-    expect(await screen.findByLabelText('Agent Lab Room workspace')).toHaveAttribute('data-room-id', 'room-eval-wizard-1');
+    expect(await screen.findByRole('region', { name: 'Golden 评测集' })).toBeInTheDocument();
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.create' || request.pathId === 'agent.room.message')).toBe(false);
   });
 
-  it('starts a fresh intake when the previous wizard Room failed', async () => {
-    const failedWizard = {
-      id: 'room-eval-wizard-failed',
-      title: 'Agent Lab · 评测向导',
-      status: 'active',
-      routingPolicy: 'natural',
-      moderatorParticipantId: '',
-      updatedAtMs: 1,
-      participants: [],
-      ownerAppId: 'extension:agent-lab',
-      surfaceKey: 'wizard',
-      workItems: [{ state: 'failed', updatedAtMs: 2 }],
-    };
-    const transport = new MockControlTransport({
-      routes: {
-        'agent.eval-lab.runs': {
-          schemaVersion: 'rag-ime.eval-lab-run-list.v1', ok: true, total: 0, items: [], experiments: [], experimentTotal: 0,
-        },
-        'agent.roles.list': {
-          items: [
-            persona('companion-present-v1', 'Agent 1'),
-            persona('companion-firstlight-v1', 'Agent 2'),
-          ],
-        },
-        'agent.rooms.list': { ok: true, items: [{ ...failedWizard, workItems: undefined }] },
-        'agent.room.get': { ok: true, room: failedWizard },
-        'agent.rooms.create': {
-          ok: true,
-          room: { id: 'room-eval-wizard-fresh', title: 'Agent Lab · 评测向导', participants: [] },
-        },
-        'agent.room.message': { ok: true },
-      },
-    });
-
-    render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature /></PawOsDesktopProvider>
-        </ControlTransportProvider>
-      </QueryClientProvider>,
-    );
-
+  it('keeps Golden preparation reachable when the historical archive is unavailable', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': () => { throw new Error('archive unavailable'); },
+      'agent.eval-lab.golden.get': { ok: true, items: [], suite: null },
+    } });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ControlTransportProvider transport={transport}><EvalLabFeature /></ControlTransportProvider></QueryClientProvider>);
     await userEvent.setup().click(await screen.findByRole('button', { name: '新建评测' }));
-    await vi.waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.create')).toBe(true));
-    expect(await screen.findByLabelText('Agent Lab Room workspace')).toHaveAttribute('data-room-id', 'room-eval-wizard-fresh');
+    expect(await screen.findByRole('region', { name: 'Golden 评测集' })).toBeInTheDocument();
+    expect(screen.queryByText('还没读取到评测结果')).not.toBeInTheDocument();
   });
 
   it('restores and switches only Agent Lab owned Rooms inside the Session page', async () => {
@@ -1716,7 +1834,7 @@ describe('Agent Lab', () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature /></PawOsDesktopProvider>
+          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature initialPage="overview" /></PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
     );
@@ -1729,13 +1847,92 @@ describe('Agent Lab', () => {
     expect(screen.getByLabelText('Agent Lab Room workspace')).toHaveAttribute('data-room-id', 'room-owned-b');
   });
 
-  it('creates a managed Validation Room after workspace selection without a second approval', async () => {
+  it('reads and applies a scene version only from the application step, then refreshes after rollback', async () => {
+    let current = sceneRecipeState();
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': r6AnswerEvidenceResponse(),
+      'agent.eval-lab.scene-recipes.get': () => current,
+      'agent.eval-lab.scene-recipes.apply': (request: ControlRequest) => { current = sceneRecipeState(1); return { ...current, event: { ...current.lastEvent, clientRequestId: (request.body as Record<string, unknown>).clientRequestId }, replayed: false }; },
+      'agent.eval-lab.scene-recipes.rollback': (request: ControlRequest) => { current = sceneRecipeState(2); return { ...current, event: { ...current.lastEvent, clientRequestId: (request.body as Record<string, unknown>).clientRequestId }, replayed: false }; },
+    } });
+    const user = userEvent.setup();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ControlTransportProvider transport={transport}><EvalLabFeature /></ControlTransportProvider></QueryClientProvider>);
+    const application = await screen.findByRole('tab', { name: '应用版本' });
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.eval-lab.scene-recipes.get')).toHaveLength(0);
+    await user.click(application);
+    expect(await screen.findByLabelText('当前生效版本')).toHaveTextContent('gpt-5.6-sol');
+    await user.click(screen.getByRole('button', { name: '应用到场景' }));
+    await waitFor(() => expect(screen.getByLabelText('当前生效版本')).toHaveTextContent('gpt-5.6-luna'));
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.eval-lab.scene-recipes.apply')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '返回上版' }));
+    await waitFor(() => expect(screen.getByLabelText('当前生效版本')).toHaveTextContent('gpt-5.6-sol'));
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.eval-lab.scene-recipes.rollback')).toHaveLength(1);
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.configuration.update')).toBe(false);
+  });
+
+  it('reads the latest scene version at explicit RAG start and freezes it in the Room dispatch', async () => {
+    let current = sceneRecipeState();
+    const transport = new MockControlTransport({
+      pickedFiles: [{ id: 'workspace', name: 'candidate', mimeType: 'inode/directory', byteSize: 0, path: '/workspace/candidate' }],
+      routes: {
+        'agent.eval-lab.runs': r6AnswerEvidenceResponse(),
+        'agent.eval-lab.scene-recipes.get': () => current,
+        'agent.roles.list': { items: [persona('companion-present-v1', 'Agent 1'), persona('companion-firstlight-v1', 'Agent 2')] },
+        'agent.rooms.create': { ok: true, room: { id: 'room-rag-binding', title: 'RAG scene run', ownerAppId: 'extension:agent-lab', surfaceKey: 'candidate.rag', participants: [] } },
+        'agent.room.message': { ok: true },
+      },
+    });
+    const user = userEvent.setup();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ControlTransportProvider transport={transport}><EvalLabFeature /></ControlTransportProvider></QueryClientProvider>);
+    await user.click(await screen.findByRole('tab', { name: '应用版本' }));
+    expect(await screen.findByLabelText('当前生效版本')).toHaveTextContent('gpt-5.6-sol');
+    await user.click(screen.getByRole('tab', { name: '设置实验' }));
+    await user.click(screen.getByRole('button', { name: '选择候选目录' }));
+    current = sceneRecipeState(1);
+    await user.click(screen.getByRole('button', { name: '开始实验' }));
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.create')).toBe(true));
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.eval-lab.scene-recipes.get')).toHaveLength(2);
+    const create = transport.requests.find(({ request }) => request.pathId === 'agent.rooms.create')!.request;
+    const prompt = String((create.body as Record<string, unknown>).scenarioPrompt);
+    const contract = JSON.parse(prompt.split('\n').find((line) => line.startsWith('agentLabDispatch='))!.slice('agentLabDispatch='.length));
+    expect(contract.sceneRecipeBinding).toEqual({
+      schemaVersion: 'rag-ime.agent-lab-scene-recipe-binding.v1',
+      sceneId: current.sceneId, revision: 1, versionId: current.activeVersion.versionId,
+      recipe: current.activeVersion.recipe, effectScope: 'future_validation_runs',
+    });
+    expect(prompt).toContain('--scene-recipe');
+    expect(prompt).toContain('scene-recipe.json');
+    expect(prompt).toContain('conditions.sceneRecipe');
+    expect(prompt.length).toBeLessThanOrEqual(8000);
+  });
+
+  it('keeps saved evidence readable when a new RAG run cannot obtain its current scene version', async () => {
+    const transport = new MockControlTransport({
+      pickedFiles: [{ id: 'workspace', name: 'candidate', mimeType: 'inode/directory', byteSize: 0, path: '/workspace/candidate' }],
+      routes: {
+        'agent.eval-lab.runs': r6AnswerEvidenceResponse(),
+        'agent.eval-lab.scene-recipes.get': () => { throw new Error('场景配置服务暂不可用，请稍后重试。'); },
+      },
+    });
+    const user = userEvent.setup();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ControlTransportProvider transport={transport}><EvalLabFeature /></ControlTransportProvider></QueryClientProvider>);
+    await user.click(await screen.findByRole('tab', { name: '设置实验' }));
+    await user.click(screen.getByRole('button', { name: '选择候选目录' }));
+    await user.click(screen.getByRole('button', { name: '开始实验' }));
+    expect(await screen.findByText('场景配置服务暂不可用，请稍后重试。')).toHaveAttribute('role', 'alert');
+    expect(await screen.findByText('暂时无法读取执行状态。已有实验不会因断开连接而重新启动，请刷新核对。')).toHaveAttribute('role', 'alert');
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.create')).toBe(false);
+    await user.click(screen.getByRole('tab', { name: '检查结果' }));
+    expect(within(screen.getByLabelText('逐 Case 前后对比')).getAllByRole('listitem')).toHaveLength(4);
+  });
+
+  it('creates a full-trust bounded experiment in the selected candidate workspace without a second approval', async () => {
     const transport = new MockControlTransport({
       pickedFiles: [{ id: 'workspace', name: 'candidate', mimeType: 'inode/directory', byteSize: 0, path: '/workspace/candidate' }],
       routes: {
         'agent.eval-lab.runs': response,
         'agent.roles.list': { items: [persona('companion-present-v1', 'Agent 1'), persona('companion-firstlight-v1', 'Agent 2')] },
-        'agent.rooms.create': { ok: true, room: { id: 'room-candidate-1', title: 'Agent Lab · 新候选 · EnterpriseOps CSM workflow', participants: [] } },
+        'agent.rooms.create': { ok: true, room: { id: 'room-candidate-1', title: 'Agent Lab · 新候选 · EnterpriseOps CSM workflow', ownerAppId: 'extension:agent-lab', surfaceKey: 'candidate.enterpriseops-csm-v2', participants: [] } },
         'agent.room.message': { ok: true },
         'agent.rooms.list': { ok: true, items: [] },
         'agent.eval-lab.evidence': { schemaVersion: 'rag-ime.eval-lab-evidence.v1', ok: true, source: { available: false, label: 'none', runCount: 0, sessionCount: 0, transcriptCount: 0, transcriptBytes: 0 }, runs: [], total: 0 },
@@ -1745,13 +1942,16 @@ describe('Agent Lab', () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature /></PawOsDesktopProvider>
+          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature initialPage="overview" /></PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
     );
 
     await user.click(await screen.findByRole('button', { name: '查看完整报告' }));
-    await user.click(screen.getByRole('button', { name: '测试新方案' }));
+    await user.click(screen.getByRole('tab', { name: '实验工作区' }));
+    await user.click(screen.getByRole('tab', { name: '设置实验' }));
+    await user.click(screen.getByRole('button', { name: '选择候选目录' }));
+    await user.click(screen.getByRole('button', { name: '开始实验' }));
     expect(transport.filePickCalls[0]).toMatchObject({ purpose: 'workspace-root', selection: 'directory', multiple: false });
     expect(screen.queryByRole('checkbox', { name: /我已核对以上六项/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '确认并创建候选 Room' })).not.toBeInTheDocument();
@@ -1761,21 +1961,22 @@ describe('Agent Lab', () => {
       workspaceRoots: ['/workspace/candidate'],
       permissionPolicy: {
         schemaVersion: 'rag-ime.room-permission-policy.v1',
-        room: { executionMode: 'workspace_managed' },
+        room: { executionMode: 'full_trust' },
         partner: { executionMode: 'inherit' },
         toolAgent: { executionMode: 'inherit' },
       },
-      workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
       ownerAppId: 'extension:agent-lab',
     });
     expect(create?.body).not.toHaveProperty('executionMode');
     const scenarioPrompt = String((create?.body as Record<string, unknown>)?.scenarioPrompt);
-    expect(scenarioPrompt).toContain('点击“测试新方案”并选定 workspace，即构成本次 Validation dispatch 授权；无需二次批准，直接执行。');
-    expect(scenarioPrompt).toContain('Validation only');
-    expect(scenarioPrompt).toContain('不得读取或运行 Held-out');
-    expect(scenarioPrompt).toContain('不得安装、发布或触发工作区之外的外部副作用');
+    expect(scenarioPrompt).toContain('用户提交本实验设置即授权这次有界 Validation');
+    expect(scenarioPrompt).toContain('agentLabDispatch=');
+    expect(scenarioPrompt).toContain('candidate_copy_required');
+    expect(scenarioPrompt).toContain('agent_observed');
+    expect(scenarioPrompt).toContain('Held-out 保持封存');
     const dispatch = transport.requests.find(({ request }) => request.pathId === 'agent.room.message')?.request;
-    expect(String((dispatch?.body as Record<string, unknown>)?.message)).toContain('无需二次批准，直接执行');
+    expect(String((dispatch?.body as Record<string, unknown>)?.message)).toContain('在已授权范围直接推进，不重复确认');
   });
 
   it('renders an experiment ledger even when no Session run has been imported yet', async () => {
@@ -1789,7 +1990,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={() => undefined}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1814,7 +2015,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={() => undefined}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1853,7 +2054,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={() => undefined}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1892,7 +2093,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={() => undefined}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,
@@ -1950,7 +2151,7 @@ describe('Agent Lab', () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ControlTransportProvider transport={transport}>
           <PawOsDesktopProvider openWindow={() => undefined}>
-            <EvalLabFeature />
+            <EvalLabFeature initialPage="overview" />
           </PawOsDesktopProvider>
         </ControlTransportProvider>
       </QueryClientProvider>,

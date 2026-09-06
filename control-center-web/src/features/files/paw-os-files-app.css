@@ -19,8 +19,8 @@
 
    Cross-owner contracts pinned by tests (do not "clean up"):
    - `--color-canvas: #f4f6f8` stays a literal light fallback.
-   - `.paw-files-preview` keeps its true paper-white `background: #fff` even
-     when the shell tints the surrounding chrome.
+   - `.paw-files-preview` pairs the shell's paper surface and text tokens;
+     the standalone fallback remains white with dark text.
    - Narrow behaviour lives in `@container` queries, never `@media`, because
      the App reflows with its window, not the viewport. Three containers,
      each queried by the surface that actually owns the width: `paw-files`
@@ -61,7 +61,7 @@
   --color-paper: #fff;
   --color-surface: #fff;
   --color-chrome: #eef1f5;
-  --color-text: #1d1d1f;
+  --color-text: var(--paw-control-ink, #1d1d1f);
   --color-text-secondary: #5d6470;
   --color-text-tertiary: #858c97;
   --color-accent: var(--paw-app-accent, var(--paw-accent, #2563eb));
@@ -139,7 +139,7 @@
 .paw-window-titlebar[data-window-chrome='files-tools'] {
   --color-paper: #fff;
   --color-surface: #fff;
-  --color-text: #1d1d1f;
+  --color-text: var(--paw-control-ink, #1d1d1f);
   --color-text-secondary: #5d6470;
   --color-text-tertiary: #858c97;
   --color-border: rgb(29 29 31 / 10%);
@@ -834,18 +834,22 @@ i.paw-files-tree__disclosure {
 /* The reader is its own container: in the split layout it is a good deal
    narrower than the App, so its header density has to follow the pane. */
 .paw-files-preview {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
-  background: #fff;
+  background: var(--color-paper);
+  color: var(--color-text);
   container: paw-files-reader / inline-size;
 }
 
-/* Header and the bounded-read receipt are fixed bands; the body between them
-   is the only row that gives ground, so shortening the window can never push
-   an action out of the frame. */
+/* Reader bands share one definite-height column. The collaboration panel can
+   use a percentage cap without an auto grid track consuming the whole reader. */
+.paw-files-preview > :is(header, .paw-files-preview__copy-error, .paw-files-preview__more) {
+  flex: 0 0 auto;
+}
+
 .paw-files-preview > header {
   display: flex;
   min-width: 0;
@@ -1057,15 +1061,17 @@ i.paw-files-tree__disclosure {
 }
 
 /* -------------------------------------------------------------------------
-   Reader body. The shared code/diff/Markdown/HTML surfaces keep their own
-   colour ownership; Files only sizes and frames them.
+   Reader body. Markdown inherits the same themed paper/text pair as its
+   frame. Shared code/diff and authored HTML retain their own colour pairs.
    ------------------------------------------------------------------------- */
 .paw-files-preview__body {
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  background: #fff;
+  background: var(--color-paper);
+  color: var(--color-text);
   scrollbar-color: color-mix(in srgb, var(--paw-files-ink) 18%, transparent) transparent;
 }
 
@@ -1195,8 +1201,8 @@ i.paw-files-tree__disclosure {
    invitation rather than clipping it against the status bar. */
 .paw-files-preview__empty {
   display: grid;
+  flex: 1 1 auto;
   min-height: 0;
-  grid-row: 1 / -1;
   place-content: center;
   justify-items: center;
   gap: 8px;
@@ -1285,6 +1291,7 @@ i.paw-files-tree__disclosure {
 
 .paw-files-preview__empty > span {
   max-width: 34ch;
+  color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.55;
 }

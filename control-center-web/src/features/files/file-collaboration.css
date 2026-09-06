@@ -1,0 +1,66 @@
+.paw-files-collaboration {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  max-height: min(45%, 360px);
+  min-height: 0;
+  min-width: 0;
+  border-top: 1px solid var(--paw-files-control-line, #aeb4bd);
+  color: var(--paw-files-control-ink, #171a21);
+  background: var(--paw-files-control-bg, #fff);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.paw-files-collaboration button,
+.paw-files-collaboration select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--paw-files-control-h, 32px);
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--paw-files-control-line, #aeb4bd);
+  border-radius: var(--paw-files-control-radius, 8px);
+  padding: 5px 9px;
+  background: var(--paw-files-control-bg, #fff);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.paw-files-collaboration button:disabled { opacity: .55; cursor: default; }
+.paw-files-collaboration :is(button, select, summary):focus-visible { outline: 2px solid var(--paw-files-focus-line, #3270df); outline-offset: 2px; }
+.paw-files-collaboration button:hover:not(:disabled) { background: color-mix(in srgb, var(--paw-files-control-ink, #171a21) 6%, var(--paw-files-control-bg, #fff)); }
+.paw-files-collaboration button.paw-files-collaboration__toggle { flex-shrink: 0; width: 100%; justify-content: space-between; border: 0; border-radius: 0; padding: 12px 14px; }
+.paw-files-collaboration__toggle > span { display: grid; gap: 2px; }
+.paw-files-collaboration__toggle small { font-size: 11px; font-weight: 400; }
+.paw-files-collaboration svg { flex-shrink: 0; }
+.paw-files-collaboration__toggle svg.is-expanded { transform: rotate(180deg); }
+.paw-files-collaboration__body { display: grid; gap: 16px; min-height: 0; padding: 0 14px 16px; overflow-y: auto; overscroll-behavior: contain; }
+.paw-files-collaboration :is(h3, h4, p) { margin: 0; color: inherit; }
+.paw-files-collaboration h3 { font-size: 13px; font-weight: 600; }
+.paw-files-collaboration h4 { margin: 8px 0 4px; font-size: 12px; font-weight: 500; }
+.paw-files-collaboration__note, .paw-files-collaboration__toggle small { color: color-mix(in srgb, var(--paw-files-control-ink, #171a21) 75%, var(--paw-files-control-bg, #fff)); }
+.paw-files-collaboration__group, .paw-files-collaboration__access { display: grid; min-width: 0; gap: 8px; }
+.paw-files-collaboration__toolbar, .paw-files-collaboration__links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.paw-files-collaboration__toolbar > p { flex: 1 1 200px; }
+.paw-files-collaboration__kind { font-size: 10px; flex-shrink: 0; opacity: .72; }
+.paw-files-collaboration__list, .paw-files-collaboration__operations { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.paw-files-collaboration__list > li { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--paw-files-control-line, #aeb4bd); border-radius: 8px; min-width: 0; }
+.paw-files-collaboration__chooser { display: grid; gap: 4px; min-width: 0; }
+.paw-files-collaboration__chooser select { display: block; width: 100%; text-overflow: ellipsis; }
+.paw-files-collaboration__operations > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 12px; }
+.paw-files-collaboration__operations strong { white-space: nowrap; font-weight: 500; }
+.paw-files-collaboration__operations time { font-size: 11px; }
+.paw-files-collaboration__operations [data-current="true"] { padding-left: 9px; border-left: 2px solid var(--paw-files-focus-line, #3270df); }
+.paw-files-collaboration__workspace { min-width: 0; padding-top: 8px; border-top: 1px solid var(--paw-files-control-line, #aeb4bd); }
+.paw-files-collaboration__workspace summary { min-height: 32px; cursor: pointer; }
+.paw-files-collaboration__workspace[open] > p { margin-bottom: 6px; }
+@media (max-width: 480px) {
+  .paw-files-collaboration__body { padding-inline: 10px; }
+  .paw-files-collaboration__list > li { padding: 8px; }
+}

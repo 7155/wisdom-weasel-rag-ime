@@ -2093,6 +2093,72 @@ describe('RoomEventReducer', () => {
     });
   });
 
+  it.each(['live', 'snapshot', 'conversation'] as const)(
+    'settles unfinished dispatches from an applied Root cancellation receipt during %s',
+    (mode) => {
+      // The initial moderator dispatch can have no individual terminal while
+      // a later wake and Partner have already finished. The cancellation owner
+      // publishes one whole-Root receipt after every execution surface stops.
+      const events = [
+        wireRoomEvent(1, 'route_decision', { dispatchId: 'initial', targetParticipantId: 'participant-1' }),
+        wireRoomEvent(2, 'route_decision', { dispatchId: 'wake', targetParticipantId: 'participant-1' }),
+        wireRoomEvent(3, 'turn_completed', { dispatchId: 'wake', status: 'completed' }),
+        {
+          ...wireRoomEvent(4, 'participant_status', {
+            status: 'cancellation_applied',
+            rootId: 'room-turn-1',
+            cancellationReceiptId: 'room-cancel-1',
+            pendingTargets: [],
+            surfaces: { session: { state: 'terminated' }, provider: { state: 'terminated' } },
+          }),
+          participantId: null,
+          sourceSessionId: '',
+        },
+      ];
+      const initial = createRoomProjection('room-1');
+      const state = mode === 'live'
+        ? reduceRoomEvents(initial, events.map(parseRoomEvent))
+        : mode === 'snapshot'
+          ? replayRoomEventSnapshot(initial, parseRoomEventSnapshot(roomSnapshotFixture(events)))
+          : replayRoomConversationSnapshot(initial, parseRoomConversationSnapshot(
+            roomConversationSnapshotFixture(events, 4, 0),
+          ));
+
+      expect(state.turnsById['room-turn-1']).toMatchObject({
+        status: 'aborted',
+        terminalDispatchIds: ['initial', 'wake'],
+        abortedDispatchIds: ['initial'],
+        rootTerminalAtMs: 40,
+      });
+      const afterLateActivity = reduceRoomEvent(state, roomEvent(5, 'participant_activity', {
+        dispatchId: 'initial', sourceEventType: 'tool_started', toolCallId: 'late-call',
+      })).state;
+      expect(afterLateActivity.turnsById['room-turn-1'].status).toBe('aborted');
+      expect(Object.values(afterLateActivity.activitiesById).some((activity) => activity.status === 'running')).toBe(false);
+    },
+  );
+
+  it.each([
+    { status: 'cancellation_pending', pendingTargets: ['provider'] },
+    { status: 'cancellation_applied', pendingTargets: ['provider'] },
+    { status: 'cancellation_applied', rootId: 'another-root' },
+    { status: 'cancellation_applied', cancellationReceiptId: '' },
+  ])('does not close a Root from an incomplete or mismatched cancellation receipt: %j', (override) => {
+    const state = reduceRoomEvents(createRoomProjection('room-1'), [
+      roomEvent(1, 'route_decision', { dispatchId: 'initial', targetParticipantId: 'participant-1' }),
+      parseRoomEvent({
+        ...wireRoomEvent(2, 'participant_status', {
+          rootId: 'room-turn-1',
+          cancellationReceiptId: 'room-cancel-1', pendingTargets: [], ...override,
+        }),
+        participantId: null,
+        sourceSessionId: '',
+      }),
+    ]);
+    expect(state.turnsById['room-turn-1'].status).toBe('running');
+    expect(state.turnsById['room-turn-1'].terminalDispatchIds).toEqual([]);
+  });
+
   it('settles an interrupted tool activity when its Root is aborted', () => {
     const events = [
       roomEvent(1, 'route_decision', {

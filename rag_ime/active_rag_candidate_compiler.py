@@ -8,6 +8,7 @@ from typing import Iterable
 from .deepseek_completion import CompletionCandidateDelta
 from .active_rag_models import ActiveRagEvidence, ActiveRagFrame
 from .text_utils import compact_whitespace
+from .input_task import SELECTION_OPERATIONS, preserve_document_layout
 
 
 @dataclass(frozen=True)
@@ -26,18 +27,23 @@ def compile_active_rag_candidates(
     selected_text: str = "",
     max_candidates: int = 5,
     max_chars: int = 0,
+    operation: str = "",
 ) -> tuple[ActiveRagCandidate, ...]:
     selected = compact_whitespace(selected_text)
     char_limit = _candidate_char_limit(max_chars)
     seen: set[str] = set()
     result: list[ActiveRagCandidate] = []
     for delta in deltas:
+        task_operation = operation or str(delta.metadata.get("inputTaskOperation") or "")
         raw_text = _preserve_paragraph_layout(delta.text)
-        text = _fit_active_rag_candidate_text(raw_text, max_chars=char_limit)
-        if not _active_rag_candidate_allowed(text, selected_text=selected, seen=seen, max_chars=char_limit):
+        text = raw_text if task_operation in SELECTION_OPERATIONS else _fit_active_rag_candidate_text(raw_text, max_chars=char_limit)
+        if not _active_rag_candidate_allowed(text, selected_text="" if task_operation in SELECTION_OPERATIONS else selected, seen=seen, max_chars=0 if task_operation in SELECTION_OPERATIONS else char_limit):
             continue
         seen.add(compact_whitespace(text).lower())
         metadata = dict(delta.metadata)
+        if task_operation:
+            metadata["inputTaskOperation"] = task_operation
+            metadata["unchanged"] = compact_whitespace(text) == selected
         if text != raw_text:
             metadata["lengthGoverned"] = True
             metadata["rawTextChars"] = len(raw_text)
@@ -46,7 +52,7 @@ def compile_active_rag_candidates(
             ActiveRagCandidate(
                 candidate_id=f"active-rag:{_short_id(text)}",
                 text=text,
-                insert_text=_fit_active_rag_candidate_text(delta.insert_text or text, max_chars=char_limit),
+                insert_text=(_preserve_paragraph_layout(delta.insert_text or text) if task_operation in SELECTION_OPERATIONS else _fit_active_rag_candidate_text(delta.insert_text or text, max_chars=char_limit)),
                 source_type=delta.source_type,
                 source_lane=delta.source_lane,
                 metadata={**metadata, "activeRag": True},
@@ -229,18 +235,7 @@ def re_split_candidate_segments(text: str) -> list[str]:
 
 
 def _preserve_paragraph_layout(text: str) -> str:
-    value = str(text or "").replace("\\n", "\n").replace("\\r", "\r").replace("\r\n", "\n").replace("\r", "\n")
-    lines = [compact_whitespace(line) for line in value.split("\n")]
-    while lines and not lines[0]:
-        lines.pop(0)
-    while lines and not lines[-1]:
-        lines.pop()
-    result: list[str] = []
-    for line in lines:
-        if not line and result and not result[-1]:
-            continue
-        result.append(line)
-    return "\n".join(result).strip()
+    return preserve_document_layout(text)
 
 
 def _display_lane(evidence: ActiveRagEvidence) -> str:

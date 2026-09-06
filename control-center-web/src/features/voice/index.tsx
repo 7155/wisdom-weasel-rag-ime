@@ -149,6 +149,7 @@ export function VoiceFeature() {
   const hotwordDirty = hotwordsEnabled !== booleanValue(voiceSettings.hotwordsEnabled)
     || JSON.stringify(hotwordDraft.words) !== JSON.stringify(savedHotwords);
   const serviceDirty = provider !== (configuredProvider || 'native_streaming') || hotkey !== configuredHotkey;
+  const settingsUnavailable = queries.settings.isPending || Boolean(queries.settings.error);
   const selectedProvider = providers.find((item) => item.value === provider) ?? providers[0];
   const activeProvider = providers.find(
     (item) => item.value === (configuredProvider || 'native_streaming'),
@@ -170,9 +171,9 @@ export function VoiceFeature() {
     && typeof queries.transport.runVoiceAction === 'function';
   const agentRunning = booleanValue(voiceAgent.ok) || booleanValue(valueAt(voiceControl, 'agent.running'));
   const runtimeStatusUnavailable = Boolean(queries.runtime.error);
+  const runtimeStatusPending = queries.runtime.isPending || runtimeStatusUnavailable;
   const error = queries.capabilities.error as Error | null;
-  const pending = queries.capabilities.isPending
-    || (queries.modelCatalogSupported && queries.modelCatalog.isPending);
+  const pending = queries.capabilities.isPending;
   const refreshing = queries.settings.isFetching
     || queries.schema.isFetching
     || queries.runtime.isFetching
@@ -251,12 +252,14 @@ export function VoiceFeature() {
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection title="准备情况">
-          <MetricStrip items={[
+          <div className="voice-readiness">
+            <MetricStrip items={[
             { label: '听写服务', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : agentRunning ? '运行中' : '未运行', detail: runtimeStatusUnavailable ? '暂时无法读取本机听写服务状态' : stringValue(valueAt(voiceControl, 'agent.statusText')) || '随时按住快捷键开始听写', icon: Waves, tone: agentRunning && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '麦克风', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : permissionLabel(microphone), detail: runtimeStatusUnavailable ? '暂时无法读取系统授权' : '需要系统授权', icon: Mic, tone: booleanValue(microphone.ok) && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '辅助功能', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : permissionLabel(accessibility), detail: runtimeStatusUnavailable ? '暂时无法读取系统授权' : '用于将文字写回当前应用', icon: Shield, tone: booleanValue(accessibility.ok) && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '连接信息', value: credentialState.label, detail: '按转写服务分别保存在钥匙串', icon: KeyRound, tone: credentialState.tone },
-          ]} />
+            ]} />
+          </div>
           <InlineNotice title="隐私保护" tone="info">页面不会显示已保存的密钥或请求头。没有取得明确状态时，相关操作保持关闭。</InlineNotice>
           {queries.runtime.error ? (
             <div className="voice-runtime-issue">
@@ -271,26 +274,26 @@ export function VoiceFeature() {
             <div aria-labelledby="voice-agent-actions-label" className="voice-native-action-group" role="group">
               <span id="voice-agent-actions-label">听写服务</span>
               <Button
-                aria-label={agentRunning ? '停止听写服务' : '启动听写服务'}
+                aria-label={runtimeStatusPending ? '等待听写状态' : agentRunning ? '停止听写服务' : '启动听写服务'}
                 aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined}
-                disabled={!nativeActionsAvailable}
+                disabled={!nativeActionsAvailable || runtimeStatusPending || voiceAction.isPending}
                 leadingIcon={agentRunning ? <Square size={14} /> : <Play size={14} />}
                 loading={voiceAction.isPending && ['start_agent', 'stop_agent'].includes(voiceAction.variables ?? '')}
                 onClick={() => voiceAction.mutate(agentRunning ? 'stop_agent' : 'start_agent')}
                 size="small"
                 variant="primary"
               >
-                {agentRunning ? '停止听写' : '启动听写'}
+                {runtimeStatusPending ? '等待听写状态' : agentRunning ? '停止听写' : '启动听写'}
               </Button>
             </div>
             <div aria-labelledby="voice-microphone-actions-label" className="voice-native-action-group" role="group">
               <span id="voice-microphone-actions-label">麦克风</span>
-              <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable || !agentRunning} leadingIcon={<Mic size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_microphone_permission'} onClick={() => voiceAction.mutate('request_microphone_permission')} size="small">请求权限</Button>
+              <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable || runtimeStatusPending || !agentRunning || voiceAction.isPending} leadingIcon={<Mic size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_microphone_permission'} onClick={() => voiceAction.mutate('request_microphone_permission')} size="small">请求权限</Button>
               <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_microphone_settings'} onClick={() => voiceAction.mutate('open_microphone_settings')} size="small" variant="quiet">打开设置</Button>
             </div>
             <div aria-labelledby="voice-accessibility-actions-label" className="voice-native-action-group" role="group">
               <span id="voice-accessibility-actions-label">辅助功能</span>
-              <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable || !agentRunning} leadingIcon={<Shield size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_accessibility_permission'} onClick={() => voiceAction.mutate('request_accessibility_permission')} size="small">请求权限</Button>
+              <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable || runtimeStatusPending || !agentRunning || voiceAction.isPending} leadingIcon={<Shield size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_accessibility_permission'} onClick={() => voiceAction.mutate('request_accessibility_permission')} size="small">请求权限</Button>
               <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_accessibility_settings'} onClick={() => voiceAction.mutate('open_accessibility_settings')} size="small" variant="quiet">打开设置</Button>
             </div>
           </div>
@@ -308,14 +311,14 @@ export function VoiceFeature() {
           <div className="voice-service-layout">
             <div className="voice-service-choice">
               <strong>转写引擎</strong>
-              <SegmentedControl aria-label="语音转写引擎" items={providers} onValueChange={setProvider} value={provider} />
+              <SegmentedControl aria-label="语音转写引擎" disabled={settingsUnavailable} items={providers} onValueChange={setProvider} value={provider} />
               <p className="mgmt-muted">{selectedProvider.description}</p>
               <strong>按住说话</strong>
-              <SegmentedControl aria-label="语音快捷键" items={hotkeys} onValueChange={setHotkey} value={hotkey} />
+              <SegmentedControl aria-label="语音快捷键" disabled={settingsUnavailable} items={hotkeys} onValueChange={setHotkey} value={hotkey} />
             </div>
             <ManagementMutationWorkflow
               availability={mutationBoundary.availability(
-                runtimeRevision === null
+                settingsUnavailable || runtimeRevision === null
                   ? '当前语音设置尚未同步，刷新后才能继续保存。'
                   : !serviceDirty
                     ? '选择不同的服务或快捷键后才能保存。'
@@ -361,7 +364,10 @@ export function VoiceFeature() {
               title="保存转写引擎与按键"
             />
           </div>
-          {queries.settings.error ? <InlineNotice title="当前设置读取失败" tone="warning">暂时无法核对正在使用的转写引擎，请刷新后重试。</InlineNotice> : null}
+          {queries.settings.error ? <div className="voice-runtime-issue">
+            <InlineNotice title="当前设置读取失败" tone="warning">暂时无法核对正在使用的转写引擎，输入草稿保持不变。</InlineNotice>
+            <Button loading={queries.settings.isFetching} onClick={() => void queries.settings.refetch()} size="small">重试语音设置</Button>
+          </div> : null}
         </ManagementSection>
 
         <ManagementSection title="连接信息" description="连接当前转写服务所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
@@ -369,18 +375,18 @@ export function VoiceFeature() {
             <div className="voice-connection-details__content">
           <div className="voice-credential-grid">
             <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有连接信息。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="访问令牌">
-              <Input autoComplete="new-password" id="voice-access-token" onChange={(event) => setCredentialDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder={credentialState.label === '已配置' ? '已配置，留空保持不变' : '输入访问令牌'} type="password" value={credentialDraft.accessToken} />
+              <Input autoComplete="new-password" disabled={settingsUnavailable} id="voice-access-token" onChange={(event) => setCredentialDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder={credentialState.label === '已配置' ? '已配置，留空保持不变' : '输入访问令牌'} type="password" value={credentialDraft.accessToken} />
             </Field>
             {provider === 'native_streaming' ? (
               <>
-                <Field htmlFor="voice-app-id" label="应用编号"><Input id="voice-app-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, appId: event.target.value }))} value={credentialDraft.appId} /></Field>
-                <Field htmlFor="voice-resource-id" label="资源编号"><Input id="voice-resource-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, resourceId: event.target.value }))} value={credentialDraft.resourceId} /></Field>
+                <Field htmlFor="voice-app-id" label="应用编号"><Input disabled={settingsUnavailable} id="voice-app-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, appId: event.target.value }))} value={credentialDraft.appId} /></Field>
+                <Field htmlFor="voice-resource-id" label="资源编号"><Input disabled={settingsUnavailable} id="voice-resource-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, resourceId: event.target.value }))} value={credentialDraft.resourceId} /></Field>
               </>
             ) : (
               <>
-                <Field htmlFor="voice-endpoint" label={provider === 'realtime_websocket' ? '实时连接地址' : '转写服务地址'}><Input id="voice-endpoint" onChange={(event) => setCredentialDraft((current) => ({ ...current, endpoint: event.target.value }))} value={credentialDraft.endpoint} /></Field>
-                <Field htmlFor="voice-model" label="转写模型"><Input id="voice-model" onChange={(event) => setCredentialDraft((current) => ({ ...current, model: event.target.value }))} value={credentialDraft.model} /></Field>
-                <Field description="按服务说明填写；保存后不会重新显示。" htmlFor="voice-headers" label="附加连接信息（JSON）"><TextArea id="voice-headers" onChange={(event) => setCredentialDraft((current) => ({ ...current, headersJson: event.target.value }))} placeholder='{"X-Project":"..."}' rows={4} value={credentialDraft.headersJson} /></Field>
+                <Field htmlFor="voice-endpoint" label={provider === 'realtime_websocket' ? '实时连接地址' : '转写服务地址'}><Input disabled={settingsUnavailable} id="voice-endpoint" onChange={(event) => setCredentialDraft((current) => ({ ...current, endpoint: event.target.value }))} value={credentialDraft.endpoint} /></Field>
+                <Field htmlFor="voice-model" label="转写模型"><Input disabled={settingsUnavailable} id="voice-model" onChange={(event) => setCredentialDraft((current) => ({ ...current, model: event.target.value }))} value={credentialDraft.model} /></Field>
+                <Field description="按服务说明填写；保存后不会重新显示。" htmlFor="voice-headers" label="附加连接信息（JSON）"><TextArea disabled={settingsUnavailable} id="voice-headers" onChange={(event) => setCredentialDraft((current) => ({ ...current, headersJson: event.target.value }))} placeholder='{"X-Project":"..."}' rows={4} value={credentialDraft.headersJson} /></Field>
               </>
             )}
           </div>
@@ -390,7 +396,7 @@ export function VoiceFeature() {
           {credentialSave.error ? <InlineNotice title="账号保存失败" tone="danger">{publicErrorText(credentialSave.error, '账号信息没有保存完成。')}</InlineNotice> : null}
           {credentialSave.isSuccess ? <InlineNotice title="账号已安全保存" tone="success">访问令牌已经写入 macOS 钥匙串，页面没有读取或显示保存值。</InlineNotice> : null}
           <div className="voice-credential-actions">
-            <Button disabled={!credentials.supported || serviceDirty} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} variant="primary">安全保存账号</Button>
+            <Button disabled={!credentials.supported || serviceDirty || settingsUnavailable} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} variant="primary">安全保存账号</Button>
           </div>
             </div>
           </Disclosure>
@@ -408,7 +414,7 @@ export function VoiceFeature() {
                 description={hotwordsSupported
                   ? '关闭时保留词表，但不会随识别请求发送。'
                   : '当前转写服务不支持本次专有词；切换到支持此功能的实时听写服务后，可继续使用现有词表。'}
-                disabled={!hotwordsSupported}
+                disabled={!hotwordsSupported || settingsUnavailable}
                 label="启用热词"
                 onCheckedChange={setHotwordsEnabled}
               />
@@ -416,7 +422,7 @@ export function VoiceFeature() {
                 <span>每行一个词</span>
                 <TextArea
                   aria-label="语音热词"
-                  disabled={!hotwordsSupported}
+                  disabled={!hotwordsSupported || settingsUnavailable}
                   onChange={(event) => setHotwordsText(event.target.value)}
                   placeholder={`例如：${identity.assistantName}`}
                   rows={7}
@@ -427,7 +433,7 @@ export function VoiceFeature() {
               {hotwordDraft.error ? <InlineNotice title="词表需要调整" tone="warning">{hotwordDraft.error}</InlineNotice> : null}
               <div className="voice-hotword-suggestions" aria-label="热词建议">
                 {suggestedHotwords.map((word) => (
-                  <button disabled={!hotwordsSupported} key={word} onClick={() => addSuggestedHotword(word)} type="button">
+                  <button disabled={!hotwordsSupported || settingsUnavailable} key={word} onClick={() => addSuggestedHotword(word)} type="button">
                     <Plus size={12} aria-hidden="true" />
                     {word}
                   </button>
@@ -437,7 +443,7 @@ export function VoiceFeature() {
                 availability={mutationBoundary.availability(
                   !hotwordsSupported
                     ? '当前转写服务不支持本次专有词。'
-                    : runtimeRevision === null
+                    : settingsUnavailable || runtimeRevision === null
                     ? '当前语音设置尚未同步，刷新后才能继续保存。'
                     : hotwordDraft.error
                       ? '请先修正上方词表。'
@@ -509,6 +515,14 @@ export function VoiceFeature() {
         </ManagementSection>
 
         <ManagementSection title="文字定稿" description="让临时听写在结束后替换为完整文字，避免重复或半句话残留。">
+          {queries.modelCatalogSupported && queries.modelCatalog.isPending ? (
+            <InlineNotice title="正在读取校对模型" tone="info">听写服务与已保存设置仍可查看。</InlineNotice>
+          ) : queries.modelCatalog.error ? (
+            <div className="voice-runtime-issue">
+              <InlineNotice title="校对模型读取失败" tone="warning">暂时无法确认可选模型，已保存的听写设置保持不变。</InlineNotice>
+              <Button loading={queries.modelCatalog.isFetching} onClick={() => void queries.modelCatalog.refetch()} size="small">重试校对模型</Button>
+            </div>
+          ) : null}
           <div className="mgmt-grid-2">
             <div className="mgmt-stack">
               <Field
@@ -522,6 +536,7 @@ export function VoiceFeature() {
               >
                 {queries.modelCatalogSupported && modelCatalog.models.length ? (
                   <Select
+                    disabled={settingsUnavailable || queries.modelCatalog.isPending || Boolean(queries.modelCatalog.error)}
                     id="voice-refinement-model"
                     onValueChange={changeRefinementModel}
                     options={[
@@ -540,7 +555,7 @@ export function VoiceFeature() {
                   />
                 ) : (
                   <StatusBadge
-                    label={queries.modelCatalogSupported ? '当前没有可用模型' : '暂时无法读取模型列表'}
+                    label={queries.modelCatalog.isPending && queries.modelCatalogSupported ? '等待模型列表' : queries.modelCatalog.error ? '模型状态未知' : queries.modelCatalogSupported ? '当前没有可用模型' : '暂时无法读取模型列表'}
                     tone="warning"
                   />
                 )}
@@ -552,6 +567,7 @@ export function VoiceFeature() {
               >
                 {queries.modelCatalogSupported && refinementThinkingLevels.length ? (
                   <Select
+                    disabled={settingsUnavailable || queries.modelCatalog.isPending || Boolean(queries.modelCatalog.error)}
                     id="voice-refinement-thinking"
                     onValueChange={setRefinementThinking}
                     options={refinementThinkingLevels.map((level) => ({
@@ -567,9 +583,9 @@ export function VoiceFeature() {
             </div>
             <ManagementMutationWorkflow
               availability={mutationBoundary.availability(
-                runtimeRevision === null
+                settingsUnavailable || runtimeRevision === null
                   ? '当前语音设置尚未同步，刷新后才能继续保存。'
-                  : !queries.modelCatalogSupported || !selectedRefinementModel
+                  : queries.modelCatalog.isPending || queries.modelCatalog.error || !queries.modelCatalogSupported || !selectedRefinementModel
                     ? '当前无法确认保守校对模型，请刷新模型列表。'
                     : !refinementThinkingLevels.includes(refinementThinking)
                       ? '当前模型不支持所选校对强度。'

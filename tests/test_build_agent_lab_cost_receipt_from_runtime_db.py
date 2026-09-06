@@ -17,6 +17,124 @@ from scripts.build_agent_lab_cost_receipt_from_runtime_db import _pricing, main
 
 
 class BuildAgentLabCostReceiptFromRuntimeDbTests(unittest.TestCase):
+    def _mixed_fixture(self, root: Path) -> tuple[Path, Path]:
+        first = self._runtime_fixture(root, name="candidate", provider="openai-codex", model="gpt-5.6-luna", rates=(0.2, 0.02, 1.2))
+        second = self._runtime_fixture(root, name="judge", provider="openai-codex", model="gpt-5.6-sol", rates=(5, 0.5, 30))
+        with closing(sqlite3.connect(first)) as conn, closing(sqlite3.connect(second)) as other:
+            first_usage = json.loads(conn.execute("SELECT metrics_json FROM agent_runtime_events").fetchone()[0])
+            first_usage.update(provider="openai-codex", model="gpt-5.6-luna")
+            conn.execute("UPDATE agent_runtime_events SET metrics_json = ?", (json.dumps(first_usage),))
+            conn.execute("INSERT INTO agent_sessions VALUES (?, ?)", other.execute("SELECT * FROM agent_sessions").fetchone())
+            second_usage = json.loads(other.execute("SELECT metrics_json FROM agent_runtime_events").fetchone()[0])
+            second_usage.update(provider="openai-codex", model="gpt-5.6-sol")
+            conn.execute("INSERT INTO agent_runtime_events VALUES (?, ?)", ("provider_request_failed", json.dumps(second_usage)))
+            conn.commit()
+        luna = self._pricing_fixture(root, name="candidate", provider="openai-codex", model="gpt-5.6-luna", rates=(0.2, 0.02, 1.2))
+        sol = self._pricing_fixture(root, name="judge", provider="openai-codex", model="gpt-5.6-sol", rates=(5, 0.5, 30))
+        payload = json.loads(luna.read_text())
+        payload["gpt"]["models"].extend(json.loads(sol.read_text())["gpt"]["models"])
+        luna.write_text(json.dumps(payload))
+        return first, luna
+
+    def test_all_models_separates_candidate_and_failed_judge_cost_without_private_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="private-runtime-cost-") as tmp:
+            root = Path(tmp)
+            database, pricing = self._mixed_fixture(root)
+            output = root / "mixed-receipt.json"
+            self.assertEqual(0, main(["--runtime-db", str(database), "--pricing-config", str(pricing), "--all-models", "--run-id", "mixed", "--published-date", "2026-09-01", "--output", str(output)]))
+            receipt = json.loads(output.read_text())
+            self.assertEqual("rag-ime.agent-lab-multi-model-cost-receipt.v1", receipt["schemaVersion"])
+            self.assertEqual("0.02184", receipt["aggregate"]["totalCostUsd"])
+            self.assertEqual(1, receipt["aggregate"]["failedRequestCount"])
+            self.assertEqual(["gpt-5.6-luna", "gpt-5.6-sol"], [r["pricingIdentity"]["model"] for r in receipt["perModel"]])
+            self.assertTrue(all(r["authority"] == "runtime_cost_reconciled" for r in receipt["perModel"]))
+            self.assertNotIn(str(root), json.dumps(receipt))
+            self.assertFalse(receipt["providerBillAvailable"])
+
+    def test_all_models_rejects_missing_failed_usage_and_unbound_model(self) -> None:
+        from scripts.build_agent_lab_cost_receipt_from_runtime_db import build_multi_model_cost_receipt
+        for field in ("usage", "model"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                database, pricing = self._mixed_fixture(root)
+                with closing(sqlite3.connect(database)) as conn:
+                    payload = json.loads(conn.execute("SELECT metrics_json FROM agent_runtime_events WHERE event_type='provider_request_failed'").fetchone()[0])
+                    payload.pop(field)
+                    conn.execute("UPDATE agent_runtime_events SET metrics_json=? WHERE event_type='provider_request_failed'", (json.dumps(payload),))
+                    conn.commit()
+                with self.assertRaises(SystemExit):
+                    build_multi_model_cost_receipt(database, pricing, run_id="mixed", published_date="2026-09-01")
+
+    def test_all_models_binds_real_db_usage_by_session_transcript_including_failed_events(self) -> None:
+        from scripts.build_agent_lab_cost_receipt_from_runtime_db import build_multi_model_cost_receipt
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database, pricing = self._mixed_fixture(root)
+            with closing(sqlite3.connect(database)) as conn:
+                conn.execute("ALTER TABLE agent_sessions ADD COLUMN id TEXT")
+                conn.execute("ALTER TABLE agent_runtime_events ADD COLUMN session_id TEXT")
+                conn.execute("UPDATE agent_sessions SET id=model_profile")
+                for row_id, raw in conn.execute("SELECT rowid, metrics_json FROM agent_runtime_events").fetchall():
+                    payload = json.loads(raw)
+                    identity = f"{payload.pop('provider')}/{payload.pop('model')}"
+                    conn.execute("UPDATE agent_runtime_events SET session_id=?, metrics_json=? WHERE rowid=?", (identity, json.dumps(payload), row_id))
+                conn.commit()
+            receipt = build_multi_model_cost_receipt(database, pricing, run_id="mixed", published_date="2026-09-01")
+            self.assertEqual("0.02184", receipt["aggregate"]["totalCostUsd"])
+            self.assertEqual(["matched", "matched"], [item["usageStatus"] for item in receipt["reconciliation"]])
+            self.assertEqual(1, receipt["aggregate"]["failedRequestCount"])
+
+    def test_all_models_reports_usage_difference_and_rejects_missing_pricing(self) -> None:
+        from scripts.build_agent_lab_cost_receipt_from_runtime_db import build_multi_model_cost_receipt
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database, pricing = self._mixed_fixture(root)
+            with closing(sqlite3.connect(database)) as conn:
+                payload = json.loads(conn.execute("SELECT metrics_json FROM agent_runtime_events WHERE event_type='provider_request_failed'").fetchone()[0])
+                payload["usage"]["output"] += 5
+                conn.execute("UPDATE agent_runtime_events SET metrics_json=? WHERE event_type='provider_request_failed'", (json.dumps(payload),))
+                conn.commit()
+            receipt = build_multi_model_cost_receipt(database, pricing, run_id="mixed", published_date="2026-09-01")
+            self.assertEqual("different", receipt["reconciliation"][1]["usageStatus"])
+            self.assertEqual("0.02184", receipt["aggregate"]["totalCostUsd"])
+            data = json.loads(pricing.read_text())
+            data["gpt"]["models"] = data["gpt"]["models"][:1]
+            pricing.write_text(json.dumps(data))
+            with self.assertRaisesRegex(SystemExit, "unique complete pricing"):
+                build_multi_model_cost_receipt(database, pricing, run_id="mixed", published_date="2026-09-01")
+
+    def test_all_models_rejects_missing_transcript_without_leaking_private_path(self) -> None:
+        from scripts.build_agent_lab_cost_receipt_from_runtime_db import build_multi_model_cost_receipt
+        with tempfile.TemporaryDirectory(prefix="private-cost-path-") as tmp:
+            root = Path(tmp)
+            database, pricing = self._mixed_fixture(root)
+            (root / "judge.jsonl").unlink()
+            with self.assertRaises(SystemExit) as failure:
+                build_multi_model_cost_receipt(database, pricing, run_id="mixed", published_date="2026-09-01")
+            self.assertNotIn(str(root), str(failure.exception))
+            self.assertNotIn("judge.jsonl", str(failure.exception))
+
+    def test_all_models_rejects_session_model_switch_without_per_request_db_identity(self) -> None:
+        from scripts.build_agent_lab_cost_receipt_from_runtime_db import build_multi_model_cost_receipt
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database, pricing = self._mixed_fixture(root)
+            candidate = root / "candidate.jsonl"
+            candidate.write_text(candidate.read_text() + (root / "judge.jsonl").read_text())
+            with closing(sqlite3.connect(database)) as conn:
+                conn.execute("ALTER TABLE agent_sessions ADD COLUMN id TEXT")
+                conn.execute("ALTER TABLE agent_runtime_events ADD COLUMN session_id TEXT")
+                conn.execute("DELETE FROM agent_sessions WHERE model_profile LIKE '%sol'")
+                conn.execute("UPDATE agent_sessions SET id='same-session'")
+                for row_id, raw in conn.execute("SELECT rowid, metrics_json FROM agent_runtime_events").fetchall():
+                    payload = json.loads(raw)
+                    payload.pop("provider")
+                    payload.pop("model")
+                    conn.execute("UPDATE agent_runtime_events SET session_id='same-session', metrics_json=? WHERE rowid=?", (json.dumps(payload), row_id))
+                conn.commit()
+            with self.assertRaisesRegex(SystemExit, "cannot be attributed"):
+                build_multi_model_cost_receipt(database, pricing, run_id="mixed", published_date="2026-09-01")
+
     def _lower_bound_request(self) -> dict[str, object]:
         pricing: dict[str, object] = {
             "provider": "openai-codex",

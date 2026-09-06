@@ -63,6 +63,8 @@ test('uses one fixed persistent PAW Browser profile and the built PAWOS entry', 
   assert.match(paths.frontendEntry, /control-center-web\/dist\/index\.html$/);
   assert.equal(paths.hostPidFile, path.join(paths.profilePath, 'PAWBrowserHost.pid'));
   assert.equal(paths.browserHistoryFile, path.join(paths.profilePath, 'PAWBrowserHost.history.json'));
+  assert.equal(paths.browserBookmarksFile, path.join(paths.profilePath, 'PAWBrowserHost.bookmarks.json'));
+  assert.equal(paths.browserDownloadsFile, path.join(paths.profilePath, 'PAWBrowserHost.downloads.json'));
   assert.equal(paths.browserExtensionsDir, path.join(paths.profilePath, 'Extensions'));
 });
 
@@ -167,9 +169,42 @@ test('preload reads and mutates Browser History through the host-owned IPC seam'
     ['paw-browser:remove-history-entry', 'history-entry'],
     ['paw-browser:clear-history'],
   ]);
-  assert.deepEqual(host.ipcListeners, [
+  assert.deepEqual(host.ipcListeners.filter(([, channel]) => channel.startsWith('paw-browser:')), [
     ['on', 'paw-browser:history-updated'],
     ['off', 'paw-browser:history-updated'],
+  ]);
+});
+
+test('preload exposes host-owned bookmarks and download operations through validated IPC IDs', async () => {
+  const preload = fs.readFileSync(path.resolve(import.meta.dirname, 'preload.cjs'), 'utf8');
+  const host = runPreload(preload, 'darwin');
+
+  await host.browserHost.getBookmarks();
+  await host.browserHost.addBookmark({ title: 'PAW docs', url: 'https://example.com/docs' });
+  await host.browserHost.removeBookmark('bookmark-1');
+  await host.browserHost.getDownloads();
+  await host.browserHost.openDownload('download-1');
+  await host.browserHost.revealDownload('download-1');
+  await host.browserHost.cancelDownload('download-1');
+  const unsubscribeBookmarks = host.browserHost.onBookmarksChanged(() => undefined);
+  const unsubscribeDownloads = host.browserHost.onDownloadsChanged(() => undefined);
+  unsubscribeBookmarks();
+  unsubscribeDownloads();
+
+  assert.deepEqual(host.ipcCalls, [
+    ['paw-browser:get-bookmarks'],
+    ['paw-browser:add-bookmark', { title: 'PAW docs', url: 'https://example.com/docs' }],
+    ['paw-browser:remove-bookmark', 'bookmark-1'],
+    ['paw-browser:get-downloads'],
+    ['paw-browser:open-download', 'download-1'],
+    ['paw-browser:reveal-download', 'download-1'],
+    ['paw-browser:cancel-download', 'download-1'],
+  ]);
+  assert.deepEqual(host.ipcListeners.filter(([, channel]) => channel.startsWith('paw-browser:')), [
+    ['on', 'paw-browser:bookmarks-updated'],
+    ['on', 'paw-browser:downloads-updated'],
+    ['off', 'paw-browser:bookmarks-updated'],
+    ['off', 'paw-browser:downloads-updated'],
   ]);
 });
 
@@ -204,6 +239,22 @@ test('Electron records History from guest navigation events rather than renderer
   assert.match(main, /guestContents\.on\('did-navigate'/);
   assert.match(main, /guestContents\.on\('did-navigate-in-page'/);
   assert.doesNotMatch(main, /paw-browser:record-history/);
+});
+
+test('Electron persists Browser bookmarks and tracks downloads through the main-owned partition', () => {
+  const main = fs.readFileSync(path.resolve(import.meta.dirname, 'main.mjs'), 'utf8');
+  assert.match(main, /session\.fromPartition\(browserPartition\)/);
+  assert.match(main, /persistentBrowserSession\.on\('will-download'/);
+  assert.match(main, /trackDownload\(paths\.browserDownloadsFile/);
+  assert.match(main, /onError: \(stage\) => console\.error\('Could not persist PAW Browser Download metadata', stage\)/);
+  assert.match(main, /paw-browser:get-bookmarks/);
+  assert.match(main, /paw-browser:add-bookmark/);
+  assert.match(main, /paw-browser:remove-bookmark/);
+  assert.match(main, /paw-browser:get-downloads/);
+  assert.match(main, /paw-browser:open-download/);
+  assert.match(main, /paw-browser:reveal-download/);
+  assert.match(main, /paw-browser:cancel-download/);
+  assert.match(main, /event\.sender !== mainWindow\?\.webContents/);
 });
 
 test('Electron exposes no external terminal launcher; Terminal remains a PAWOS PTY', () => {

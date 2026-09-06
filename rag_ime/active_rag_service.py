@@ -35,6 +35,7 @@ from .local_sqlite_core import LocalSqliteCoreClient
 from .prediction_status import thinking_animation_frame, thinking_animation_suffix
 from .runtime_flags import assert_deepseek_scene_allowed
 from .smart_rag_context_packet import build_active_rag_context_packet
+from .input_task import selection_source, selection_task_policy
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
 from .timeline_context import timeline_context_preferences, timeline_evidence_pack_from_core
 from .window_context import project_window_context_for_generation
@@ -179,6 +180,8 @@ class ActiveRagStartRequest:
     rag_enabled_lanes: tuple[tuple[str, bool], ...] = ()
     rag_lane_weights: tuple[tuple[str, float], ...] = ()
     window_context: dict[str, object] = field(default_factory=dict)
+    operation: str = ""
+    target_language: str = ""
 
 
 @dataclass
@@ -325,6 +328,9 @@ class ActiveRagService:
                     self._blocked_responses.pop(next(iter(self._blocked_responses)))
             return dict(response)
         _validate_selected_text_hash(request)
+        if request.operation:
+            selection_task_policy({"outputContract": {"operation": request.operation, "targetLanguage": request.target_language}})
+            selection_source(request.selected_text)
         session = ActiveRagSession(
             session_id=f"active-rag:{uuid.uuid4().hex[:16]}",
             request=request,
@@ -540,7 +546,13 @@ class ActiveRagService:
                 self._persist_session_trace_locked(session, phase="cancelled")
                 cancel = getattr(self.completion_provider, "cancel", None)
                 if callable(cancel):
-                    cancel(session.request.panel_session_id)
+                    model_request = session.diagnostics.get("modelRequest")
+                    provider_request_id = (
+                        compact_whitespace(str(model_request.get("surfaceRequestId") or ""))
+                        if isinstance(model_request, dict)
+                        else ""
+                    )
+                    cancel(provider_request_id or session.request.panel_session_id)
             return _session_payload(session) if session is not None else {"sessionId": session_id, "status": "missing"}
 
     def accept(
@@ -809,14 +821,14 @@ class ActiveRagService:
         retrieval_query = _resolved_active_rag_request_text(request)
         retrieval_query_source = (
             "selected_text"
-            if request.placement == "replace_selection" and compact_whitespace(request.selected_text)
+            if (request.operation or request.placement == "replace_selection") and compact_whitespace(request.selected_text)
             else (
                 "foreground_context"
                 if compact_whitespace(request.context or request.surrounding_before)
                 else "selected_text_fallback"
             )
         )
-        retrieval_allowed = self.core is not None and request.local_retrieval_allowed
+        retrieval_allowed = self.core is not None and request.local_retrieval_allowed and not request.operation
         if retrieval_allowed:
             try:
                 evidence = retrieve_active_rag_evidence(
@@ -841,7 +853,7 @@ class ActiveRagService:
             except Exception as exc:
                 if not retrieval_error:
                     retrieval_error = f"{type(exc).__name__}: {_safe_failure_reason(exc)}"
-        fallback_used = not _grounding_evidence(evidence) and bool(request.evidence_pack)
+        fallback_used = not request.operation and not _grounding_evidence(evidence) and bool(request.evidence_pack)
         result = (
             _merge_evidence(evidence, _evidence_from_pack(request.evidence_pack))
             if fallback_used
@@ -854,7 +866,7 @@ class ActiveRagService:
                 "called": retrieval_allowed,
                 "attempted": retrieval_allowed,
                 "coreAvailable": self.core is not None,
-                "skipReason": request.local_retrieval_skip_reason if not retrieval_allowed else "",
+                "skipReason": "selection_task" if request.operation else request.local_retrieval_skip_reason if not retrieval_allowed else "",
                 "primaryRawRetrievedCount": primary_raw_count,
                 "primaryRetrievedCount": primary_count,
                 "timelineRetrievedCount": timeline_count,
@@ -945,6 +957,11 @@ class ActiveRagService:
             ax_char_maximum=int(context_preferences.get("axCharMaximum") or 12000),
             window_context=request.window_context,
         )
+        if request.operation:
+            context_packet["outputContract"].update({
+                "operation": request.operation, "targetLanguage": request.target_language,
+            })
+            selection_task_policy(context_packet)
         packet_current_input = context_packet.get("currentInput") if isinstance(context_packet.get("currentInput"), dict) else {}
         injected_context = compact_whitespace(str(packet_current_input.get("committedTail") or effective_context))
         effective_context_meta["effectiveContextChars"] = len(injected_context)
@@ -1021,6 +1038,7 @@ class ActiveRagService:
             diagnostics["modelRequest"] = {
                 "provider": _provider_name(provider),
                 "model": _provider_model(provider),
+                "surfaceRequestId": surface_request_id,
                 "scene": "active_rag",
                 "attempted": True,
                 "completed": False,
@@ -1070,7 +1088,7 @@ class ActiveRagService:
 
         recovery_selected_text = (
             request.selected_text
-            if request.placement == "replace_selection" and len(compact_whitespace(request.selected_text)) >= 8
+            if request.operation or (request.placement == "replace_selection" and len(compact_whitespace(request.selected_text)) >= 8)
             else ""
         )
         recovery_context_packet = dict(context_packet)
@@ -1127,6 +1145,7 @@ class ActiveRagService:
                 selected_text=request.selected_text,
                 max_candidates=request.max_candidates,
                 max_chars=request.max_chars,
+                operation=request.operation,
             )
             if not candidates and not retry_attempted:
                 retry_attempted = True
@@ -1143,6 +1162,7 @@ class ActiveRagService:
                     selected_text=request.selected_text,
                     max_candidates=request.max_candidates,
                     max_chars=request.max_chars,
+                    operation=request.operation,
                 )
         except Exception as exc:
             if diagnostics is not None:
@@ -1244,6 +1264,7 @@ class ActiveRagService:
                 selected_text=session.request.selected_text,
                 max_candidates=1,
                 max_chars=session.request.max_chars,
+                operation=session.request.operation,
             )
             if not partial:
                 session.diagnostics["modelRequest"] = model_request
@@ -1305,6 +1326,10 @@ class ActiveRagService:
         provider was streaming.
         """
 
+        if session.request.operation:
+            # A complete sentence is not proof of a complete translation or
+            # summary. Keep the existing retry surface until a task settles.
+            return False
         visible_partials = tuple(
             candidate
             for candidate in session.candidates
@@ -1622,6 +1647,8 @@ def _sensitive_blocked_payload(*, session_id: str, reason: str) -> dict[str, obj
 def _resolved_active_rag_request_text(request: ActiveRagStartRequest) -> str:
     """Resolve the semantic request while keeping caret anchors subordinate."""
 
+    if request.operation:
+        return selection_source(request.selected_text)
     selected = compact_whitespace(request.selected_text)
     context = compact_whitespace(request.context or request.surrounding_before)
     if request.placement == "replace_selection" and selected:
@@ -2026,7 +2053,7 @@ def _deepseek_evidence_pack(
 
 
 def _session_payload(session: ActiveRagSession) -> dict[str, object]:
-    ready = session.status == "ready"
+    ready = session.status == "ready" and not _active_rag_worker_pending(session)
     elapsed_ms = max(0, now_ms() - session.created_at_ms)
     poll_after_ms = _active_rag_poll_after_ms(status=session.status, elapsed_ms=elapsed_ms)
     candidates = [
@@ -2085,8 +2112,17 @@ def _active_rag_progress_payload(session: ActiveRagSession) -> dict[str, object]
     )
     model = diagnostics.get("modelRequest") if isinstance(diagnostics.get("modelRequest"), dict) else {}
     retrying = bool(model.get("contentRetryAttempted")) and not bool(model.get("completed"))
-    if session.status == "ready":
-        stage = "ready"
+    worker_pending = _active_rag_worker_pending(session)
+    # A visible-timeout fallback is a UI result row, not producer settlement:
+    # the worker remains pending while the provider closes its open stage. Keep
+    # projecting that stage until the worker actually settles, otherwise the
+    # foreground card claims "ready" while generation is still in flight.
+    if session.status == "ready" and not worker_pending:
+        # Error fallback intentionally keeps the retriable UI row in ``ready``
+        # status, but its producer outcome is still failed. Project that
+        # terminal fact through the stage so the native card cannot present a
+        # transport failure as a successful generation.
+        stage = "error" if session.trace_outcome == "failed" else "ready"
     elif session.status in {"error", "cancelled", "stale_dropped"}:
         stage = session.status
     elif retrying:
@@ -2104,6 +2140,7 @@ def _active_rag_progress_payload(session: ActiveRagSession) -> dict[str, object]
     grounding = _grounding_evidence(session.evidence)
     return {
         "stage": stage,
+        "workerPending": worker_pending,
         "elapsedMs": max(0, now_ms() - session.created_at_ms),
         "context": {
             "foregroundChars": max(

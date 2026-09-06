@@ -20,7 +20,7 @@ import {
   Search,
   TriangleAlert,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { CodePreview } from '@/features/agent/file-preview/CodePreview';
 import { DiffPreview } from '@/features/agent/file-preview/DiffPreview';
@@ -32,6 +32,8 @@ import { EvidenceEchoUsage } from '@/features/evidence-echo/EvidenceEchoUsage';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '@/paw-os/shell/PawWindowChrome';
 import { writeClipboardText } from '@/platform/clipboard';
 import { SvgFilePreview } from './SvgFilePreview';
+import { canonicalWorkspaceReadPath, useWorkspaceTextEditor, type EditableWorkspacePreview } from './WorkspaceTextEditor';
+import { FileCollaborationPanel } from './FileCollaborationPanel';
 import './paw-os-files-app.css';
 
 interface WorkspaceEntry {
@@ -41,13 +43,17 @@ interface WorkspaceEntry {
   byteSize?: number;
 }
 
+interface SelectedWorkspaceFile extends WorkspaceEntry {
+  sessionId: string;
+}
+
 interface WorkspaceListing {
   items: WorkspaceEntry[];
   /** The directory holds more entries than the bounded list request returned. */
   limited: boolean;
 }
 
-interface WorkspacePreview {
+interface WorkspacePreview extends EditableWorkspacePreview {
   path: string;
   content: string;
   /** Total file size reported by the read route, in UTF-8 bytes. */
@@ -96,17 +102,22 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
   const transport = useControlTransport();
   const windowChromeTarget = usePawWindowChromeTarget();
   const requested = useMemo(() => requestedWorkspaceFile(initialRoute), [initialRoute]);
+  const requestedKey = JSON.stringify([requested.sessionId, requested.path]);
   const generationRef = useRef(0);
   const directoryGenerationRef = useRef(0);
+  const sessionsGenerationRef = useRef(0);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState('');
+  const [sessionSelection, setSessionSelection] = useState({ requestKey: requestedKey, sessionId: '' });
+  // A new file intent cannot borrow the previous selection while its Session
+  // catalog is loading. Manual selection remains valid for the same intent.
+  const selectedSessionId = sessionSelection.requestKey === requestedKey ? sessionSelection.sessionId : '';
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionError, setSessionError] = useState('');
   const [entries, setEntries] = useState<Record<string, WorkspaceListing>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [pathErrors, setPathErrors] = useState<Record<string, string>>({});
-  const [selectedFile, setSelectedFile] = useState<WorkspaceEntry | null>(null);
+  const [selectedFile, setSelectedFile] = useState<SelectedWorkspaceFile | null>(null);
   const [preview, setPreview] = useState<WorkspacePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
@@ -164,17 +175,53 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     [roots, selectedFile],
   );
   const previewReady = Boolean(preview && !previewLoading && !previewError);
+  const currentSessionIdRef = useRef(selectedSessionId);
+  useLayoutEffect(() => { currentSessionIdRef.current = selectedSessionId; }, [selectedSessionId]);
+  const onFileSaved = useCallback((snapshot: EditableWorkspacePreview & { sessionId: string }) => {
+    if (currentSessionIdRef.current !== snapshot.sessionId) return;
+    const matchesPath = (path: string) => path === snapshot.path || path === snapshot.canonicalPath;
+    setEntries((current) => Object.fromEntries(Object.entries(current).map(([directory, listing]) => [directory, {
+      ...listing,
+      items: listing.items.map((entry) => matchesPath(entry.path) ? { ...entry, byteSize: snapshot.byteSize } : entry),
+    }])));
+    setSelectedFile((current) => current?.sessionId === snapshot.sessionId && matchesPath(current.path)
+      ? { ...current, byteSize: snapshot.byteSize }
+      : current);
+  }, []);
+  const editor = useWorkspaceTextEditor(
+    selectedFile?.sessionId === selectedSessionId ? selectedFile : null,
+    previewReady && preview?.path === selectedFile?.path ? preview : null,
+    onFileSaved,
+  );
   // Loaded-line readout: honest for exactly the bytes on screen, never a
-  // whole-file claim while the read window is still partial.
+  // whole-file claim while the read window is still partial. A complete editor
+  // owns its current text independently of the earlier bounded preview.
   const previewLineCount = useMemo(() => {
-    if (!preview?.content || previewIsBinary) return 0;
-    const lines = preview.content.split('\n').length;
-    return preview.content.endsWith('\n') ? lines - 1 : lines;
-  }, [preview?.content, previewIsBinary]);
+    const content = editor.copyContent ?? preview?.content;
+    if (!content || (editor.copyContent === null && previewIsBinary)) return 0;
+    const lines = content.split('\n').length;
+    return content.endsWith('\n') ? lines - 1 : lines;
+  }, [editor.copyContent, preview?.content, previewIsBinary]);
   const previewRenderer = previewReady && preview ? rendererLabel(preview) : '';
   const directoriesRead = Object.keys(entries).length;
+  const sessionIssue = sessionError || (!sessionsLoading && sessionSelection.requestKey === requestedKey
+    && requested.sessionId && !selectedSessionId
+    ? '链接指定的 Session 未在当前列表中找到。请重试读取，或选择 Session 后浏览文件。'
+    : '');
+  const workspaceUnavailable = Boolean(sessionIssue && !selectedSessionId);
+  const workspacePending = !selectedSessionId && (sessionsLoading || (!sessionIssue && sessionSelection.requestKey !== requestedKey));
+  const emptyPreview = workspacePending
+    ? { title: '正在读取工作区', detail: '正在读取 Session 和它的工作目录。' }
+    : workspaceUnavailable
+      ? { title: '工作区暂时不可用', detail: '使用上方的重试重新读取 Session，再继续浏览工作目录。' }
+      : !sessions.length
+        ? { title: '还没有可浏览的 Session', detail: '在 Agent 中打开一个对话并选择工作目录，文件会出现在这里。' }
+        : !roots.length
+          ? { title: '这个 Session 尚未选择工作目录', detail: '在上方切换 Session，或到当前对话中选择工作目录。' }
+          : { title: '选择要检查的文件', detail: '从目录树打开一个文件，在这里阅读代码、Markdown、diff、SVG 或网页。' };
 
   const loadSessions = useCallback(async () => {
+    const requestGeneration = ++sessionsGenerationRef.current;
     setSessionsLoading(true);
     setSessionError('');
     try {
@@ -182,26 +229,32 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
         pathId: 'agent.sessions.list',
         query: { limit: 100, includeArchived: false },
       });
+      if (requestGeneration !== sessionsGenerationRef.current) return;
       const next = sessionItems(response);
       setSessions(next);
       const activeId = isRecord(response) && typeof response.activeSessionId === 'string'
         ? response.activeSessionId
         : '';
-      setSelectedSessionId((current) => {
-        if (next.some((session) => session.id === current && authorizedRoots(session).length)) return current;
-        // 深链指名的那段 Session 先于活跃 Session：它才是这个文件的授权来源。
-        if (requested.sessionId && next.some((session) => session.id === requested.sessionId && authorizedRoots(session).length)) {
-          return requested.sessionId;
+      setSessionSelection((current) => {
+        if (current.requestKey === requestedKey && next.some((session) => session.id === current.sessionId)) return current;
+        // A named Session is the file's authority, including when it has no
+        // workspace. Missing Sessions must never fall back to another scope.
+        if (requested.sessionId) {
+          return { requestKey: requestedKey, sessionId: next.find((session) => session.id === requested.sessionId)?.id ?? '' };
         }
-        if (next.some((session) => session.id === activeId && authorizedRoots(session).length)) return activeId;
-        return next.find((session) => authorizedRoots(session).length)?.id ?? next[0]?.id ?? '';
+        const sessionId = next.some((session) => session.id === current.sessionId)
+          ? current.sessionId
+          : next.find((session) => session.id === activeId && authorizedRoots(session).length)?.id
+            ?? next.find((session) => authorizedRoots(session).length)?.id ?? next[0]?.id ?? '';
+        return { requestKey: requestedKey, sessionId };
       });
     } catch (error) {
+      if (requestGeneration !== sessionsGenerationRef.current) return;
       setSessionError(publicError(error, 'Session 列表读取失败。'));
     } finally {
-      setSessionsLoading(false);
+      if (requestGeneration === sessionsGenerationRef.current) setSessionsLoading(false);
     }
-  }, [requested.sessionId, transport]);
+  }, [requested.sessionId, requestedKey, transport]);
 
   const loadDirectory = useCallback(async (path: string, force = false) => {
     if (!selectedSessionId || (!force && (loadingPaths.has(path) || entries[path]))) return;
@@ -231,7 +284,10 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     }
   }, [entries, loadingPaths, selectedSessionId, transport]);
 
-  useEffect(() => { void loadSessions(); }, [loadSessions]);
+  useEffect(() => {
+    void loadSessions();
+    return () => { sessionsGenerationRef.current += 1; };
+  }, [loadSessions]);
 
   useEffect(() => {
     generationRef.current += 1;
@@ -244,6 +300,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     setPreview(null);
     setPreviewError('');
     setPreviewMoreError('');
+    setPreviewMoreLoading(false);
     setFilterQuery('');
     for (const root of roots) void loadDirectory(root, true);
     // Directory state is intentionally reset whenever Session authority changes.
@@ -253,7 +310,9 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
   /* 正向证据链落点：路由指名的那个文件在这段 Session 的授权工作区里时，展开
      它的目录链并直接打开它。只走一次——之后这扇窗属于翻看它的人。 */
   const openedRequestRef = useRef('');
+  useEffect(() => { openedRequestRef.current = ''; }, [requestedKey]);
   useEffect(() => {
+    if (requested.sessionId && selectedSessionId !== requested.sessionId) return;
     const path = resolveRequestedWorkspacePath(requested.path, roots);
     if (!path || !selectedSessionId || !roots.length) return;
     const chain = ancestorDirectories(path, roots);
@@ -273,11 +332,11 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
       pendingFocusPathRef.current = path;
       return;
     }
-    setSelectedFile({ path, name: pathName(path), kind: 'file' });
+    setSelectedFile({ path, name: pathName(path), kind: 'file', sessionId: selectedSessionId });
     // loadDirectory changes identity with every listing; the one-shot guard,
     // not the dependency list, is what keeps this from re-opening the file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requested.path, roots.join('\u0000'), selectedSessionId]);
+  }, [requestedKey, roots.join('\u0000'), selectedSessionId]);
 
   useEffect(() => {
     setTreeFocusPath((current) => {
@@ -308,10 +367,11 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     node.focus();
   }, [visibleTreeNodes]);
 
-  const loadPreview = useCallback(async (file: WorkspaceEntry) => {
-    if (!selectedSessionId) return;
+  const loadPreview = useCallback(async (file: SelectedWorkspaceFile) => {
+    if (!selectedSessionId || file.sessionId !== selectedSessionId) return;
     const generation = ++generationRef.current;
     setPreviewLoading(true);
+    setPreviewMoreLoading(false);
     setPreviewError('');
     setPreviewMoreError('');
     setCopiedAction('');
@@ -323,13 +383,16 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
         query: { path: file.path, offset: 0, limit: PREVIEW_CHUNK_BYTES },
       });
       if (generation !== generationRef.current) return;
-      const chunk = workspaceFileChunk(response, file.path);
+      const chunk = workspaceFileChunk(response, file.path, file.sessionId);
       setPreview({
         path: file.path,
+        canonicalPath: chunk.canonicalPath,
         content: chunk.content,
         byteSize: chunk.byteSize,
         loadedBytes: chunk.nextOffset,
         truncated: chunk.truncated,
+        resourceRevision: chunk.resourceRevision,
+        editability: chunk.editability,
       });
     } catch (error) {
       if (generation === generationRef.current) {
@@ -355,7 +418,10 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
         query: { path: current.path, offset: current.loadedBytes, limit: PREVIEW_CHUNK_BYTES },
       });
       if (generation !== generationRef.current) return;
-      const chunk = workspaceFileChunk(response, current.path);
+      const chunk = workspaceFileChunk(response, current.path, selectedSessionId);
+      if (chunk.canonicalPath !== current.canonicalPath || (current.resourceRevision && (chunk.resourceRevision !== current.resourceRevision || chunk.byteSize !== current.byteSize))) {
+        throw new Error('读取期间文件已变化，请刷新后重新读取。');
+      }
       setPreview((existing) => existing && existing.path === current.path
         ? {
           ...existing,
@@ -375,7 +441,9 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
   useEffect(() => {
     if (!selectedFile) return;
     void loadPreview(selectedFile);
-  }, [loadPreview, selectedFile]);
+    // Save receipts update metadata without starting another file read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadPreview, selectedFile?.sessionId, selectedFile?.path]);
 
   function toggleDirectory(path: string): void {
     const willExpand = !expanded.has(path);
@@ -389,9 +457,24 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
   }
 
   function refresh(): void {
+    // A refresh is a new directory snapshot. In-flight responses from the
+    // previous snapshot must not repopulate the tree after the user asked for
+    // current state (this was especially visible when a slow list returned
+    // after a quick double refresh).
+    directoryGenerationRef.current += 1;
     const pathsToRefresh = new Set([...roots, ...expanded]);
     setEntries({});
+    setPathErrors({});
+    setLoadingPaths(new Set());
+    // Keep the reader selection, but make its content honest while the new
+    // read is in flight instead of showing a stale document beside a fresh
+    // directory tree.
+    const file = selectedFile;
+    setPreview(null);
+    setPreviewError('');
+    setPreviewMoreError('');
     for (const path of pathsToRefresh) void loadDirectory(path, true);
+    if (file) void loadPreview(file);
   }
 
   function focusTreeItem(path: string): void {
@@ -427,7 +510,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
 
   function openFilterMatch(entry: WorkspaceEntry): void {
     if (entry.kind !== 'directory') {
-      setSelectedFile(entry);
+      setSelectedFile({ ...entry, sessionId: selectedSessionId });
       return;
     }
     revealInTree(entry.path);
@@ -436,7 +519,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
 
   async function copyPreviewText(action: 'path' | 'content'): Promise<void> {
     if (!selectedFile) return;
-    const value = action === 'path' ? selectedFile.path : preview?.content ?? '';
+    const value = action === 'path' ? selectedFile.path : editor.copyContent ?? preview?.content ?? '';
     if (!value) return;
     setCopyError('');
     try {
@@ -559,7 +642,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
                   data-family={entryFamily(entry)}
                   data-kind={directory ? 'directory' : symlink ? 'symlink' : undefined}
                   data-selected={!directory && entry.path === selectedFile?.path || undefined}
-                  onClick={() => directory ? toggleDirectory(entry.path) : setSelectedFile(entry)}
+                  onClick={() => directory ? toggleDirectory(entry.path) : setSelectedFile({ ...entry, sessionId: selectedSessionId })}
                   onFocus={() => setTreeFocusPath(entry.path)}
                   onKeyDown={(event) => onTreeKeyDown(event, entry.path)}
                   ref={(node) => {
@@ -607,9 +690,10 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
         <select
           aria-label="选择文件所属 Session"
           disabled={sessionsLoading || !sessions.length}
-          onChange={(event) => setSelectedSessionId(event.target.value)}
+          onChange={(event) => setSessionSelection({ requestKey: requestedKey, sessionId: event.target.value })}
           value={selectedSessionId}
         >
+          {!selectedSessionId ? <option disabled value="">{sessionsLoading ? '正在读取 Session…' : '请选择 Session'}</option> : null}
           {sessions.map((session) => (
             <option key={session.id} title={session.title} value={session.id}>
               {session.title}{authorizedRoots(session).length ? '' : ' · 无工作区'}
@@ -649,7 +733,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
       >
         <h1 className="paw-files-app__title">Session 文件</h1>
         {windowChromeTarget ? null : filesTools}
-        {sessionError ? <div className="paw-native-app__error" role="alert"><TriangleAlert size={16} />{sessionError}<button onClick={() => void loadSessions()} type="button">重试</button></div> : null}
+        {sessionIssue ? <div className="paw-native-app__error" role="alert"><TriangleAlert size={16} />{sessionIssue}<button onClick={() => void loadSessions()} type="button">重试</button></div> : null}
         <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined} ref={workspaceRef}>
         <aside className="paw-files-tree" aria-label="Session 授权工作区" ref={treeRef}>
           {roots.length ? (
@@ -751,19 +835,19 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
         </aside>
         <section aria-label="文件预览" className="paw-files-preview" onKeyDown={(event) => { if (event.key === 'Escape' && treeHidden()) goBackToTree(); }} role="region">
           {!selectedFile ? (
-            <div className="paw-files-preview__empty">
+            <div aria-busy={workspacePending || undefined} className="paw-files-preview__empty">
               <div aria-hidden="true" className="paw-files-preview__empty-art">
                 <i />
                 <i />
                 <span><ScanSearch size={17} /></span>
               </div>
-              <strong>选择要检查的文件</strong>
-              <span>从目录树打开一个文件，在这里阅读代码、Markdown、diff、SVG 或网页。</span>
-              <span className="paw-files-preview__empty-keys">
+              <strong>{emptyPreview.title}</strong>
+              <span>{emptyPreview.detail}</span>
+              {roots.length ? <span className="paw-files-preview__empty-keys">
                 <span><kbd>↑</kbd><kbd>↓</kbd><span>移动</span></span>
                 <span><kbd>→</kbd><span>展开目录</span></span>
                 <span><kbd>Enter</kbd><span>打开</span></span>
-              </span>
+              </span> : null}
             </div>
           ) : (
             <>
@@ -795,20 +879,20 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
                         ? <b className="paw-files-renderer" data-family={entryFamily(selectedFile)}>{previewRenderer}</b>
                         : <span>{fileExtension(selectedFile.name).toUpperCase() || '文件'}</span>}
                       {selectedFile.byteSize !== undefined ? <span>{formatBytes(selectedFile.byteSize)}</span> : null}
-                      {previewReady && previewLineCount > 0
-                        ? <span>{preview?.truncated ? `已载 ${previewLineCount} 行` : `${previewLineCount} 行`}</span>
+                      {(editor.editing || previewReady) && previewLineCount > 0
+                        ? <span>{!editor.editing && preview?.truncated ? `已载 ${previewLineCount} 行` : `${previewLineCount} 行`}</span>
                         : null}
                     </span>
                   </small>
                 </div>
                 <div className="paw-files-preview__actions">
                   <button
-                    aria-label={copiedAction === 'content' ? '已复制文件内容' : '复制文件内容'}
+                    aria-label={copiedAction === 'content' ? '已复制文件内容' : editor.editing ? '复制编辑内容' : '复制文件内容'}
                     className="paw-files-preview__action"
                     data-copied={copiedAction === 'content' || undefined}
-                    disabled={!copyableContent(preview, previewLoading, previewError)}
+                    disabled={editor.copyContent !== null ? !editor.copyContent : !copyableContent(preview, previewLoading, previewError)}
                     onClick={() => void copyPreviewText('content')}
-                    title={copyContentTitle(preview, previewLoading, previewError, copiedAction === 'content')}
+                    title={editor.editing ? '复制当前编辑内容' : copyContentTitle(preview, previewLoading, previewError, copiedAction === 'content')}
                     type="button"
                   >
                     {copiedAction === 'content' ? <Check size={14} /> : <ClipboardCopy size={14} />}
@@ -832,6 +916,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
                 </div>
               ) : null}
               <div className="paw-files-preview__body" key={`body:${selectedFile.path}`}>
+                {editor.panel}
                 {previewLoading ? (
                   <div className="paw-files-preview__state paw-files-preview__state--loading" role="status">
                     <span className="paw-files-preview__state-line"><LoaderCircle className="ui-spin" size={16} />正在读取文件…</span>
@@ -839,9 +924,9 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
                   </div>
                 ) : null}
                 {previewError ? <div className="paw-files-preview__state" role="alert"><TriangleAlert size={18} /><span>{previewError}</span><button onClick={() => void loadPreview(selectedFile)} type="button">重试</button></div> : null}
-                {!previewLoading && !previewError && preview ? renderPreview(preview) : null}
+                {editor.draftPreview ? renderPreview(editor.draftPreview) : !editor.editing && !previewLoading && !previewError && preview ? renderPreview(preview) : null}
               </div>
-              {preview && !previewLoading && !previewError && preview.truncated && !previewIsBinary ? (
+              {!editor.editing && preview && !previewLoading && !previewError && preview.truncated && !previewIsBinary ? (
                 <footer className="paw-files-preview__more">
                   <div className="paw-files-preview__range">
                     <span className="paw-files-preview__range-readout">
@@ -873,7 +958,9 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
                   )}
                 </footer>
               ) : null}
-              <EvidenceEchoUsage appId="files" entityId={selectedFile.path} entityLabel={selectedFile.name} />
+              <FileCollaborationPanel sessionId={selectedFile.sessionId} path={editor.resourcePath ?? selectedFile.path} fileName={selectedFile.name}>
+                <EvidenceEchoUsage appId="files" entityId={editor.resourcePath ?? selectedFile.path} entityLabel={selectedFile.name} />
+              </FileCollaborationPanel>
             </>
           )}
         </section>
@@ -882,7 +969,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
           <span>已加载 {visibleEntryCount} 项</span>
           {filterActive ? <><i aria-hidden="true" /><span>匹配 {filterMatches.length} 项</span></> : null}
           {selectedFile ? <><i aria-hidden="true" /><span className="paw-files-statusbar__selection" title={`${selectedFile.path}${selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''}`}>已选 {selectedFile.name}{selectedFile.byteSize !== undefined ? ` · ${formatBytes(selectedFile.byteSize)}` : ''}</span></> : null}
-          <span className="paw-files-statusbar__root" data-live={roots.length ? true : undefined} title={roots.join('\n') || undefined}>{roots.length ? `${roots.length} 个授权工作区` : '没有授权工作区'}</span>
+          <span className="paw-files-statusbar__root" data-live={roots.length ? true : undefined} title={roots.join('\n') || undefined}>{roots.length ? `${roots.length} 个授权工作区` : workspacePending ? '正在读取工作区' : workspaceUnavailable ? '工作区状态未知' : '没有授权工作区'}</span>
         </footer>
       </section>
     </>
@@ -1051,14 +1138,19 @@ function workspaceListing(value: unknown): WorkspaceListing {
   return { items: sortedEntries(items), limited: value.truncated === true };
 }
 
-function workspaceFileChunk(value: unknown, path: string): { content: string; byteSize: number; nextOffset: number; truncated: boolean } {
-  if (!isRecord(value) || value.path !== path || typeof value.content !== 'string') throw new Error('文件服务返回了无法识别的数据。');
+function workspaceFileChunk(value: unknown, path: string, sessionId: string): { canonicalPath: string; content: string; byteSize: number; nextOffset: number; truncated: boolean; resourceRevision?: string; editability?: EditableWorkspacePreview['editability'] } {
+  if (!isRecord(value) || typeof value.content !== 'string') throw new Error('文件服务返回了无法识别的数据。');
+  const canonicalPath = canonicalWorkspaceReadPath(value, path, sessionId);
   const byteSize = typeof value.byteSize === 'number' ? value.byteSize : 0;
   const offset = typeof value.offset === 'number' ? value.offset : 0;
   const nextOffset = typeof value.nextOffset === 'number'
     ? value.nextOffset
     : offset + new TextEncoder().encode(value.content).length;
-  return { content: value.content, byteSize, nextOffset, truncated: value.truncated === true };
+  return {
+    canonicalPath, content: value.content, byteSize, nextOffset, truncated: value.truncated === true,
+    resourceRevision: typeof value.resourceRevision === 'string' ? value.resourceRevision : undefined,
+    editability: isRecord(value.editability) ? { editable: value.editability.editable === true, reason: typeof value.editability.reason === 'string' ? value.editability.reason : undefined } : undefined,
+  };
 }
 
 function entryFamily(entry: Pick<WorkspaceEntry, 'kind' | 'name'>): string | undefined {

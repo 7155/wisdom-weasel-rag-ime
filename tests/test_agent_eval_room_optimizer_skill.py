@@ -48,7 +48,8 @@ class AgentEvalRoomOptimizerSkillTests(unittest.TestCase):
         self.assertIn("evaluationKind", body)
         self.assertIn("compact run, case, and evidence references", body)
         self.assertIn("historical evidence", body)
-        self.assertIn("new Validation split", body)
+        self.assertIn("same frozen Validation case-set", body)
+        self.assertNotIn("new Validation split", body)
         self.assertIn("Host verifier", body)
         self.assertIn("explicit approval", body)
         self.assertIn("one terminal result", body)
@@ -69,6 +70,16 @@ class AgentEvalRoomOptimizerSkillTests(unittest.TestCase):
             "info_not_found",
             "Agent 自述不算成功",
             "重复运行不得新增重复记忆",
+            "rag-ime.agent-lab-dispatch.v1",
+            "counterfactualProbes",
+            "scope.target",
+            "targetObject",
+            "skill",
+            "agent_observed",
+            "maxCandidates",
+            "maxEstimatedCostUsd",
+            "no_improvement",
+            "agent.room.abort",
         ):
             self.assertIn(required, body)
 

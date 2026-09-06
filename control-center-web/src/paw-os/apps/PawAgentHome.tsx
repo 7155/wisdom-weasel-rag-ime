@@ -9,11 +9,8 @@
  *   与「继续工作」在同一屏内完成；继续工作列表只在自身内部滚动，页脚是钉在
  *   底部的状态条。
  * - UR-002/040：单一 Agent 入口，Session / Room 在 Composer 底栏选择；
- *   PF-CM-003：所选工作类型的真实后果（谁来做、哪些伙伴加入、过程在哪里看得见）
- *   就写在 Composer 下方；Session 一句指向 PawSessionWorkspace 里真实存在的
- *   「Agent 轨迹 / 上下文装配」，不描述任何这里没有的界面。「记有来源的装配
- *   节点能直接打开那条证据」对应 PawContextTrace 已落地的双向证据链：只有
- *   metadata 里带具体实体标识的节点才可点击，这句因此不构成过度承诺。
+ *   PF-CM-003：Room 真实伙伴在 Composer 下方展示；高级过程说明在工作区按需展开。
+ *   UR-253：首页与 Session 共用 ModelPicker；推理直接可见，模型搜索按需展开。
  * - UR-046：四档 Session 权限（只读 / 全权限逐项确认 / 工作区托管 /
  *   全自动），全自动明确提示自动批准与 OS 边界。
  * - UR-011/025 与 PF-CM-018/021：页脚只投影真实目录状态（读取中 / 失败可重试 /
@@ -24,7 +21,6 @@
 
 import {
   ArrowUp,
-  Check,
   ChevronDown,
   CircleAlert,
   LoaderCircle,
@@ -32,8 +28,21 @@ import {
   Plus,
   Users,
 } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState, type ClipboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/primitives';
 import {
   useAgentPreferencesRead,
   type AgentExecutionMode,
@@ -48,7 +57,6 @@ import {
 } from '@/features/agent/model-catalog-options';
 import {
   PermissionMark,
-  ProviderMark,
   WorkspaceMark,
 } from '@/features/agent/marks/ConversationMarks';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
@@ -62,6 +70,7 @@ import {
 } from '@/contracts/attachment-policy';
 import {
   defaultRoomPermissionPolicy,
+  effectiveRoomPermissionPolicy,
   roomPermissionPolicyNeedsDangerousConfirmation,
   roomPermissionPolicyNeedsWorkspaceConfirmation,
   type RoomPermissionPolicy,
@@ -83,6 +92,7 @@ import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { clipboardFilesFromEvent } from '@/features/agent/composer/AgentComposer';
 import type { PickedFile } from '@/platform/transport';
 import { pawBrowserHost } from './paw-browser-host';
+import { ModelPicker } from '@/features/agent/composer/ModelPicker';
 import { PawAppIcon } from '../shell/PawAppIcon';
 
 type WorkMode = 'session' | 'room';
@@ -91,7 +101,7 @@ type Selection =
   | { kind: 'session'; id: string; draft?: string }
   | { kind: 'room'; id: string; draft?: string; error?: string };
 
-type OptionsPanel = 'project' | 'model' | 'permission' | null;
+type OptionsPanel = 'project' | 'permission' | null;
 
 type HomePendingAttachment = {
   id: string;
@@ -152,13 +162,8 @@ export function PawAgentHome({
   const [error, setError] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<HomePendingAttachment[]>([]);
   const [pendingClipboardPaste, setPendingClipboardPaste] = useState(false);
-  const composerRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
-  const chipRefs = useRef<Record<Exclude<OptionsPanel, null>, HTMLButtonElement | null>>({
-    permission: null,
-    model: null,
-    project: null,
-  });
+  const modeRefs = useRef<Record<WorkMode, HTMLButtonElement | null>>({ session: null, room: null });
   const preferenceHydratedRef = useRef(false);
   const preferenceEditedRef = useRef({ executionMode: false, modelReference: false, thinking: false });
   const modeBriefId = useId();
@@ -181,6 +186,10 @@ export function PawAgentHome({
 
   const selectedModel = models.find((item) => item.reference === modelReference);
   const thinkingLevels = supportedPiThinkingLevels(selectedModel, { includeOff: true });
+  useEffect(() => {
+    if (!selectedModel || !thinkingLevels.length || thinkingLevels.includes(thinking)) return;
+    setThinking(thinkingLevels.includes('medium') ? 'medium' : thinkingLevels.includes('off') ? 'off' : thinkingLevels[0]!);
+  }, [selectedModel, thinking, thinkingLevels.join(',')]);
   const availableRoomPersonas = personas
     .filter((persona) => persona.selectableModes.includes('coordinator'))
     .slice(0, 8);
@@ -191,11 +200,6 @@ export function PawAgentHome({
   );
   const roomPersonas = availableRoomPersonas.slice(0, roomParticipantCount);
   const roomReady = roomPersonas.length >= 2;
-  const modelGroups = useMemo(() => {
-    const groups = new Map<string, PiModelOption[]>();
-    for (const model of models) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model]);
-    return [...groups.entries()];
-  }, [models]);
   const sessionPermission = SESSION_PERMISSION_PRESETS.find(
     (item) => item.executionMode === executionMode,
   ) ?? SESSION_PERMISSION_PRESETS.find((item) => item.id === 'full-access')!;
@@ -204,8 +208,12 @@ export function PawAgentHome({
     'room',
     'collaboration',
   );
+  const effectiveRoomPermissions = effectiveRoomPermissionPolicy(roomPermissionPolicy);
+  const uniformRoomPermissions = Object.values(effectiveRoomPermissions).every(
+    (value) => value === effectiveRoomPermissions.room,
+  );
   const permissionLabel = mode === 'room'
-    ? `${roomPermission.effectiveLabel} · 分层`
+    ? `${uniformRoomPermissions ? roomPermission.effectiveLabel : '自定义'} · 分层`
     : sessionPermission.label;
   const permissionMode = mode === 'room'
     ? roomPermissionPolicy.room.executionMode
@@ -219,23 +227,18 @@ export function PawAgentHome({
     .sort((left, right) => right.item.updatedAtMs - left.item.updatedAtMs)
     .slice(0, 4), [rooms, sessions]);
 
-  useEffect(() => {
-    if (!optionsPanel) return;
-    const closeOutside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !composerRef.current?.contains(event.target)) setOptionsPanel(null);
-    };
-    const closeWithEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setOptionsPanel(null);
-      chipRefs.current[optionsPanel]?.focus();
-    };
-    document.addEventListener('pointerdown', closeOutside);
-    document.addEventListener('keydown', closeWithEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOutside);
-      document.removeEventListener('keydown', closeWithEscape);
-    };
-  }, [optionsPanel]);
+  function moveModeFocus(event: KeyboardEvent<HTMLButtonElement>): void {
+    const next = event.key === 'Home' ? 'session'
+      : event.key === 'End' ? 'room'
+        : ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
+          ? mode === 'session' ? 'room' : 'session'
+          : undefined;
+    if (!next) return;
+    event.preventDefault();
+    setMode(next);
+    setOptionsPanel(null);
+    modeRefs.current[next]?.focus();
+  }
 
   async function pickWorkspace(): Promise<void> {
     if (!transport.pickFiles && !electronHost?.pickWorkspaceDirectory) {
@@ -506,26 +509,30 @@ export function PawAgentHome({
     }
   }
 
-  const greeting = timeGreeting();
+  const permissionTrigger = (
+    <button
+      aria-label={`权限 · ${permissionLabel}`}
+      className="an-chip"
+      disabled={submitting}
+      title={`权限 · ${permissionLabel}`}
+      type="button"
+    >
+      <PermissionMark mode={permissionMode} size={14} />
+      <span className="an-chip-text">{permissionLabel}</span>
+      <ChevronDown className="caret" size={13} />
+    </button>
+  );
 
   return (
     <div className="paw-agent-next an-home-root">
       <div className="an-home">
-        <svg className="an-home-geo" aria-hidden="true">
-          <defs>
-            <pattern id="an-reg" width="220" height="220" patternUnits="userSpaceOnUse">
-              <path d="M110 96v28M96 110h28" stroke="var(--an-ink)" strokeOpacity=".05" strokeWidth="1.5" />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#an-reg)" />
-          <circle cx="86%" cy="18%" r="180" fill="none" stroke="var(--an-violet)" strokeOpacity=".08" strokeWidth="1.5" />
-          <circle className="an-geo-orbit" cx="86%" cy="18%" r="120" fill="none" stroke="var(--an-cobalt)" strokeOpacity=".07" strokeWidth="1.5" strokeDasharray="2 7" />
-        </svg>
         <div className="an-home-wrap">
-          <div className="an-home-greet">{greeting}</div>
-          <h1 className="an-home-title">交给 Agent <em>一件事</em>。</h1>
+          <header className="an-home-intro">
+            <span aria-hidden="true" className="an-home-orbit"><span /></span>
+            <h1 className="an-home-title">今天想完成什么？</h1>
+          </header>
 
-          <div className="an-composer" ref={composerRef}>
+          <div className="an-composer">
             {pendingAttachments.length || pendingClipboardPaste ? (
               <div aria-label="待发送附件" className="agent-composer__attachments" role="list">
                 {pendingAttachments.map(({ id, file }) => {
@@ -574,7 +581,7 @@ export function PawAgentHome({
                   void startWork();
                 }
               }}
-              placeholder="描述目标、上下文和验收方式…（Enter 发送，Shift+Enter 换行）"
+              placeholder="交给 Agent 一件事…"
               value={prompt}
             />
             <div className="an-composer-foot">
@@ -582,8 +589,12 @@ export function PawAgentHome({
                 <button
                   aria-checked={mode === 'session'}
                   aria-label="Session"
-                  onClick={() => setMode('session')}
+                  disabled={submitting}
+                  onClick={() => { setMode('session'); setOptionsPanel(null); }}
+                  onKeyDown={moveModeFocus}
+                  ref={(node) => { modeRefs.current.session = node; }}
                   role="radio"
+                  tabIndex={mode === 'session' ? 0 : -1}
                   title="Session"
                   type="button"
                 >
@@ -593,8 +604,12 @@ export function PawAgentHome({
                 <button
                   aria-checked={mode === 'room'}
                   aria-label="Room"
-                  onClick={() => setMode('room')}
+                  disabled={submitting}
+                  onClick={() => { setMode('room'); setOptionsPanel(null); }}
+                  onKeyDown={moveModeFocus}
+                  ref={(node) => { modeRefs.current.room = node; }}
                   role="radio"
+                  tabIndex={mode === 'room' ? 0 : -1}
                   title="Room"
                   type="button"
                 >
@@ -604,167 +619,102 @@ export function PawAgentHome({
               </span>
 
               <span className="an-anchor">
-                <button
-                  aria-expanded={optionsPanel === 'permission'}
-                  aria-label={`权限 · ${permissionLabel}`}
-                  className="an-chip"
-                  onClick={() => setOptionsPanel(optionsPanel === 'permission' ? null : 'permission')}
-                  ref={(node) => { chipRefs.current.permission = node; }}
-                  title={`权限 · ${permissionLabel}`}
-                  type="button"
-                >
-                  <PermissionMark mode={permissionMode} size={14} />
-                  <span className="an-chip-text">{permissionLabel}</span>
-                  <ChevronDown className="caret" size={13} />
-                </button>
-                {optionsPanel === 'permission' ? (
-                  <div className="an-menu" role={mode === 'session' ? 'menu' : undefined}>
-                    <div className="an-menu-title">
-                      {mode === 'room' ? 'Room 三层权限' : '权限模式'}
-                    </div>
-                    {mode === 'room' ? (
+                {mode === 'room' ? (
+                  <Popover open={optionsPanel === 'permission'} onOpenChange={(open) => setOptionsPanel(open ? 'permission' : null)}>
+                    <PopoverTrigger asChild>{permissionTrigger}</PopoverTrigger>
+                    <PopoverContent align="start" aria-label="Room 三层权限" className="paw-agent-next an-home-menu an-home-menu--policy" side="bottom">
+                      <h2 className="an-home-menu__title">Room 三层权限</h2>
                       <RoomPermissionPolicyEditor
                         compact
                         onChange={setRoomPermissionPolicy}
                         policy={roomPermissionPolicy}
                         roomKind="collaboration"
                       />
-                    ) : SESSION_PERMISSION_PRESETS.map((item) => (
-                      <button
-                        aria-checked={item.executionMode === executionMode}
-                        className="an-menu-item"
-                        key={item.executionMode}
-                        onClick={() => {
-                          preferenceEditedRef.current.executionMode = true;
-                          setExecutionMode(item.executionMode);
-                          setOptionsPanel(null);
-                        }}
-                        role="menuitemradio"
-                        type="button"
-                      >
-                        <span style={{ minWidth: 0 }}>
-                          <span className="mi-tt">{item.executionMode === executionMode ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{item.label}</span>
-                          <span className="mi-sub">{item.description}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+                    </PopoverContent>
+                  </Popover>
+                ) : (
+                  <Menu modal={false} open={optionsPanel === 'permission'} onOpenChange={(open) => setOptionsPanel(open ? 'permission' : null)}>
+                    <MenuTrigger asChild>{permissionTrigger}</MenuTrigger>
+                    <MenuContent align="start" aria-label="权限模式" className="paw-agent-next an-home-menu" side="bottom">
+                      <MenuLabel className="an-home-menu__title">权限模式</MenuLabel>
+                      <MenuRadioGroup value={executionMode}>
+                        {SESSION_PERMISSION_PRESETS.map((item) => (
+                          <MenuRadioItem
+                            className="an-home-menu__item"
+                            key={item.executionMode}
+                            onSelect={() => {
+                              preferenceEditedRef.current.executionMode = true;
+                              setExecutionMode(item.executionMode);
+                            }}
+                            value={item.executionMode}
+                          >
+                            <span>
+                              <strong>{item.label}</strong>
+                              <small>{item.description}</small>
+                            </span>
+                          </MenuRadioItem>
+                        ))}
+                      </MenuRadioGroup>
+                    </MenuContent>
+                  </Menu>
+                )}
+              </span>
+
+              <span className="an-anchor an-model-anchor">
+                <ModelPicker
+                  className="an-chip an-model-chip"
+                  options={{ models, modelReference, thinking }}
+                  disabled={submitting || !models.length}
+                  pending={catalogLoading}
+                  requestOpen={0}
+                  onOpen={() => setOptionsPanel(null)}
+                  onChange={(provider, modelId, level) => {
+                    preferenceEditedRef.current.modelReference = true;
+                    preferenceEditedRef.current.thinking = true;
+                    setModelReference(`${provider}/${modelId}`);
+                    setThinking(level);
+                  }}
+                />
               </span>
 
               <span className="an-anchor">
-                <button
-                  aria-expanded={optionsPanel === 'model'}
-                  aria-label={`模型与推理 · ${selectedModel?.name ?? '自动模型'} · ${thinkingLabel(thinking)}`}
-                  className="an-chip"
-                  onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
-                  ref={(node) => { chipRefs.current.model = node; }}
-                  title={`模型与推理 · ${selectedModel?.name ?? '自动模型'} · ${thinkingLabel(thinking)}`}
-                  type="button"
-                >
-                  <ProviderMark providerId={selectedModel?.provider} size={14} />
-                  <span className="an-chip-text">{selectedModel?.name ?? '自动模型'}</span>
-                  <span className="an-chip-detail"> · {thinkingLabel(thinking)}</span>
-                  <ChevronDown className="caret" size={13} />
-                </button>
-                {optionsPanel === 'model' ? (
-                  <div aria-label="选择模型与推理强度" className="an-menu" role="menu">
-                    <div aria-label="模型" role="group">
-                      <div className="an-menu-title">模型</div>
-                      {modelGroups.map(([provider, group]) => (
-                        <div key={provider}>
-                          <div className="an-menu-group">{provider}</div>
-                          {group.map((model) => (
-                            <button
-                              aria-checked={model.reference === modelReference}
-                              className="an-menu-item"
-                              key={model.reference}
-                              onClick={() => {
-                                preferenceEditedRef.current.modelReference = true;
-                                setModelReference(model.reference);
-                                setOptionsPanel(null);
-                              }}
-                              role="menuitemradio"
-                              type="button"
-                            >
-                              <span style={{ minWidth: 0 }}>
-                                <span className="mi-tt">{model.reference === modelReference ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{model.name}</span>
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                    {selectedModel && thinkingLevels.length > 0 ? (
-                      <>
-                        <div className="an-menu-sep" />
-                        <div aria-label="推理强度" role="group">
-                          <div className="an-menu-title">推理强度</div>
-                          {thinkingLevels.map((level) => (
-                            <button
-                              aria-checked={level === thinking}
-                              className="an-menu-item"
-                              key={level}
-                              onClick={() => {
-                                preferenceEditedRef.current.thinking = true;
-                                setThinking(level);
-                                setOptionsPanel(null);
-                              }}
-                              role="menuitemradio"
-                              type="button"
-                            >
-                              <span className="mi-tt">{level === thinking ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{thinkingLabel(level)}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-              </span>
-
-              <span className="an-anchor">
-                <button
-                  aria-expanded={optionsPanel === 'project'}
+                <Menu modal={false} open={optionsPanel === 'project'} onOpenChange={(open) => setOptionsPanel(open ? 'project' : null)}>
+                <MenuTrigger asChild><button
                   aria-label={workspaceRoot ? `起始项目 · ${projectName([workspaceRoot])}` : '起始项目（可选）'}
                   className="an-chip"
-                  onClick={() => setOptionsPanel(optionsPanel === 'project' ? null : 'project')}
-                  ref={(node) => { chipRefs.current.project = node; }}
+                  disabled={submitting}
                   title={workspaceRoot || '起始项目（可选）'}
                   type="button"
                 >
                   <WorkspaceMark bound={Boolean(workspaceRoot)} size={14} />
                   <span className="an-chip-text">{workspaceRoot ? projectName([workspaceRoot]) : '起始项目（可选）'}</span>
                   <ChevronDown className="caret" size={13} />
-                </button>
-                {optionsPanel === 'project' ? (
-                  <div className="an-menu" role="menu">
-                    <div className="an-menu-title">起始项目（可选）</div>
+                </button></MenuTrigger>
+                  <MenuContent align="end" aria-label="起始项目（可选）" className="paw-agent-next an-home-menu" side="bottom">
+                    <MenuLabel className="an-home-menu__title">起始项目（可选）</MenuLabel>
+                    <MenuRadioGroup value={workspaceRoot} onValueChange={setWorkspaceRoot}>
                     {projectRoots.map((root) => (
-                      <button
-                        aria-checked={root === workspaceRoot}
-                        className="an-menu-item"
+                      <MenuRadioItem
+                        className="an-home-menu__item"
                         key={root}
-                        onClick={() => { setWorkspaceRoot(root); setOptionsPanel(null); }}
-                        role="menuitemradio"
-                        type="button"
+                        value={root}
                       >
-                        <span style={{ minWidth: 0 }}>
-                          <span className="mi-tt">{root === workspaceRoot ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{projectName([root])}</span>
-                          <span className="mi-sub" style={{ fontFamily: 'var(--an-mono)' }}>{root}</span>
+                        <span>
+                          <strong>{projectName([root])}</strong>
+                          <small className="an-home-menu__path" title={root}>{root}</small>
                         </span>
-                      </button>
+                      </MenuRadioItem>
                     ))}
+                    </MenuRadioGroup>
+                    {!projectRoots.length ? <p className="an-home-menu__empty">选择一个项目，让 Agent 从它的目录开始工作。</p> : null}
                     {transport.pickFiles || electronHost?.pickWorkspaceDirectory ? (
                       <>
-                        <div className="an-menu-sep" />
-                        <button className="an-menu-item" onClick={() => void pickWorkspace()} type="button">
-                          <span className="mi-tt">浏览其他目录…</span>
-                        </button>
+                        <MenuSeparator />
+                        <MenuItem className="an-home-menu__item" onSelect={() => void pickWorkspace()}>浏览其他目录…</MenuItem>
                       </>
                     ) : null}
-                  </div>
-                ) : null}
+                  </MenuContent>
+                </Menu>
               </span>
 
               <button
@@ -798,7 +748,7 @@ export function PawAgentHome({
           ) : null}
           {mode === 'session' ? (
             <p className="an-mode-brief" id={modeBriefId}>
-              一位 Agent 在同一条时间线里完成这件事；随时可中止或追问。过程可切到 Agent 轨迹，看每一轮装配了哪些上下文——记有来源的装配节点，能直接打开那条记忆、知识或文件。
+              随时补充想法，也可以暂停。
             </p>
           ) : availableRoomPersonas.length > 0 ? (
             <div className="an-mode-brief an-room-plan" id={modeBriefId}>
@@ -835,6 +785,13 @@ export function PawAgentHome({
               <span>当前没有可用的 Room 伙伴，暂时无法开始。</span>
             </div>
           )}
+          {mode === 'room' ? (
+            <p aria-label="Room 执行权限" className="an-mode-brief" role="status">
+              {uniformRoomPermissions && effectiveRoomPermissions.room === 'full_trust'
+                ? 'Room、伙伴和 Tool Agent 均为全权限，开始后无需逐项批准。可在权限中分别调整。'
+                : `Room ${roomPermission.effectiveLabel} · 伙伴 ${roomPermissionLayerPresentation(roomPermissionPolicy, 'partner', 'collaboration').effectiveLabel} · Tool Agent ${roomPermissionLayerPresentation(roomPermissionPolicy, 'toolAgent', 'collaboration').effectiveLabel}。按所选分层权限执行。`}
+            </p>
+          ) : null}
           {preferenceRead.readError ? (
             <p className="an-home-error" role="alert">
               <CircleAlert size={14} />{preferenceRead.readError}
@@ -853,14 +810,14 @@ export function PawAgentHome({
               <div className="an-recent-list">
                 {recents.map((entry) => entry.kind === 'session' ? (
                   <button className="an-recent-card" key={`session:${entry.item.id}`} onClick={() => onOpenSession(entry.item.id)} type="button">
-                    <span className="rc-top"><span className={`an-dot ${entry.item.status === 'archived' ? '' : 'is-ok'}`} /><span className="rc-title">{entry.item.title}</span></span>
+                    <span className="rc-top"><PawAppIcon appId="agent" size={16} /><span className="rc-title">{entry.item.title}</span></span>
                     {entry.item.lastMessagePreview ? <span className="rc-preview">{entry.item.lastMessagePreview}</span> : null}
                     <span className="rc-meta">{projectName(entry.item.workspaceRoots)} · {relativeTime(entry.item.updatedAtMs)}</span>
                   </button>
                 ) : (
                   <button className="an-recent-card is-room" key={`room:${entry.item.id}`} onClick={() => onOpenRoom(entry.item.id)} type="button">
-                    <span className="rc-top"><span className={`an-dot ${entry.item.status === 'active' ? 'is-run' : ''}`} /><span className="rc-title">{entry.item.title}</span></span>
-                    {entry.item.description ? <span className="rc-preview">{entry.item.description}</span> : null}
+                    <span className="rc-top"><PawAppIcon appId="room" size={16} /><span className="rc-title">{entry.item.title}</span></span>
+                    {entry.item.description && entry.item.description !== entry.item.title ? <span className="rc-preview">{entry.item.description}</span> : null}
                     <span className="rc-meta"><Users size={11} style={{ verticalAlign: -1 }} /> {entry.item.participants?.length ?? 0} 位伙伴 · {relativeTime(entry.item.updatedAtMs)}</span>
                   </button>
                 ))}
@@ -880,8 +837,7 @@ export function PawAgentHome({
                   {onReloadCatalog ? <button onClick={onReloadCatalog} type="button">重新读取目录</button> : null}
                 </span>
               ) : null}
-              {models.length ? <span><span className="an-dot is-ok" />{models.length} 个可用模型</span> : null}
-              {defaultModel ? <span>默认模型 {defaultModel.split('/').pop()}</span> : null}
+              <span className="an-home-shortcuts"><kbd>↵</kbd> 发送<span>·</span><kbd>⇧ ↵</kbd> 换行</span>
             </div>
           ) : null}
         </div>
@@ -983,26 +939,9 @@ function relativeTime(atMs: number): string {
   const days = Math.round(hours / 24);
   return `${days} 天前`;
 }
-function timeGreeting(): string {
-  const now = new Date();
-  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-  const hour = now.getHours();
-  const phase = hour < 5 ? '夜深了' : hour < 9 ? '早上好' : hour < 12 ? '上午好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
-  const hh = String(hour).padStart(2, '0');
-  const mm = String(now.getMinutes()).padStart(2, '0');
-  return `${weekdays[now.getDay()]} · ${hh}:${mm} · ${phase}`;
-}
 /** 与 startWork 的 Room 创建 payload 保持同一映射：0=协调，1=审阅，其余=专家。 */
 function collaborationRoleLabel(index: number): string {
   return index === 0 ? '协调' : index === 1 ? '审阅' : '专家';
-}
-function thinkingLabel(level: string): string {
-  if (!level || level === 'off') return '关闭';
-  if (level === 'low') return '低';
-  if (level === 'medium') return '中';
-  if (level === 'high') return '高';
-  if (level === 'max') return 'Max';
-  return level;
 }
 function suggestedRoomParticipantCount(prompt: string, available: number): number {
   if (available <= 0) return 0;

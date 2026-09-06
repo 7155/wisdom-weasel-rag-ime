@@ -183,11 +183,9 @@ export type PawBrandMarkProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
 };
 
 /**
- * The PAW system mark: a glacial paw print in the current text colour. Three
- * crisply gapped toe pads and a stamp-like main pad identify the system itself
- * (menu bar, launcher, boot, favicon), never an App, so it stays monochrome and
- * outside the App identity colour system. Geometry is tuned for 13–16 px on the
- * Wayfinder chrome veil.
+ * The PAW system mark is a ringed world and its guiding star. It stays static
+ * and monochrome on system chrome; rotation belongs to real execution states,
+ * never to the brand itself. The favicon shares this 48-unit geometry.
  */
 export function PawBrandMark({ className = '', size = 16, title, ...props }: PawBrandMarkProps) {
   return (
@@ -196,6 +194,7 @@ export function PawBrandMark({ className = '', size = 16, title, ...props }: Paw
       aria-hidden={title ? undefined : 'true'}
       aria-label={title}
       className={`paw-brand-mark ${className}`.trim()}
+      data-paw-brand="stellar"
       fill="currentColor"
       focusable="false"
       height={size}
@@ -204,10 +203,9 @@ export function PawBrandMark({ className = '', size = 16, title, ...props }: Paw
       width={size}
     >
       {title ? <title>{title}</title> : null}
-      <ellipse cx="8.8" cy="16.2" rx="6" ry="7.4" transform="rotate(-22 8.8 16.2)" />
-      <ellipse cx="24" cy="10.8" rx="6.2" ry="7.6" />
-      <ellipse cx="39.2" cy="16.2" rx="6" ry="7.4" transform="rotate(22 39.2 16.2)" />
-      <path d="M24 22.6c5 0 9.4 2.2 12.2 5.6 2.4 2.9 3.6 6.4 3.6 9.4 0 6.4-6.6 10.2-15.8 10.2S8.2 44 8.2 37.6c0-3 1.2-6.5 3.6-9.4 2.8-3.4 7.2-5.6 12.2-5.6z" />
+      <ellipse cx="23" cy="26" fill="none" rx="21" ry="8" stroke="currentColor" strokeWidth="3.5" transform="rotate(-28 23 26)" />
+      <circle cx="23" cy="26" r="9" />
+      <path d="m37 3 1.7 4.3L43 9l-4.3 1.7L37 15l-1.7-4.3L31 9l4.3-1.7Z" />
     </svg>
   );
 }

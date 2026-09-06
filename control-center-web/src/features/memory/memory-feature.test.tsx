@@ -17,6 +17,42 @@ afterEach(() => {
 });
 
 describe('MemoryFeature relations', () => {
+  it('opens the existing catalog from an empty day and searches without creating a model task', async () => {
+    const user = userEvent.setup();
+    const date = localCalendarDate();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': {
+          ok: true,
+          currentAtomCount: 259,
+          memoryBookCount: 76,
+          memoryEvidenceCount: 143,
+          pendingGovernedEvidenceCount: 882,
+        },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'memory.activityTimeline.get': { ok: true, timeline: null },
+        'memory.activityTimeline.calendar': { ok: true, month: date.slice(0, 7), days: [], summary: {} },
+        'agent.sessions.list': { ok: true, items: [] },
+      },
+    });
+    renderMemory(transport, '/memory?view=timeline', true);
+
+    expect(await screen.findByText('这一天还没有日记')).toBeVisible();
+    expect(screen.getByText('记忆库中已有 259 条记忆、76 个主题，可以继续查找。')).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: '记忆页面' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: '记忆内容分类' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '浏览全部记忆' }));
+    const catalog = await screen.findByRole('list', { name: '记忆内容分类' });
+    expect(within(catalog).getByRole('button', { name: '记忆 · 已整理记忆 · 259 项' })).toHaveAttribute('aria-current', 'page');
+    await user.type(screen.getByRole('textbox', { name: '搜索' }), '偏好');
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'memory.pages' && request.params?.kind === 'atoms' && request.query?.query === '偏好'
+    ))).toBe(true));
+    expect(transport.requests.some(({ request }) => [
+      'agent.sessions.surface.ensure', 'agent.session.prompt', 'memory.activityTimeline.build', 'agent.memoryMaintenance.trigger',
+    ].includes(request.pathId))).toBe(false);
+  });
+
   it('shows automatic timeline publication and keeps an immediate manual control', async () => {
     const user = userEvent.setup();
     const date = localCalendarDate();
@@ -79,7 +115,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    expect(await screen.findByText('来源记录')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /来源 · 来源记录/ })).toBeInTheDocument();
     await user.click(await screen.findByRole('tab', { name: '时间线' }));
     expect(await screen.findByText('实现最终输入框捕获并核对三条记忆消费路径。')).toBeInTheDocument();
     expect(screen.getByText('2 项活动')).toBeInTheDocument();
@@ -244,8 +280,8 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    expect(await screen.findByRole('button', { name: '整理 · 777 条等待处理' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '整理 · 777 条等待处理' }));
+    expect(await screen.findByText('777 条来源待整理')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看待整理来源' }));
     expect(await screen.findByText('777 条待整理')).toBeInTheDocument();
     expect(screen.queryByText('2219 条待整理')).not.toBeInTheDocument();
   });
@@ -562,7 +598,7 @@ describe('MemoryFeature relations', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'knowledge.database.apply')).toBe(false);
   });
 
-  it('visibly preserves the Evidence, Atom, and Book architecture and catalog', async () => {
+  it('keeps memories, topics and source records as distinct catalog destinations', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
@@ -594,9 +630,9 @@ describe('MemoryFeature relations', () => {
     expect(within(architecture).getByRole('button', { name: /主题/ })).toHaveTextContent('4');
 
     const stageLabels = within(architecture).getAllByRole('button').map((stage) => (
-      within(stage).getByText(/^(?:来源记录|分批审核|已整理记忆|长期主题)$/).textContent
+      within(stage).getByText(/^(?:记忆|主题|来源)$/).textContent
     ));
-    expect(stageLabels).toEqual(['来源记录', '分批审核', '已整理记忆', '长期主题']);
+    expect(stageLabels).toEqual(['主题', '记忆', '来源']);
     expect(within(architecture).queryByRole('button', { name: /应用/ })).not.toBeInTheDocument();
     expect(within(architecture).queryByRole('button', { name: /标签/ })).not.toBeInTheDocument();
 
@@ -750,7 +786,9 @@ describe('MemoryFeature relations', () => {
 
     const row = await screen.findByRole('button', { name: /时间线必须审批后用于联想/ });
     await user.click(row);
-    expect(screen.getByRole('region', { name: '时间线必须审批后用于联想 详情' })).toHaveTextContent('审批后才会联想这部分内容。');
+    const topic = screen.getByRole('region', { name: '时间线必须审批后用于联想 主题页' });
+    await user.click(within(topic).getByText('查看已有摘要', { selector: 'summary' }));
+    expect(topic).toHaveTextContent('审批后才会联想这部分内容。');
     expect(screen.getByText('伙伴记忆 · 澄')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /时间线联想规则/ })).toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: '归属' }));
@@ -1056,6 +1094,7 @@ describe('MemoryFeature relations', () => {
     { layer: 'timelines', id: 'timeline:2026-07-18', kind: 'timeline', tab: '时间线' },
     { layer: 'role-books', id: 'revision:deep-link', kind: 'role_book_revision', tab: '伙伴记忆' },
   ])('opens the $layer deep link and selects its stable reference', async ({ id, kind, layer, tab }) => {
+    const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
         'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1 },
@@ -1081,6 +1120,10 @@ describe('MemoryFeature relations', () => {
     renderMemory(transport, `/memory?layer=${layer}&id=${encodeURIComponent(id)}`);
 
     expect(await screen.findByRole('tab', { name: tab, hidden: true })).toHaveAttribute('aria-selected', 'true');
+    if (layer === 'books') {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: '查看主题已有来源' }));
+    }
     expect(await screen.findByRole('dialog', { name: layer === 'evidence' ? '深链 来源' : `深链 ${layer}` })).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'memory.reference.get')).toBe(true);
   });
@@ -1151,6 +1194,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport, '/memory?layer=books&id=book%3Ainput-memory');
 
+    await user.click(await screen.findByRole('button', { name: '查看主题已有来源' }));
     const dialog = await screen.findByRole('dialog', { name: '输入法记忆 主题' });
     let path = within(dialog).getByRole('navigation', { name: '记忆来源路径' });
     expect(within(path).getByText('主题')).toBeInTheDocument();
@@ -1329,7 +1373,7 @@ describe('MemoryFeature relations', () => {
     await user.click(within(dialog).getByRole('button', { name: '保存' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑 长期主题' })).not.toBeInTheDocument());
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.edit')).toHaveLength(1);
-    expect(document.body).not.toHaveTextContent('book-1');
+    expect(screen.getByRole('main')).not.toHaveTextContent('book-1');
   });
 
   it('keeps a failed edit draft and replaces internal errors with friendly copy', async () => {
@@ -1824,7 +1868,8 @@ describe('MemoryFeature relations', () => {
     await user.click(within(pipelineStages).getByRole('button', { name: /主题/ }));
     const book = await screen.findByRole('button', { name: /控制中心迁移/ });
     await user.click(book);
-    const details = screen.getByRole('region', { name: '控制中心迁移 详情' });
+    const details = screen.getByRole('region', { name: '控制中心迁移 主题页' });
+    await user.click(within(details).getByText('查看已有摘要', { selector: 'summary' }));
     expect(within(details).getByText('React 页面与受控接口')).toBeInTheDocument();
     expect(screen.getByText('归档长期主题，以后不再自动参考；事实和来源关系仍会保留。')).toBeInTheDocument();
     expect(screen.queryByText('book-1')).not.toBeInTheDocument();
@@ -1897,6 +1942,8 @@ describe('MemoryFeature preferences', () => {
     expect(await screen.findByRole('heading', { name: '记忆偏好' })).toBeInTheDocument();
     expect(await screen.findByRole('switch', { name: '启用记忆增强' })).not.toBeChecked();
     expect(screen.queryByRole('tablist', { name: '记忆视图' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: '记忆页面' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: '记忆内容分类' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: '我的记忆' })).toHaveAttribute('data-paw-os-app', 'memory');
     expect(document.querySelector('.mgmt-page__header')).not.toBeInTheDocument();
   });
@@ -2115,7 +2162,7 @@ function renderMemoryOnDesktop(transport: MockControlTransport, openRoute: (rout
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
-    <MemoryRouter initialEntries={['/']}>
+    <MemoryRouter initialEntries={['/memory?layer=atoms']}>
       <MemoryLocationProbe />
       <TooltipProvider delayDuration={0}>
         <ControlTransportProvider transport={transport}>
@@ -2130,7 +2177,7 @@ function renderMemoryOnDesktop(transport: MockControlTransport, openRoute: (rout
   );
 }
 
-function renderMemory(transport: MockControlTransport, initialEntry = '/', pawOs = false) {
+function renderMemory(transport: MockControlTransport, initialEntry = '/memory?layer=atoms', pawOs = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });

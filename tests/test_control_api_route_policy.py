@@ -1261,6 +1261,27 @@ class ControlRoutePolicyTests(unittest.TestCase):
 
         self.assertIn("throughToday", route.remote_body)
 
+    def test_activity_timeline_selected_range_is_allowed_for_every_client(self) -> None:
+        request = ControlRequest(
+            request_id="request-activity-month",
+            path_id=ControlPathId.MEMORY_ACTIVITY_TIMELINE_BUILD.value,
+            body={
+                "date": "2026-08-12",
+                "throughToday": True,
+                "rangeStartDate": "2026-08-01",
+            },
+        )
+        for context in (
+            ControlAccessContext.native(),
+            ControlAccessContext.loopback_web(),
+            ControlAccessContext.remote(
+                device_id="phone-1",
+                scopes={ControlScope.MEMORY_WRITE.value},
+            ),
+        ):
+            with self.subTest(client=context.client_kind):
+                self.policy.authorize(request, context)
+
     def test_remote_body_allowlist_blocks_workspace_paths_and_privileged_modes(self) -> None:
         context = ControlAccessContext.remote(
             device_id="phone-1",

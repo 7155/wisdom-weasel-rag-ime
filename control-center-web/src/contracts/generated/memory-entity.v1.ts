@@ -16,6 +16,7 @@ export interface MemoryEntityV1 {
   entityRevision: string;
   project: string;
   entity: Node;
+  topicPage?: TopicPage;
   attributes: Attributes;
   connections: Page;
   members: Page;
@@ -38,6 +39,75 @@ export interface Node {
   memberCount: number;
   edgeCount: number;
   updatedAtMs: number;
+}
+export interface TopicPage {
+  schemaVersion: 'rag-ime.memory-topic-page.v1';
+  bookId: string;
+  revision: string;
+  authority: 'atom_projection';
+  freshness: 'current' | 'needs_refresh';
+  summary: string;
+  sections: {
+    /**
+     * @maxItems 256
+     */
+    current: TopicEntry[];
+    /**
+     * @maxItems 256
+     */
+    constraints: TopicEntry[];
+    /**
+     * @maxItems 256
+     */
+    openQuestions: TopicEntry[];
+    /**
+     * @maxItems 256
+     */
+    history: TopicEntry[];
+  };
+  /**
+   * @maxItems 80
+   */
+  sources: TopicReference[];
+  coverage: {
+    memberCount: number;
+    visibleAtomCount: number;
+    omittedAtomCount: number;
+    truncated: boolean;
+  };
+}
+export interface TopicEntry {
+  id: string;
+  text: string;
+  kind: string;
+  status: string;
+  claimState: 'current' | 'superseded';
+  /**
+   * @minItems 1
+   * @maxItems 1
+   */
+  atomIds: [string];
+  /**
+   * @maxItems 21
+   */
+  references: TopicReference[];
+  sourceStatus: 'available' | 'unavailable';
+  lineageId: string;
+  validFromMs: number;
+  validToMs: number | null;
+  supersedesId: string;
+  /**
+   * @maxItems 256
+   */
+  supersededByIds: string[];
+  reason: null;
+}
+export interface TopicReference {
+  kind: 'atom' | 'evidence' | 'event';
+  id: string;
+  referenceKind: 'atom' | 'evidence' | 'event';
+  referenceId: string;
+  label?: string;
 }
 export interface Attributes {
   type: string;

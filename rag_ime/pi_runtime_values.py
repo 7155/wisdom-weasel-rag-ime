@@ -26,6 +26,7 @@ __all__ = [
     "PiRuntimeCommandAcceptanceUnknown",
     "PiRuntimeCommandRejected",
     "PiRuntimeError",
+    "PiRuntimeSettlementLookupTimeout",
     "PiRuntimeTurnConflict",
     "as_integer",
     "as_mapping",
@@ -52,6 +53,17 @@ class PiRuntimeTurnConflict(PiRuntimeError):
     """A new prompt cannot start while this runtime owns an active turn."""
 
     error_code = "AGENT_TURN_CONFLICT"
+
+
+class PiRuntimeSettlementLookupTimeout(TimeoutError):
+    """Pi's settlement response was not observed; the turn outcome is unknown.
+
+    This is a read/transport failure, not evidence that the model exhausted its
+    execution lease. Callers may read the same identity again, but must not
+    cancel or replay an accepted turn merely because this lookup failed.
+    """
+
+    error_code = "PI_SETTLEMENT_LOOKUP_TIMEOUT"
 
 
 class PiRuntimeCommandAcceptanceUnknown(PiRuntimeError):

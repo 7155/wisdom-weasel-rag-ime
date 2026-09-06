@@ -63,6 +63,7 @@ import {
   type CapabilityPreference,
 } from './capability-policy';
 import { usePluginCatalog } from './api';
+import { PluginStudio } from './PluginStudio';
 import { useProductIdentity } from '@/features/identity/product-identity';
 import { openPawOsRoute, usePawOsAppActive, usePawOsAppIdentity, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { extensionAppInstallationMatches } from '@/paw-os/extensions/installation';
@@ -161,7 +162,7 @@ export function PluginsFeature() {
   const [hookError, setHookError] = useState('');
   const [showMaintenance, setShowMaintenance] = useState(Boolean(packageContextId));
   const nativeAppCenter = appSurface?.appId === 'app-center';
-  const nativePage = skillsView ? 'skills' : searchParams.get('view') === 'proposals' ? 'proposals' : 'installed';
+  const nativePage = skillsView ? 'skills' : searchParams.get('view') === 'studio' ? 'studio' : searchParams.get('view') === 'proposals' ? 'proposals' : 'installed';
   const items = catalog.data?.items ?? [];
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
@@ -731,15 +732,10 @@ export function PluginsFeature() {
   const authoringCalloutBlock = (
     <div className="plugin-authoring-callout">
       <span className="plugin-authoring-callout__icon"><Sparkles aria-hidden="true" size={18} /></span>
-      <span><strong>让{identity.assistantName}查找或创造新能力</strong><small>先搜索现有 Pi Package；没有合适能力时，再制作最小 Package。安装仍会停在上面的确认卡。</small></span>
+      <span><strong>制作自己的 App 与插件</strong><small>让 Agent 制作完整应用，或自己编写技能和提示词。</small></span>
       <Button
         leadingIcon={<MessageCircle size={16} />}
-        onClick={() => navigate({
-          pathname: '/agent',
-          search: new URLSearchParams({
-            draft: '/skill:plugin-creator 我需要一个新能力。先搜索市场和已安装 Pi Package；只有没有合适能力且值得复用时才创建最小 Package。完成来源检查并提交安装预览后停下，等待我的产品内确认；不要声称已经安装。',
-          }).toString(),
-        })}
+        onClick={() => desktop ? openPawOsRoute(desktop, '/plugins?view=studio') : navigate('/plugins?view=studio')}
       >获取或制作能力</Button>
     </div>
   );
@@ -1139,10 +1135,12 @@ export function PluginsFeature() {
 
   /* -- Native App Center: the window titlebar and the App navigation already
      name the App and the page, so each console carries only a slim purpose
-     heading. 已安装 is the one vertical view over capabilities, Packages and
-     automatic curation; 目录 and 建议 stay on their own routes. ------------ */
+     heading. 已安装 starts with installed Packages; the capability inventory
+     and automatic curation remain below it, with their own recovery controls.
+     目录 and 建议 stay on their own routes. ------------------------------- */
 
-  const nativeBody = nativePage === 'skills' ? (
+  const studioBlock = <><PluginStudio onPreview={(value) => { setPendingChange(value); setLifecycleError(''); }} />{approvalBlock}{receiptBlock}{errorBlock}</>;
+  const nativeBody = nativePage === 'studio' ? studioBlock : nativePage === 'skills' ? (
     <NativeConsole
       icon={Sparkles}
       title="Skills"
@@ -1174,17 +1172,6 @@ export function PluginsFeature() {
     </NativeConsole>
   ) : (
     <>
-      <NativeConsole
-        icon={Wrench}
-        title="能力与可见范围"
-        trailing={catalog.data ? <span className="plugins-count">{filtered.length} 项</span> : null}
-      >
-        <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
-          {capabilityOverviewBlock}
-          {capabilityBrowseBlock}
-        </QueryState>
-      </NativeConsole>
-
       <NativeConsole icon={Boxes} title="Pi Package" trailing={packageStatusBadge}>
         <QueryState error={packagesError} isPending={packagesPending} onRetry={retryPackages}>
           <div className="plugin-lifecycle">
@@ -1196,6 +1183,17 @@ export function PluginsFeature() {
             {sourceInstallBlock}
             {authoringCalloutBlock}
           </div>
+        </QueryState>
+      </NativeConsole>
+
+      <NativeConsole
+        icon={Wrench}
+        title="能力与可见范围"
+        trailing={catalog.data ? <span className="plugins-count">{filtered.length} 项</span> : null}
+      >
+        <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
+          {capabilityOverviewBlock}
+          {capabilityBrowseBlock}
         </QueryState>
       </NativeConsole>
 
@@ -1310,7 +1308,7 @@ export function PluginsFeature() {
       routeId="plugins"
       title={skillsView ? 'Skills 管理' : '插件管理'}
     >
-      {nativeAppCenter ? nativeBody : webBody}
+      {nativeAppCenter ? nativeBody : nativePage === 'studio' ? studioBlock : webBody}
     </ManagementPage>
   );
 }

@@ -2,6 +2,7 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
+  Bookmark,
   Bot,
   Check,
   CircleAlert,
@@ -28,6 +29,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { BrowserFindBar, type BrowserFindMatch } from '@/features/browser/BrowserFindBar';
+import { BrowserLibraryPanel, type BrowserLibraryView } from '@/features/browser/BrowserLibraryPanel';
 import { BrowserOmnibox } from '@/features/browser/BrowserOmnibox';
 import { BrowserPageStatus } from '@/features/browser/BrowserPageStatus';
 import { BrowserTabStrip, type BrowserTabItem } from '@/features/browser/BrowserTabStrip';
@@ -41,6 +43,8 @@ import {
   type PawBrowserGuestFaviconEvent,
   type PawBrowserGuestFoundInPageEvent,
   type PawBrowserGuestProcessGoneEvent,
+  type PawBrowserBookmark,
+  type PawBrowserDownload,
   type PawBrowserHistoryEntry,
   type PawBrowserWebview,
   type PawBrowserExtension,
@@ -94,6 +98,9 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const [history, setHistory] = useState<PawBrowserHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [historyQuery, setHistoryQuery] = useState('');
+  const [libraryView, setLibraryView] = useState<BrowserLibraryView | ''>('');
+  const [bookmarks, setBookmarks] = useState<PawBrowserBookmark[]>([]);
+  const [downloads, setDownloads] = useState<PawBrowserDownload[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [browserSettings, setBrowserSettings] = useState<PawBrowserSettings | null>(null);
   const [browserExtensions, setBrowserExtensions] = useState<PawBrowserExtension[]>([]);
@@ -106,6 +113,16 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const [zoomPercent, setZoomPercent] = useState(100);
   const [browserActionReceipt, setBrowserActionReceipt] = useState('');
   const [confirmingClear, setConfirmingClear] = useState<'' | 'history' | 'cache' | 'site-data'>('');
+  const bookmarksRevision = useRef(0);
+  const downloadsRevision = useRef(0);
+  const acceptBookmarks = useCallback((next: PawBrowserBookmark[]) => {
+    bookmarksRevision.current += 1;
+    setBookmarks(next);
+  }, []);
+  const acceptDownloads = useCallback((next: PawBrowserDownload[]) => {
+    downloadsRevision.current += 1;
+    setDownloads(next);
+  }, []);
   const hostWebviews = useRef(new Map<string, PawBrowserWebview>());
   const started = useRef(false);
   const openedTargetCommand = useRef('');
@@ -205,6 +222,8 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
 
   useEffect(() => electronHost?.onGuestClosed((tabId) => closeHostTab(tabId)), [electronHost, selectedHostTabId]);
   useEffect(() => electronHost?.onHistoryChanged(setHistory), [electronHost]);
+  useEffect(() => electronHost?.onBookmarksChanged?.(acceptBookmarks), [acceptBookmarks, electronHost]);
+  useEffect(() => electronHost?.onDownloadsChanged?.(acceptDownloads), [acceptDownloads, electronHost]);
   useEffect(() => electronHost?.onSelectTab((tabId) => setSelectedHostTabId(tabId)), [electronHost]);
 
   useEffect(() => {
@@ -265,8 +284,8 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
 
   // A pending destructive confirmation never outlives its surface.
   useEffect(() => {
-    if (!showHistory && !showSettings) setConfirmingClear('');
-  }, [showHistory, showSettings]);
+    if (!showHistory && !showSettings && !libraryView) setConfirmingClear('');
+  }, [libraryView, showHistory, showSettings]);
 
   const refreshBrowserHistory = useCallback(async () => {
     if (!electronHost) return;
@@ -284,11 +303,28 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     setStartPageDraft(value.startPage);
   }, [electronHost]);
 
+  const refreshBrowserLibrary = useCallback(async () => {
+    if (!electronHost) return;
+    // Each collection updates independently. A newer read, mutation, or host
+    // event invalidates an older snapshot before it can replace live state.
+    const bookmarkRead = ++bookmarksRevision.current;
+    const downloadRead = ++downloadsRevision.current;
+    await Promise.all([
+      (electronHost.getBookmarks ? electronHost.getBookmarks() : Promise.resolve([])).then((next) => {
+        if (bookmarkRead === bookmarksRevision.current) setBookmarks(next);
+      }),
+      (electronHost.getDownloads ? electronHost.getDownloads() : Promise.resolve([])).then((next) => {
+        if (downloadRead === downloadsRevision.current) setDownloads(next);
+      }),
+    ]);
+  }, [electronHost]);
+
   useEffect(() => {
     if (!electronHost || !surfaceActive || !pageVisible) return;
     void refreshBrowserSettings().then(() => undefined, (requestError) => setError(errorText(requestError)));
     void refreshBrowserHistory().then(() => undefined, (requestError) => setError(errorText(requestError)));
-  }, [electronHost, pageVisible, refreshBrowserHistory, refreshBrowserSettings, surfaceActive]);
+    void refreshBrowserLibrary().then(() => undefined, (requestError) => setError(errorText(requestError)));
+  }, [electronHost, pageVisible, refreshBrowserHistory, refreshBrowserLibrary, refreshBrowserSettings, surfaceActive]);
 
   useEffect(() => {
     if (!electronHost || !browserSettings || browserSettings.startPage === 'about:blank') return;
@@ -556,6 +592,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
 
   const findOnPage = (value: string, findNext = false, forward = true) => {
     setFindDraft(value);
+    if (value !== findDraft) setFindMatch(null);
     if (!value) {
       selectedWebview()?.stopFindInPage('clearSelection');
       setFindMatch(null);
@@ -615,6 +652,102 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     }
   };
 
+  const addCurrentBookmark = async () => {
+    if (!electronHost?.addBookmark || !selectedHostTab) {
+      setBrowserActionReceipt('当前 Browser 宿主还不支持书签存储');
+      return;
+    }
+    const url = selectedHostTab.url.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      setBrowserActionReceipt('只有 http(s) 页面可以收藏');
+      return;
+    }
+    setBusy('add-bookmark');
+    try {
+      acceptBookmarks(await electronHost.addBookmark({ title: selectedHostTab.title || url, url }));
+      setBrowserActionReceipt('当前页面已加入书签');
+    } catch (requestError) {
+      setBrowserActionReceipt(`添加书签失败：${errorText(requestError)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const removeBookmark = async (bookmarkId: string) => {
+    if (!electronHost?.removeBookmark) {
+      setBrowserActionReceipt('当前 Browser 宿主还不支持书签存储');
+      return;
+    }
+    setBusy('remove-bookmark');
+    try {
+      acceptBookmarks(await electronHost.removeBookmark(bookmarkId));
+    } catch (requestError) {
+      setBrowserActionReceipt(`删除书签失败：${errorText(requestError)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const openDownload = async (downloadId: string) => {
+    if (!electronHost?.openDownload) {
+      setBrowserActionReceipt('当前 Browser 宿主还不支持打开下载文件');
+      return;
+    }
+    setBusy('open-download');
+    try {
+      const receipt = await electronHost.openDownload(downloadId);
+      setBrowserActionReceipt(receipt.opened ? `已打开 ${receipt.filename}` : `未打开 ${receipt.filename}`);
+    } catch (requestError) {
+      setBrowserActionReceipt(`打开下载失败：${errorText(requestError)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const revealDownload = async (downloadId: string) => {
+    if (!electronHost?.revealDownload) {
+      setBrowserActionReceipt('当前 Browser 宿主还不支持显示下载位置');
+      return;
+    }
+    setBusy('reveal-download');
+    try {
+      const receipt = await electronHost.revealDownload(downloadId);
+      setBrowserActionReceipt(receipt.revealed ? `已定位 ${receipt.filename}` : `未定位 ${receipt.filename}`);
+    } catch (requestError) {
+      setBrowserActionReceipt(`定位下载失败：${errorText(requestError)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const cancelDownload = async (downloadId: string) => {
+    if (!electronHost?.cancelDownload) {
+      setBrowserActionReceipt('当前 Browser 宿主还不支持取消下载');
+      return;
+    }
+    setBusy('cancel-download');
+    const cancellationRevision = downloadsRevision.current;
+    try {
+      const receipt = await electronHost.cancelDownload(downloadId);
+      // A lifecycle event can finish the item while this IPC reply is in
+      // flight. Keep that newer state instead of replaying the older receipt.
+      if (cancellationRevision !== downloadsRevision.current) return;
+      downloadsRevision.current += 1;
+      setDownloads((current) => current.map((entry) => entry.id === receipt.id ? receipt : entry));
+      setBrowserActionReceipt(receipt.state === 'cancelled'
+        ? '下载已取消'
+        : receipt.state === 'completed'
+          ? '下载已完成，未取消'
+          : receipt.state === 'pending' || receipt.state === 'progressing'
+            ? '已请求取消下载，等待宿主确认'
+            : '下载已停止');
+    } catch (requestError) {
+      setBrowserActionReceipt(`取消下载失败：${errorText(requestError)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
   const clearHistory = async () => {
     if (!electronHost) return;
     setConfirmingClear('');
@@ -665,6 +798,21 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     }
     return groups;
   }, [visibleHistory]);
+
+  const openLibrary = (view: BrowserLibraryView) => {
+    setShowHistory(false);
+    setShowSettings(false);
+    setLibraryView(view);
+    void refreshBrowserLibrary().catch((requestError) => setError(errorText(requestError)));
+  };
+
+  const openBookmark = (bookmark: PawBrowserBookmark) => {
+    setLibraryView('');
+    navigateTo(bookmark.url);
+  };
+
+  const bookmarksAvailable = Boolean(electronHost?.getBookmarks && electronHost?.addBookmark && electronHost?.removeBookmark);
+  const downloadsAvailable = Boolean(electronHost?.getDownloads && electronHost?.openDownload && electronHost?.revealDownload && electronHost?.cancelDownload);
 
   const homePage = electronHost ? (browserSettings?.startPage || 'about:blank') : 'about:blank';
 
@@ -786,7 +934,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
               aria-label="浏览历史"
               className="paw-browser-history-toggle"
               disabled={Boolean(busy)}
-              onClick={() => { setShowSettings(false); setShowHistory((value) => !value); }}
+              onClick={() => { setShowSettings(false); setLibraryView(''); setShowHistory((value) => !value); }}
               title="浏览历史"
               type="button"
             >
@@ -795,10 +943,38 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
           ) : null}
           {electronHost ? (
             <button
+              aria-label="书签"
+              aria-pressed={libraryView === 'bookmarks'}
+              className="paw-browser-bookmarks-toggle"
+              data-active={libraryView === 'bookmarks' || undefined}
+              disabled={Boolean(busy)}
+              onClick={() => libraryView === 'bookmarks' ? setLibraryView('') : openLibrary('bookmarks')}
+              title="书签"
+              type="button"
+            >
+              <Bookmark size={14} />
+            </button>
+          ) : null}
+          {electronHost ? (
+            <button
+              aria-label="下载记录"
+              aria-pressed={libraryView === 'downloads'}
+              className="paw-browser-downloads-toggle"
+              data-active={libraryView === 'downloads' || undefined}
+              disabled={Boolean(busy)}
+              onClick={() => libraryView === 'downloads' ? setLibraryView('') : openLibrary('downloads')}
+              title="下载记录"
+              type="button"
+            >
+              <Download size={14} />
+            </button>
+          ) : null}
+          {electronHost ? (
+            <button
               aria-label="Browser 设置"
               className="paw-browser-settings-toggle"
               disabled={Boolean(busy)}
-              onClick={() => { setShowHistory(false); setShowSettings((value) => !value); if (!showSettings) void refreshBrowserSettings(); }}
+              onClick={() => { setShowHistory(false); setLibraryView(''); setShowSettings((value) => !value); if (!showSettings) void refreshBrowserSettings(); }}
               title="Browser 设置"
               type="button"
             >
@@ -846,8 +1022,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
               </div>
               <button onClick={() => void takeScreenshot()} role="menuitem" type="button"><Camera size={13} />截图</button>
               <button onClick={() => void openDownloads()} role="menuitem" type="button"><Download size={13} />下载</button>
-              <button className="paw-browser-menu-narrow-only" onClick={() => { setShowSettings(false); setShowHistory(true); setShowBrowserMenu(false); void refreshBrowserHistory(); }} role="menuitem" type="button"><History size={13} />浏览历史</button>
-              <button className="paw-browser-menu-narrow-only" onClick={() => { setShowHistory(false); setShowSettings(true); setShowBrowserMenu(false); void refreshBrowserSettings(); }} role="menuitem" type="button"><Settings size={13} />浏览器设置</button>
+              <button onClick={() => { openLibrary('bookmarks'); setShowBrowserMenu(false); }} role="menuitem" type="button"><Bookmark size={13} />书签</button>
+              <button onClick={() => { openLibrary('downloads'); setShowBrowserMenu(false); }} role="menuitem" type="button"><Download size={13} />下载记录</button>
+              <button className="paw-browser-menu-narrow-only" onClick={() => { setShowSettings(false); setLibraryView(''); setShowHistory(true); setShowBrowserMenu(false); void refreshBrowserHistory(); }} role="menuitem" type="button"><History size={13} />浏览历史</button>
+              <button className="paw-browser-menu-narrow-only" onClick={() => { setShowHistory(false); setLibraryView(''); setShowSettings(true); setShowBrowserMenu(false); void refreshBrowserSettings(); }} role="menuitem" type="button"><Settings size={13} />浏览器设置</button>
             </div>
           ) : null}
         </div>
@@ -860,6 +1038,15 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
         <div className="paw-browser-viewport" data-agent-state={agentExecutionState || undefined}>
           {selectedGuestLoading ? (
             <span aria-hidden="true" className="paw-browser-loadbar" />
+          ) : null}
+          {!electronHost ? (
+            <div aria-label="Browser 宿主能力说明" className="paw-browser-host-notice" role="note">
+              <Globe2 aria-hidden="true" size={16} />
+              <span>
+                <strong>完整浏览器请在 PAW 桌面应用中使用</strong>
+                <small>这里是网页控制视图。历史、书签和下载记录保存在桌面应用中。</small>
+              </span>
+            </div>
           ) : null}
           {electronHost && showFind ? (
             <BrowserFindBar
@@ -919,6 +1106,25 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
                 ) : <p>{history.length ? '没有匹配的浏览记录' : '还没有浏览记录'}</p>}
               </div>
             </section>
+          ) : null}
+          {electronHost && libraryView ? (
+            <BrowserLibraryPanel
+              bookmarks={bookmarks}
+              bookmarksAvailable={bookmarksAvailable}
+              busy={busy}
+              currentPage={selectedHostTab ? { title: selectedHostTab.title, url: selectedHostTab.url } : undefined}
+              downloads={downloads}
+              downloadsAvailable={downloadsAvailable}
+              onAddBookmark={() => void addCurrentBookmark()}
+              onCancelDownload={(downloadId) => void cancelDownload(downloadId)}
+              onClose={() => setLibraryView('')}
+              onOpenBookmark={openBookmark}
+              onOpenDownload={(downloadId) => void openDownload(downloadId)}
+              onOpenDownloadsFolder={() => void openDownloads()}
+              onRemoveBookmark={(bookmarkId) => void removeBookmark(bookmarkId)}
+              onRevealDownload={(downloadId) => void revealDownload(downloadId)}
+              view={libraryView}
+            />
           ) : null}
           {electronHost && showSettings ? (
             <section aria-label="Browser 设置" className="paw-browser-settings">

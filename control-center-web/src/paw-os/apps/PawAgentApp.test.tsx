@@ -11,6 +11,8 @@ import { PawOsAppSurfaceProvider, PawOsDesktopProvider } from '@/features/paw-os
 import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 import { PawAgentApp } from './PawAgentApp';
+import { useRoomLiveStore } from '@/features/rooms/state/live-store';
+import { parseRoomEvent } from '@/contracts/validators';
 
 vi.mock('./PawSessionWorkspace', () => ({
   PawSessionWorkspace: ({ record, recordId }: { record?: { id?: string; evaluationSnapshot?: boolean }; recordId: string }) => (
@@ -30,6 +32,7 @@ vi.mock('@/features/roles', () => ({ RolesFeature: () => <div>角色工作区</d
 
 afterEach(() => {
   cleanup();
+  useRoomLiveStore.getState().reset();
   delete window.pawBrowserHost;
 });
 
@@ -49,7 +52,7 @@ describe('PAWOS Agent App', () => {
 
       // The first interactive surface is already stable, but the four catalog
       // requests are not allowed to consume the Dock click's paint frame.
-      expect(screen.getByRole('heading', { name: '交给 Agent 一件事。' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: '今天想完成什么？' })).toBeInTheDocument();
       expect(catalogRequestPaths(transport)).toEqual([]);
       expect(frames).toHaveLength(1);
 
@@ -95,7 +98,7 @@ describe('PAWOS Agent App', () => {
   it('uses one rail for Sessions and Rooms and starts on the central new-work composer', async () => {
     renderAgent();
 
-    expect(await screen.findByRole('heading', { name: '交给 Agent 一件事。' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '今天想完成什么？' })).toBeInTheDocument();
     const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
     expect(within(rail).getByText('工作记录')).toBeInTheDocument();
     expect(await within(rail).findByRole('button', { name: /^发布检查/ })).toBeInTheDocument();
@@ -256,7 +259,7 @@ describe('PAWOS Agent App', () => {
     expect(await within(rail).findByText('Trace 地基')).toBeInTheDocument();
   });
 
-  it('labels an active conversation with a completed Root WorkItem as completed', async () => {
+  it('labels delivered WorkItems without claiming a Runtime terminal before Room hydration', async () => {
     renderAgent(createTransport({
       rooms: [roomFixture({
         workItems: [
@@ -272,8 +275,33 @@ describe('PAWOS Agent App', () => {
 
     const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
     const roomRow = await within(rail).findByRole('button', { name: /迁移作战室/ });
-    expect(within(roomRow).getByText(/^已完成 · 2 位伙伴/)).toBeInTheDocument();
+    expect(within(roomRow).getByText(/^已有交付 · 2 位伙伴/)).toBeInTheDocument();
     expect(within(roomRow).queryByText(/^进行中 ·/)).not.toBeInTheDocument();
+  });
+
+  it('does not infer a live execution from an unfinished WorkItem in the directory', async () => {
+    renderAgent(createTransport({ rooms: [roomFixture({ workItems: [workItemFixture({ state: 'active' })] })], sessions: [] }));
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    const row = await within(rail).findByRole('button', { name: /迁移作战室/ });
+    expect(within(row).getByText(/^有待办 ·/)).toBeInTheDocument();
+    expect(row.closest('[data-work-state]')).toHaveAttribute('data-work-state', 'neutral');
+    expect(row).not.toHaveTextContent('进行中');
+  });
+
+  it('updates the Room list from the same terminal projection as the open workspace', async () => {
+    const room = roomFixture({ workItems: [workItemFixture({ state: 'done', resultSummary: '已交付的成果' })] });
+    renderAgent(createTransport({ rooms: [room], sessions: [] }));
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    const row = await within(rail).findByRole('button', { name: /迁移作战室/ });
+    act(() => useRoomLiveStore.getState().applyEvents(room.id, [parseRoomEvent({
+      schemaVersion: 'rag-ime.agent-room-event.v1', roomId: room.id,
+      eventId: `${room.id}:1`, sequence: 1, resumeToken: `${room.id}:1`,
+      turnId: 'cancelled-root', eventType: 'participant_status',
+      participantId: null, sourceSessionId: '', createdAtMs: 10,
+      payload: { status: 'cancellation_applied', rootId: 'cancelled-root', cancellationReceiptId: 'cancel-1', pendingTargets: [] },
+    })]));
+    expect(within(row).getByText(/^本轮已停止 ·/)).toBeInTheDocument();
+    expect(within(row).getByText('最近结果：已交付的成果')).toBeInTheDocument();
   });
 
   it('exposes the rail relationship and returns focus when Escape closes it', async () => {
@@ -328,7 +356,7 @@ describe('PAWOS Agent App', () => {
       </QueryClientProvider>,
     );
 
-    await screen.findByRole('heading', { name: '交给 Agent 一件事。' });
+    await screen.findByRole('heading', { name: '今天想完成什么？' });
     await waitFor(() => expect(bindAgentMain).toHaveBeenCalledWith('agent'));
     const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
 
@@ -353,7 +381,7 @@ describe('PAWOS Agent App', () => {
       }),
     }));
 
-    expect(await screen.findByRole('button', { name: '模型与推理 · GPT-5.6 Sol · Max' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '模型与推理：GPT-5.6 Sol · gpt · 最高' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /只读/ })).toBeInTheDocument();
   });
 
@@ -363,7 +391,9 @@ describe('PAWOS Agent App', () => {
     renderAgent(createTransport({ modelCatalog: modelCatalog(), preferencesHandler: () => settings.promise }));
 
     await user.click(await screen.findByRole('button', { name: /GPT-5\.6 Luna/ }));
-    await user.click(await screen.findByRole('menuitemradio', { name: 'GPT-5.6 Sol' }));
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    await user.click(within(picker).getByRole('button', { name: /更换模型/ }));
+    await user.click(within(picker).getByRole('option', { name: '选择模型 GPT-5.6 Sol' }));
     settings.resolve(preferenceSettings({
       modelReference: 'gpt/gpt-5.6-terra',
       thinkingLevel: 'high',
@@ -371,8 +401,8 @@ describe('PAWOS Agent App', () => {
     }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: /只读/ })).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /GPT-5\.6 Sol/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /GPT-5\.6 Terra · High/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '模型与推理：GPT-5.6 Sol · gpt · 高' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /模型与推理：GPT-5\.6 Terra/ })).not.toBeInTheDocument();
   });
 
   it('shows an explicit configuration recovery action when composer defaults cannot be read', async () => {
@@ -382,16 +412,23 @@ describe('PAWOS Agent App', () => {
     expect(screen.getByRole('button', { name: '重新读取' })).toBeInTheDocument();
   });
 
-  it('reports only real model-catalog facts on the home footer instead of a runtime connectivity claim', async () => {
+  it('reports real model-catalog facts in the picker without a runtime connectivity claim', async () => {
+    const user = userEvent.setup();
     const empty = renderAgent();
-    await screen.findByRole('heading', { name: '交给 Agent 一件事。' });
+    await screen.findByRole('heading', { name: '今天想完成什么？' });
     expect(screen.queryByText(/Pi Runtime/)).not.toBeInTheDocument();
     expect(screen.queryByText(/个可用模型/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /模型与推理/ })).toBeDisabled();
     empty.unmount();
 
     renderAgent(createTransport({ modelCatalog: modelCatalog() }));
-    expect(await screen.findByText('3 个可用模型')).toBeInTheDocument();
-    expect(screen.getByText(/默认模型 gpt-5\.6-luna/)).toBeInTheDocument();
+    const model = await screen.findByRole('button', { name: '模型与推理：GPT-5.6 Luna · gpt · 高' });
+    expect(model).toBeEnabled();
+    await user.click(model);
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    await user.click(within(picker).getByRole('button', { name: /更换模型/ }));
+    expect(within(picker).getAllByRole('option')).toHaveLength(3);
+    expect(within(picker).getByRole('option', { name: '选择模型 GPT-5.6 Luna' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/Pi Runtime/)).not.toBeInTheDocument();
   });
 
@@ -571,7 +608,8 @@ describe('PAWOS Agent App', () => {
     const briefId = composer.getAttribute('aria-describedby') ?? '';
     expect(briefId).not.toBe('');
     const sessionBrief = document.getElementById(briefId);
-    expect(sessionBrief).toHaveTextContent('一位 Agent 在同一条时间线里完成这件事');
+    expect(screen.getByRole('radio', { name: 'Session' })).toBeChecked();
+    expect(sessionBrief).toHaveTextContent('随时补充想法，也可以暂停。');
 
     await user.click(screen.getByRole('radio', { name: 'Room' }));
     const roomBrief = within(document.getElementById(briefId) as HTMLElement);
@@ -611,11 +649,18 @@ describe('PAWOS Agent App', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('部分 Agent 目录暂时不可用。');
     expect(screen.queryByText(/Pi Runtime 已连接/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '交给 Trace Agent' })).toBeInTheDocument();
+    expect(modelCalls).toBe(1);
 
     await user.click(screen.getByRole('button', { name: '重新读取目录' }));
 
-    expect(await screen.findByText('3 个可用模型')).toBeInTheDocument();
+    const model = await screen.findByRole('button', { name: '模型与推理：GPT-5.6 Luna · gpt · 高' });
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(modelCalls).toBe(2);
+    expect(model).toBeEnabled();
+    await user.click(model);
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    await user.click(within(picker).getByRole('button', { name: /更换模型/ }));
+    expect(within(picker).getAllByRole('option')).toHaveLength(3);
   });
 
   it('states the archived Session state on its revealed rail row', async () => {
@@ -682,7 +727,7 @@ describe('PAWOS Agent App', () => {
     renderAgent(transport);
 
     await user.click(await screen.findByRole('button', { name: '起始项目 · work/paw' }));
-    await user.click(await screen.findByRole('button', { name: '浏览其他目录…' }));
+    await user.click(await screen.findByRole('menuitem', { name: '浏览其他目录…' }));
     await waitFor(() => expect(pickWorkspaceDirectory).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('button', { name: '起始项目 · work/paw-natural' })).toBeInTheDocument();
 

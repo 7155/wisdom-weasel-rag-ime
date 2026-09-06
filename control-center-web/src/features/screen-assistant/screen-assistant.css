@@ -1,0 +1,25 @@
+.screen-assistant.paw-desktop-root {
+  position: relative; display: flex; flex-direction: column; height: 100dvh;
+  min-height: 0; overflow: hidden; background: var(--surface-primary, #fff); color: var(--text-primary, #20242c);
+}
+.screen-assistant__header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px 12px; gap: 12px; border-bottom: 1px solid var(--border-subtle, #e4e7ec); }
+.screen-assistant__header strong { display: block; font-size: 17px; font-weight: 600; }
+.screen-assistant__header span { display: block; margin-top: 3px; font-size: 12px; color: var(--text-secondary, #666); }
+.screen-assistant__tools { display: flex; gap: 6px; }
+.screen-assistant button { cursor: pointer; }
+.screen-assistant__tools button { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--border-subtle, #e4e7ec); border-radius: 8px; background: transparent; color: inherit; }
+.screen-assistant__source { margin: 0; padding: 10px 20px; border-bottom: 1px solid var(--border-subtle, #e4e7ec); }
+.screen-assistant__source summary { font-size: 12px; cursor: pointer; }
+.screen-assistant__source summary span { margin-left: 8px; color: var(--text-secondary, #666); font-variant-numeric: tabular-nums; }
+.screen-assistant__source img { display: block; margin: 10px auto 0; max-width: 100%; width: auto; max-height: 140px; object-fit: contain; border-radius: 4px; }
+.screen-assistant__actions { display: flex; flex-wrap: wrap; padding: 10px 20px; gap: 6px; }
+.screen-assistant__actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 5px 10px; border: 1px solid var(--border-subtle, #e4e7ec); border-radius: 7px; background: transparent; color: inherit; font-size: 12px; }
+.screen-assistant__actions button:hover:not(:disabled), .screen-assistant__tools button:hover { background: var(--surface-hover, #f0f3f8); }
+.screen-assistant button:disabled { opacity: .45; cursor: default; }
+.screen-assistant button:focus-visible, .screen-assistant summary:focus-visible { outline: 2px solid #4276df; outline-offset: 2px; }
+.screen-assistant__conversation { flex: 1; min-height: 0; display: grid; }
+.screen-assistant.paw-desktop-root .paw-session-workspace[data-appearance='embedded'] { min-height: 0; height: 100%; grid-template-rows: minmax(0, 1fr); }
+.screen-assistant__notice, .screen-assistant__error, .screen-assistant__loading { margin: 0; padding: 10px 20px; font-size: 13px; }
+.screen-assistant__notice { color: var(--text-secondary, #526174); }
+.screen-assistant__error { border-top: 1px solid var(--border-subtle, #e4e7ec); color: var(--status-error, #b42318); }
+@media (max-height: 650px) { .screen-assistant__source img { max-height: 80px; } }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Brain, Gauge, RefreshCw, Save } from 'lucide-react';
 import { useControlTransport } from '@/app/control-transport';
@@ -76,16 +76,12 @@ export function MemoryPreferences() {
   });
   const persisted = useMemo(() => memoryPreferenceDraft(settingsQuery.data), [settingsQuery.data]);
   const recallContract = useMemo(() => memoryRecallRuntimeContract(settingsQuery.data), [settingsQuery.data]);
-  const [draft, setDraft] = useState<MemoryPreferenceDraft | null>(null);
+  const [draft, setDraft] = useState<Partial<MemoryPreferenceDraft>>({});
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
   const [saveError, setSaveError] = useState('');
 
-  useEffect(() => {
-    if (settingsQuery.data && draft === null) setDraft(persisted);
-  }, [draft, persisted, settingsQuery.data]);
-
-  const current = draft ?? persisted;
+  const current = { ...persisted, ...draft };
   const changes = memoryPreferenceChanges(persisted, current);
   const routeIds = new Set(capabilitiesQuery.data?.routeIds ?? []);
   const writesSupported = Boolean(
@@ -98,6 +94,9 @@ export function MemoryPreferences() {
   const queryError = rawError
     ? new Error(publicErrorText(rawError, '暂时无法读取本机记忆偏好，请刷新后重试。'))
     : null;
+  const hasLoadedPreferences = Boolean(settingsQuery.data && capabilitiesQuery.data);
+  const reading = settingsQuery.isFetching || capabilitiesQuery.isFetching;
+  const editingDisabled = !writesSupported || saving || reading || Boolean(queryError);
 
   return (
     <div
@@ -110,16 +109,19 @@ export function MemoryPreferences() {
         title="记忆偏好"
       >
       <QueryState
-        error={queryError}
+        error={hasLoadedPreferences ? null : queryError}
         isPending={settingsQuery.isPending || capabilitiesQuery.isPending}
-        onRetry={() => { void Promise.all([settingsQuery.refetch(), capabilitiesQuery.refetch()]); }}
+        onRetry={() => void reread()}
       >
+        {queryError && hasLoadedPreferences ? (
+          <InlineNotice title="暂时无法更新记忆偏好" tone="warning">{queryError.message} 当前选择仍保留，重新读取成功后可继续保存。</InlineNotice>
+        ) : null}
         <div className="memory-preferences__intro">
           <span aria-hidden="true"><Brain size={22} /></span>
           <div><strong>把第二大脑调成你的记忆方式</strong><p>这里不会删除既有记忆；偏好会从下一次整理和召回开始生效。</p></div>
-          <span className="memory-preferences__persistence" data-state={!writesSupported ? 'read-only' : Object.keys(changes).length ? 'pending' : 'synced'}>
+          <span className="memory-preferences__persistence" data-state={queryError ? 'pending' : !writesSupported ? 'read-only' : Object.keys(changes).length ? 'pending' : 'synced'}>
             <i aria-hidden="true" />
-            {!writesSupported ? '只读' : Object.keys(changes).length ? '等待保存' : '已从本机读取'}
+            {queryError ? '等待读取最新设置' : !writesSupported ? '只读' : Object.keys(changes).length ? '等待保存' : '已从本机读取'}
           </span>
         </div>
         <div className="memory-preferences__recall-policy" aria-label="Agent 记忆召回策略">
@@ -133,6 +135,7 @@ export function MemoryPreferences() {
         <div className="memory-preferences__master">
           <Switch
             checked={current.memoryEnabled}
+            disabled={editingDisabled}
             description="总开关：关闭后不记录、不整理，也不会把记忆召回到 Agent 上下文；不会删除已经保存的记忆。"
             label="启用记忆增强"
             onCheckedChange={(checked) => updateDraft({ memoryEnabled: checked })}
@@ -142,6 +145,7 @@ export function MemoryPreferences() {
           <Field description="用户习惯、长期选择和反复确认的偏好会按这个强度保留。" htmlFor="memory-stable-preference" label="稳定偏好">
             <Select
               aria-label="稳定偏好"
+              disabled={editingDisabled}
               id="memory-stable-preference"
               onValueChange={(value) => updateDraft({ stablePreference: value })}
               options={stablePreferenceOptions}
@@ -151,6 +155,7 @@ export function MemoryPreferences() {
           <Field description="一次性安排、临时状态和短期细节会按这个速度降低召回权重。" htmlFor="memory-temporary-details" label="临时事项">
             <Select
               aria-label="临时事项"
+              disabled={editingDisabled}
               id="memory-temporary-details"
               onValueChange={(value) => updateDraft({ temporaryDetails: value })}
               options={temporaryDetailOptions}
@@ -160,6 +165,7 @@ export function MemoryPreferences() {
           <Field description="决定回答时带回多少已治理记忆；越详细，带回的上下文越多。" htmlFor="memory-recall-detail" label="召回详细程度">
             <Select
               aria-label="召回详细程度"
+              disabled={editingDisabled}
               id="memory-recall-detail"
               onValueChange={(value) => updateDraft({ recallDetail: value })}
               options={recallDetailOptions}
@@ -169,6 +175,7 @@ export function MemoryPreferences() {
           <div className="memory-preferences__switch">
             <Switch
               checked={current.includeAgentDialogue}
+              disabled={editingDisabled}
               description="关闭后，新的自动整理不再把 Agent 对话摘要作为辅助上下文；不会删除已经保存的记忆。"
               label="让 Agent 对话摘要参与整理"
               onCheckedChange={(checked) => updateDraft({ includeAgentDialogue: checked })}
@@ -177,6 +184,7 @@ export function MemoryPreferences() {
           <div className="memory-preferences__switch">
             <Switch
               checked={current.timelineEnabled}
+              disabled={editingDisabled}
               description="仅控制带明确日期或时间表达的召回是否进入时间线通道；它不是记忆召回总开关。"
               label="按需召回时间线"
               onCheckedChange={(checked) => updateDraft({ timelineEnabled: checked })}
@@ -185,6 +193,7 @@ export function MemoryPreferences() {
           <Field description="限制一次时间线召回带回的条目数，避免挤占当前任务上下文。" htmlFor="memory-timeline-max-items" label="时间线召回上限">
             <Select
               aria-label="时间线召回上限"
+              disabled={editingDisabled}
               id="memory-timeline-max-items"
               onValueChange={(value) => updateDraft({ timelineMaxItems: value })}
               options={timelineMaxItemsOptions}
@@ -199,19 +208,20 @@ export function MemoryPreferences() {
         {saveError ? <InlineNotice title="记忆偏好没有保存" tone="danger">{saveError}</InlineNotice> : null}
         <div className="memory-preferences__actions">
           <Button
-            disabled={!writesSupported || !Object.keys(changes).length || saving}
+            disabled={editingDisabled || !Object.keys(changes).length}
             leadingIcon={<Save size={15} />}
             loading={saving}
             onClick={() => void save()}
             size="small"
           >保存记忆偏好</Button>
           <Button
+            disabled={saving || reading}
             leadingIcon={<RefreshCw size={15} />}
-            onClick={() => { setDraft(null); setSuccess(''); setSaveError(''); void settingsQuery.refetch(); }}
+            onClick={() => void reread()}
             size="small"
             variant="quiet"
           >重新读取</Button>
-          <span>{Object.keys(changes).length ? `${Object.keys(changes).length} 项待保存` : '已与本机设置同步'}</span>
+          <span>{queryError ? '当前偏好等待重新核对' : Object.keys(changes).length ? `${Object.keys(changes).length} 项待保存` : '已与本机设置同步'}</span>
         </div>
       </QueryState>
       </ManagementSection>
@@ -219,14 +229,27 @@ export function MemoryPreferences() {
   );
 
   function updateDraft(change: Partial<MemoryPreferenceDraft>) {
-    setDraft((value) => ({ ...(value ?? persisted), ...change }));
+    setDraft((value) => {
+      const next = { ...value, ...change };
+      for (const key of Object.keys(change) as (keyof MemoryPreferenceDraft)[]) {
+        if (next[key] === persisted[key]) delete next[key];
+      }
+      return next;
+    });
     setSuccess('');
     setSaveError('');
   }
 
+  async function reread(): Promise<void> {
+    setSuccess('');
+    setSaveError('');
+    const [refreshed] = await Promise.all([settingsQuery.refetch(), capabilitiesQuery.refetch()]);
+    if (!refreshed.isError && refreshed.data) setDraft({});
+  }
+
   async function save(): Promise<void> {
     const runtimeRevision = settingsRuntimeRevision(settingsQuery.data);
-    if (saving || !writesSupported || runtimeRevision === null || !Object.keys(changes).length) return;
+    if (editingDisabled || runtimeRevision === null || !Object.keys(changes).length) return;
     setSaving(true);
     setSuccess('');
     setSaveError('');
@@ -255,8 +278,11 @@ export function MemoryPreferences() {
         preview.payloadSha256,
       );
       const refreshed = await settingsQuery.refetch();
-      if (!refreshed.data) throw new Error('保存完成，但暂时无法重新读取本机偏好，请点击重新读取。');
-      setDraft(memoryPreferenceDraft(refreshed.data));
+      if (refreshed.isError || !refreshed.data) {
+        setSuccess('已写入本机设置，但尚未读到最新偏好。请重新读取后核对。');
+        return;
+      }
+      setDraft({});
       setSuccess('已写入本机设置并重新读取；之后的记忆整理与召回会使用这些偏好。');
     } catch (error) {
       setSaveError(publicErrorText(error, '保存失败，本次修改没有被当作已生效；请重新读取后重试。'));

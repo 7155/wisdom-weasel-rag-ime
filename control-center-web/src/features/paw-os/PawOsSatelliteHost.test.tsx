@@ -396,11 +396,12 @@ describe('PawOsSatelliteHost', () => {
     expect(timeline.querySelector('.ccui-tool-card.status-running')).toHaveTextContent('正在读取 PawWindowLayer.tsx');
     expect(screen.queryByRole('banner', { name: '实现伙伴 当前上下文' })).not.toBeInTheDocument();
     expect(document.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
-    expect(transport.requests.map(({ request }) => request.pathId)).toEqual([
+    expect(transport.requests.map(({ request }) => request.pathId).filter((path) => path !== 'agent.session.models')).toEqual([
       'agent.room.get',
       'agent.room.conversationSnapshot',
       'agent.room.snapshot',
     ]);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.models').map(({ request }) => request.params?.sessionId)).toEqual(['session-a']);
   });
 
   it('hydrates a cold planet from the message-first Room snapshot and applies live messages immediately', async () => {

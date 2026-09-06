@@ -345,6 +345,8 @@
 /* The shared conversation surface owns its own scroller, so the Room slot is
    only the bounded box it fills. */
 .paw-room-timeline { min-width: 0; min-height: 0; display: grid; overflow: hidden; }
+.paw-room-message-workspace { min-width: 0; min-height: 0; overflow: auto; padding: clamp(12px, 2vw, 24px); scrollbar-gutter: stable; }
+.paw-room-message-workspace > .paw-room-focus-overview { width: min(100%, 1180px); margin-inline: auto; }
 .paw-room-timeline > .ccui-conversation-surface { --ccui-reading-width: 900px; }
 .paw-room-timeline .ccui-transcript-scroll { padding: 22px 0 30px; }
 .paw-room-workspace__loading { min-height: 280px; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--paw-muted); font-size: 12px; }

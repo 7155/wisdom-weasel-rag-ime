@@ -6,10 +6,12 @@ import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.request import Request, urlopen
 
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler
+from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.memory_maintenance_settings import MemoryMaintenanceSettings
 
 
 class ActivityTimelineControlApiTests(unittest.TestCase):
@@ -132,6 +134,65 @@ class ActivityTimelineControlApiTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(RuntimeError, "Another Memory organization job"):
             service.activity_timeline_build({"date": "2026-07-17"})
+
+    def test_build_preserves_selected_range_in_gateway_job(self) -> None:
+        service = object.__new__(DebugImeService)
+        service.config = SimpleNamespace(project="project-a", server_name="agent gateway")
+        service._agent_runtime_execution_owner = True
+        service.memory_maintenance_jobs = Mock()
+        service.memory_maintenance_jobs.trigger.return_value = {
+            "ok": True, "jobId": "memory-maintenance:month", "state": "queued",
+        }
+
+        service.activity_timeline_build({
+            "date": "2026-08-12", "throughToday": True, "rangeStartDate": "2026-08-01",
+        })
+
+        service.memory_maintenance_jobs.trigger.assert_called_once_with({
+            "project": "project-a", "manual": True, "maxSources": 1,
+            "timelineOnly": True, "timelineDate": "",
+            "timelineThroughDate": "2026-08-12", "timelineStartDate": "2026-08-01",
+        })
+
+    def test_build_rejects_invalid_range_before_admitting_a_job(self) -> None:
+        service = object.__new__(DebugImeService)
+        service.config = SimpleNamespace(project="project-a", server_name="agent gateway")
+        service._agent_runtime_execution_owner = True
+        service.memory_maintenance_jobs = Mock()
+        service.memory_maintenance_jobs.trigger.return_value = {"ok": True, "state": "queued"}
+
+        for body in (
+            {"date": "2026-08-12", "throughToday": True, "rangeStartDate": "2026-08-13"},
+            {"date": "2026-08-12", "throughToday": True, "rangeStartDate": "2026-02-30"},
+            {"date": "2026-08-32", "throughToday": True, "rangeStartDate": "2026-08-01"},
+            {"date": "2026-08-12", "rangeStartDate": "2026-08-01"},
+        ):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                service.activity_timeline_build(body)
+        service.memory_maintenance_jobs.trigger.assert_not_called()
+
+    def test_gateway_worker_passes_selected_range_to_activity_runner(self) -> None:
+        service = object.__new__(DebugImeService)
+        service.config = SimpleNamespace(project="project-a")
+        service.core = object.__new__(LocalSqliteCoreClient)
+        service.core.db_path = Path("unused-memory-range-fixture.sqlite")
+        service.agent = SimpleNamespace(runtime=object())
+        progress = Mock()
+        with (
+            patch("rag_ime.debug_server.MemoryMaintenanceSettings.load", return_value=MemoryMaintenanceSettings()),
+            patch("rag_ime.debug_server.build_governed_memory_model_executor"),
+            patch("rag_ime.debug_server.ManagedPiMemoryOrganizer"),
+            patch("rag_ime.debug_server.PersonalContextMaintenanceRunner") as runner_class,
+        ):
+            runner_class.return_value.build_activity_timelines_through.return_value = {"ok": True}
+            service._execute_gateway_memory_maintenance({
+                "project": "project-a", "manual": True, "timelineOnly": True,
+                "timelineThroughDate": "2026-08-12", "timelineStartDate": "2026-08-01",
+                "_progressCallback": progress,
+            })
+            runner_class.return_value.build_activity_timelines_through.assert_called_once_with(
+                "2026-08-12", start_date="2026-08-01", progress=progress,
+            )
 
     def test_http_routes_expose_review_build_approve_and_reject(self) -> None:
         service = _TimelineHandlerService()

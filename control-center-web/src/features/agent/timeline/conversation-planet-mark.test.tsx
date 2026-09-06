@@ -1,9 +1,10 @@
-import { render } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { act, cleanup, render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import agentCss from '../agent.css?raw';
-import { ConversationPlanetMark, type ConversationPlanetState } from './ConversationPlanetMark';
+import { ConversationPlanetMark } from './ConversationPlanetMark';
 
 describe('ConversationPlanetMark', () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   it('keeps one stable mark tree across live and settled state changes', () => {
     const { container, rerender } = render(<ConversationPlanetMark state="thinking" />);
     const mark = container.querySelector('.paw-conv-planet')!;
@@ -48,18 +49,57 @@ describe('ConversationPlanetMark', () => {
     expect(sizeOf({ size: 'lg' })).toBe('lg');
   });
 
-  it('moves only the live status ring and makes reduced motion completely static', () => {
-    expect(agentCss).toMatch(/\.paw-conv-planet__body\s*\{[^}]*radial-gradient/s);
-    expect(agentCss).toMatch(/\.paw-conv-planet__orbit\s*\{[^}]*conic-gradient[^}]*mask-composite:\s*exclude;/s);
-    expect(agentCss).toMatch(
-      /\.paw-conv-planet\[data-live='true'\] \.paw-conv-planet__orbit \{[^}]*animation: paw-conv-planet-orbit/,
-    );
-    expect(agentCss).toContain('@keyframes paw-conv-planet-orbit');
-    expect(agentCss).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{\s*\.paw-conv-planet__orbit \{\s*animation: none;\s*transition: none;/,
-    );
-    expect(agentCss).toMatch(
-      /:root\[data-reduce-motion='true'\] \.paw-conv-planet__orbit \{\s*animation: none;\s*transition: none;/,
-    );
+  it('pauses hidden and offscreen activity without changing authoritative state', () => {
+    let intersection: IntersectionObserverCallback | undefined;
+    const disconnect = vi.fn();
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback) { intersection = callback; }
+      observe() {}
+      disconnect = disconnect;
+    });
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { container, rerender } = render(<ConversationPlanetMark state="thinking" />);
+    const mark = container.querySelector('.paw-conv-planet')!;
+    expect(mark).toHaveAttribute('data-motion', 'active');
+    act(() => {
+      hidden.mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(mark).toHaveAttribute('data-state', 'thinking');
+    expect(mark).toHaveAttribute('data-motion', 'paused');
+    act(() => {
+      hidden.mockReturnValue(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(mark).toHaveAttribute('data-motion', 'active');
+    act(() => intersection?.([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver));
+    expect(mark).toHaveAttribute('data-motion', 'paused');
+    act(() => intersection?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+    expect(mark).toHaveAttribute('data-motion', 'active');
+    rerender(<ConversationPlanetMark state="done" />);
+    expect(mark).toHaveAttribute('data-motion', 'paused');
+    expect(mark).not.toHaveAttribute('data-live');
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps waiting static and lets a collapsed parent pause live work', () => {
+    const { container, rerender } = render(<ConversationPlanetMark state="waiting" />);
+    const mark = container.querySelector('.paw-conv-planet')!;
+    expect(mark).not.toHaveAttribute('data-live');
+    rerender(<ConversationPlanetMark state="running" motionActive={false} />);
+    expect(mark).toHaveAttribute('data-live', 'true');
+    expect(mark).toHaveAttribute('data-motion', 'paused');
+  });
+
+  it('shares a still nucleus with distinct spiral and satellite paths and reduced motion', () => {
+    const { container } = render(<ConversationPlanetMark state="thinking" />);
+    expect(container.querySelector('svg .paw-conv-planet__spiral path')).toBeTruthy();
+    expect(container.querySelector('svg .paw-conv-planet__satellites circle')).toBeTruthy();
+    expect(agentCss).toContain("[data-state='thinking'] .paw-conv-planet__spiral { display: block; }");
+    expect(agentCss).toContain("[data-state='thinking'] .paw-conv-planet__satellites { display: none; }");
+    expect(agentCss).toContain("[data-motion='paused'] .paw-conv-planet__orbit { animation-play-state: paused; }");
+    expect(agentCss).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(agentCss).toContain(".paw-conv-planet[data-live] .paw-conv-planet__orbit { animation: none; }");
+    expect(agentCss).toContain(":root[data-reduce-motion='true']");
   });
 });

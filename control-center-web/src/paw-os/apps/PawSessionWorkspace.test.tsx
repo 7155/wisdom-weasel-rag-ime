@@ -14,7 +14,7 @@ import type { SessionSummary } from '@/features/agent/types';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import { ControlTransportHttpError } from '@/platform/http-transport';
-import type { ControlRequest } from '@/platform/transport';
+import type { ControlEventObserver, ControlRequest } from '@/platform/transport';
 import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import appsCss from './paw-apps.css?raw';
@@ -59,6 +59,70 @@ afterEach(() => {
 });
 
 describe('PAWOS Agent Session structural migration', () => {
+  it('keeps transient connection recovery out of the operation-failure alert and preserves the draft', async () => {
+    const sessionId = 'session-quiet-reconnect';
+    const transport = new StubControlTransport('mock', idleSessionRoutes());
+    const observers: ControlEventObserver<unknown>[] = [];
+    vi.spyOn(transport, 'subscribe').mockImplementation((_request, observer) => { observers.push(observer); return () => undefined; });
+    render(<ControlTransportProvider transport={transport}><TooltipProvider>
+      <PawSessionWorkspace record={{ ...liveSession(), id: sessionId }} recordId={sessionId}
+        onNewWork={vi.fn()} onSessionCreated={vi.fn()} onSessionUpdated={vi.fn()} />
+    </TooltipProvider></ControlTransportProvider>);
+    await waitFor(() => expect(observers).toHaveLength(1));
+    const composer = screen.getByRole('textbox', { name: '消息' });
+    await userEvent.setup().type(composer, '保留这段草稿');
+    act(() => observers[0]!.error?.(new Error('temporary disconnect')));
+    expect(screen.queryByText('Session 操作没有完成，请重新同步后重试。')).not.toBeInTheDocument();
+    expect(screen.getByText('正在恢复连接')).toBeVisible();
+    expect(composer).toHaveValue('保留这段草稿');
+    expect(transport.requests.filter((request) => request.pathId === 'agent.session.prompt')).toHaveLength(0);
+  });
+
+  it('clears connection recovery when the stream stabilizes even if the repair snapshot failed', async () => {
+    const sessionId = 'session-stream-restores-without-snapshot';
+    let failSnapshot = false;
+    const transport = new StubControlTransport('mock', { ...idleSessionRoutes(),
+      'agent.session.snapshot': () => { if (failSnapshot) throw new Error('snapshot temporarily unavailable'); return idleSessionRoutes()['agent.session.snapshot']; },
+    });
+    const observers: ControlEventObserver<unknown>[] = [];
+    vi.spyOn(transport, 'subscribe').mockImplementation((_request, observer) => { observers.push(observer); return () => undefined; });
+    render(<ControlTransportProvider transport={transport}><TooltipProvider>
+      <PawSessionWorkspace record={{ ...liveSession(), id: sessionId }} recordId={sessionId}
+        onNewWork={vi.fn()} onSessionCreated={vi.fn()} onSessionUpdated={vi.fn()} />
+    </TooltipProvider></ControlTransportProvider>);
+    await waitFor(() => expect(observers).toHaveLength(1));
+    failSnapshot = true;
+    act(() => observers[0]!.error?.(new Error('temporary disconnect')));
+    await waitFor(() => expect(observers.length).toBeGreaterThan(1), { timeout: 6000 });
+    act(() => observers.at(-1)!.stable?.(''));
+    expect(screen.queryByText('Session 操作没有完成，请重新同步后重试。')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在恢复连接')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '立即重连' })).not.toBeInTheDocument();
+    expect(transport.requests.filter((request) => request.pathId === 'agent.session.prompt')).toHaveLength(0);
+  });
+
+  it('sends a screen attachment with bounded source context through the existing prompt and restores it on failure', async () => {
+    const sessionId = 'session-screen-prompt';
+    const transport = idleSessionTransport();
+    const context = { mediaId: 'media_abcdefghijklmnop', sourceAppBundleId: 'com.example.Editor', capturedAtMs: 1000 };
+    useAgentLiveStore.getState().clear(sessionId);
+    render(<ControlTransportProvider transport={transport}><TooltipProvider>
+      <PawSessionWorkspace record={{ ...liveSession(), id: sessionId }} recordId={sessionId}
+        initialDraft="翻译选区" initialAttachments={[{ id: context.mediaId, name: '选区.png', mimeType: 'image/png', byteSize: 64, source: 'picker' }]}
+        appearance="embedded" showComposerControls screenContext={context}
+        onNewWork={vi.fn()} onSessionCreated={vi.fn()} onSessionUpdated={vi.fn()} />
+    </TooltipProvider></ControlTransportProvider>);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await userEvent.setup().click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(transport.requests.find((request) => request.pathId === 'agent.session.prompt')?.body)
+      .toMatchObject({ message: '翻译选区', attachments: [context.mediaId], screenContext: context }));
+    await waitFor(() => expect(composer).toHaveValue('翻译选区'));
+    expect(screen.getByText('选区.png')).toBeVisible();
+    expect(screen.getByRole('button', { name: /对话权限/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /模型与思考|模型.*推理|模型.*思考/ })).toBeVisible();
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
   it('lets the newest terminal turn end composer busy state even when an older turn is stale-running', () => {
     const sessionId = 'session-terminal-fence';
     const projection = createAgentProjection(sessionId);
@@ -1756,9 +1820,10 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
-  it('retries a durably accepted failed turn without command-receipt lineage', async () => {
+  it.each([false, true])('retries a durably accepted failed turn without command-receipt lineage (screen: %s)', async (withScreen) => {
     const sessionId = 'session-accepted-turn-retry';
     const promptRequests: ControlRequest[] = [];
+    const context = { mediaId: 'media_abcdefghijklmnop', sourceAppBundleId: 'com.example.Editor', capturedAtMs: 1000 };
     const transport = new StubControlTransport('mock', {
       'agent.session.snapshot': {
         messages: [{
@@ -1776,7 +1841,7 @@ describe('PAWOS Agent Session structural migration', () => {
             presentationKind: 'markdown',
             data: { text: '查询本月经营数据' },
           }],
-          attachments: [],
+          attachments: withScreen ? [context.mediaId] : [],
           citations: [],
           createdAtMs: 1,
           completedAtMs: 1,
@@ -1818,6 +1883,7 @@ describe('PAWOS Agent Session structural migration', () => {
           <PawSessionWorkspace
             record={{ ...liveSession(), id: sessionId }}
             recordId={sessionId}
+            screenContext={withScreen ? context : undefined}
             onNewWork={vi.fn()}
             onSessionCreated={vi.fn()}
             onSessionUpdated={vi.fn()}
@@ -1835,6 +1901,7 @@ describe('PAWOS Agent Session structural migration', () => {
       message: '查询本月经营数据',
     });
     expect(promptRequests[0]?.body).not.toHaveProperty('retryOfClientMessageId');
+    if (withScreen) expect(promptRequests[0]?.body).toMatchObject({ screenContext: context, attachments: [context.mediaId] });
     useAgentLiveStore.getState().clear(sessionId);
   });
   it('rolls back a migrated retry card when admission becomes unresolved before submission', async () => {
@@ -1947,7 +2014,7 @@ describe('PAWOS Agent Session structural migration', () => {
       </PawOsDesktopProvider>,
     );
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Session 操作没有完成，请重新同步后重试。');
+    expect(await screen.findByRole('alert')).toHaveTextContent('连接暂时不可用，系统会继续自动重连。');
     await userEvent.setup().click(screen.getByRole('button', { name: '交给 Trace Agent' }));
     const handoff = parseTraceAgentHandoff(routes[0]?.split('?', 2)[1] ?? '');
     expect(handoff).toMatchObject({

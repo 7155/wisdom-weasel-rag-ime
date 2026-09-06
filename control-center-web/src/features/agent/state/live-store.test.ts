@@ -122,6 +122,53 @@ describe('Agent live store snapshot hydration', () => {
     expect(after.status).toBe('active');
   });
 
+  it.each([true, false])('restores activity-only turns consistently with snapshot quiescence (%s)', (runtimeQuiescent) => {
+    const store = useAgentLiveStore.getState();
+    store.hydrateSnapshot(sessionId, {
+      messages: [message('old-answer', 'assistant', 'old-turn', '保留历史')],
+      liveEvents: [], lastSequence: 1, resumeToken: `${sessionId}:1`, status: 'idle',
+    });
+    store.applyEvents(sessionId, [event(2, 'tool-only-turn', 'tool_started', {
+      toolCallId: 'call-1', toolName: 'bash',
+    })]);
+    expect(useAgentLiveStore.getState().projections[sessionId].turnsById['tool-only-turn']?.status).toBe('running');
+
+    store.hydrateSnapshot(sessionId, {
+      messages: [], liveEvents: [], lastSequence: 3, resumeToken: `${sessionId}:3`,
+      status: 'idle', snapshotScope: 'recent', partial: true, runtimeQuiescent,
+    });
+    const state = useAgentLiveStore.getState().projections[sessionId];
+    expect(state.messagesById['old-answer']).toBeDefined();
+    expect(state.turnsById['tool-only-turn']?.status).toBe(runtimeQuiescent ? 'completed' : 'running');
+    expect(Object.values(state.activitiesById).find((activity) => activity.turnId === 'tool-only-turn')?.status)
+      .toBe(runtimeQuiescent ? 'completed' : 'running');
+  });
+
+  it('settles restored historical activities without completing a new unaccepted prompt', () => {
+    const store = useAgentLiveStore.getState();
+    store.hydrateSnapshot(sessionId, {
+      messages: [message('old-answer', 'assistant', 'old-turn', '保留历史')],
+      liveEvents: [], lastSequence: 1, resumeToken: `${sessionId}:1`, status: 'idle',
+    });
+    store.applyEvents(sessionId, [event(2, 'tool-only-turn', 'tool_started', {
+      toolCallId: 'old-call', toolName: 'bash',
+    })]);
+    store.appendOptimistic(sessionId, { clientMessageId: 'new-prompt', text: '新的任务', nowMs: 40 });
+    const before = useAgentLiveStore.getState().projections[sessionId];
+    const pendingId = before.optimisticByClientMessageId['new-prompt'];
+    const pendingTurnId = before.messagesById[pendingId].turnId;
+
+    store.hydrateSnapshot(sessionId, {
+      messages: [], liveEvents: [], lastSequence: 3, resumeToken: `${sessionId}:3`,
+      status: 'idle', snapshotScope: 'recent', partial: true, runtimeQuiescent: true,
+    });
+    const state = useAgentLiveStore.getState().projections[sessionId];
+    expect(state.turnsById['tool-only-turn']?.status).toBe('completed');
+    expect(state.turnsById[pendingTurnId]?.status).toBe(before.turnsById[pendingTurnId].status);
+    expect(state.optimisticByClientMessageId['new-prompt']).toBe(pendingId);
+    expect(state.status).toBe('busy');
+  });
+
   it('does not leave an equal-cursor history alias active after the real turn completes', () => {
     const clientMessageId = 'client-equal-cursor-race';
     const store = useAgentLiveStore.getState();
@@ -155,6 +202,27 @@ describe('Agent live store snapshot hydration', () => {
     expect(settled.turnOrder.filter((turnId) => (
       ['queued', 'running', 'waiting'].includes(settled.turnsById[turnId]?.status ?? '')
     ))).toEqual([]);
+  });
+
+  it.each(['failed', 'faulted'])('settles an orphan tool as failed when the Runtime snapshot is %s', (status) => {
+    const store = useAgentLiveStore.getState();
+    store.hydrateSnapshot(sessionId, {
+      messages: [message('old-answer', 'assistant', 'old-turn', '保留已完成的历史')],
+      liveEvents: [], lastSequence: 1, resumeToken: `${sessionId}:1`, status: 'idle',
+    });
+    store.applyEvents(sessionId, [event(2, 'lost-terminal', 'tool_started', {
+      toolCallId: 'orphan-call', toolName: 'bash',
+    })]);
+    store.hydrateSnapshot(sessionId, {
+      messages: [], liveEvents: [], lastSequence: 3, resumeToken: `${sessionId}:3`,
+      status, snapshotScope: 'recent', partial: true, runtimeQuiescent: true,
+    });
+    const state = useAgentLiveStore.getState().projections[sessionId];
+    expect(state.status).toBe(status);
+    expect(state.turnsById['lost-terminal']?.status).toBe('failed');
+    expect(Object.values(state.activitiesById).find((activity) => activity.turnId === 'lost-terminal')?.status).toBe('failed');
+    expect(state.messagesById['old-answer']?.status).toBe('completed');
+    expect(state.turnOrder.some((id) => ['queued', 'running', 'waiting'].includes(state.turnsById[id]!.status))).toBe(false);
   });
 });
 

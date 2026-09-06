@@ -52,6 +52,15 @@ def _read_report(path: str | Path) -> dict[str, object]:
     report_payload = {key: value for key, value in raw.items() if key != "reportSha256"}
     if not report_hash or report_hash != _sha256(report_payload):
         raise PromotionError("Validation report hash is invalid")
+    # A file candidate has its own frozen text identity. The historical
+    # profile-only Held-out contract cannot replay that candidate yet.
+    for owner in (raw, raw["evaluationContract"], raw["lane"]):
+        candidate_prompt = owner.get("candidatePrompt")
+        if isinstance(candidate_prompt, Mapping) and candidate_prompt.get("enabled") is True:
+            raise PromotionError(
+                "candidate Prompt files are development/Validation candidates; "
+                "Held-out promotion is not supported for this candidate contract"
+            )
     return dict(raw)
 
 

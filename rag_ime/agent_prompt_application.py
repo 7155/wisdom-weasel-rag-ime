@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
+from .screen_context import screen_context
 
 from .agent_command_receipts import (
     AgentCommandReceiptPending,
@@ -129,6 +130,15 @@ class AgentPromptApplicationService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         request = self._prompt_request(payload)
+        if request["screenContext"]:
+            receipt = self.media.receipt(str(request["screenContext"]["mediaId"]), session_id=session_id)
+            if not str(receipt.get("mimeType") or "").startswith("image/"):
+                raise ValueError("screenContext must reference an image owned by this Session")
+            if str(request["screenContext"]["mediaId"]) not in request["attachmentIds"]:
+                # A follow-up may refer to the same capture only after it was
+                # actually delivered in this Session, not merely imported.
+                if not self.media.was_attached(session_id=session_id, media_id=str(request["screenContext"]["mediaId"])):
+                    raise ValueError("screenContext image must be attached on its first message")
         client_message_id = str(
             request["clientMessageId"]
         )
@@ -157,6 +167,7 @@ class AgentPromptApplicationService:
             "retryOfClientMessageId": request[
                 "retryOfClientMessageId"
             ],
+            **({"screenContext": request["screenContext"]} if request["screenContext"] else {}),
         }
         try:
             claim = self.command_receipts.begin(
@@ -638,6 +649,7 @@ class AgentPromptApplicationService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         message = _required_text(payload, "message")
+        screen_data, screen_prompt = screen_context(payload.get("screenContext"))
         raw_attachments = payload.get("attachments")
         if raw_attachments is None:
             attachment_ids: list[str] = []
@@ -675,6 +687,7 @@ class AgentPromptApplicationService:
             )
         return {
             "message": message,
+            "screenContext": screen_data,
             "clientMessageId": client_message_id,
             "retryOfClientMessageId": (
                 retry_of_client_message_id
@@ -706,7 +719,7 @@ class AgentPromptApplicationService:
                     ),
                 )
                 if trusted
-                else ""
+                else screen_prompt
             ),
         }
 

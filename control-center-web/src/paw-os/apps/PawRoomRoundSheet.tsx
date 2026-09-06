@@ -57,6 +57,7 @@ export function PawRoomRoundSheet({
     [projection, room],
   );
   const [sheetDisclosure, setSheetDisclosure] = useState<Record<string, boolean>>({});
+  const [historicalDisclosure, setHistoricalDisclosure] = useState<Record<string, boolean>>({});
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
   const detailIdPrefix = useId();
   const desktop = usePawOsDesktop();
@@ -67,7 +68,9 @@ export function PawRoomRoundSheet({
   useEffect(() => {
     if (!latestSheetId) return;
     const node = roundsRef.current;
-    const behavior = previousLatestSheetId.current ? 'smooth' : 'auto';
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      || document.documentElement.dataset.reduceMotion === 'true';
+    const behavior = previousLatestSheetId.current && !reducedMotion ? 'smooth' : 'auto';
     previousLatestSheetId.current = latestSheetId;
     if (!node) return;
     const frame = requestAnimationFrame(() => {
@@ -93,8 +96,17 @@ export function PawRoomRoundSheet({
   return (
     <section aria-label="Room 行星任务表" className="paw-room-rounds" ref={roundsRef}>
       {sheets.map((sheet, index) => {
-        const open = sheetDisclosure[sheet.id] ?? index === sheets.length - 1;
+        const latest = index === sheets.length - 1;
+        const settled = ['completed', 'failed', 'aborted'].includes(sheet.status);
+        const allRowsSettled = sheet.rows.filter((row) => row.assigned).every((row) => (
+          ['completed', 'failed', 'aborted'].includes(row.state)
+        ));
+        const hasLiveActivity = projection.turnsById[sheet.turnId]?.activityIds.some((id) => (
+          ['running', 'waiting'].includes(projection.activitiesById[id]?.status ?? '')
+        ));
         const resultRows = sheet.rows.filter((row) => isStandaloneResult(row, room));
+        const finalRows = resultRows.filter((row) => isCoordinatorRow(row, room));
+        const partnerResults = resultRows.filter((row) => !isCoordinatorRow(row, room));
         const workerAssignmentExists = sheet.rows.some((row) => (
           !isCoordinatorRow(row, room)
           && (row.assigned || resultRows.includes(row))
@@ -108,8 +120,15 @@ export function PawRoomRoundSheet({
         const coordinatorRows = sheet.rows.filter((row) => (
           !resultRows.includes(row)
           && isCoordinatorSummaryRow(row, room)
-          && (workerAssignmentExists || Boolean(row.postKind))
+          && (workerAssignmentExists || Boolean(row.postKind || row.report))
         ));
+        /* Disclosure is a reading preference, never a completion signal. An
+           aborted round can contain a useful host report; show that report
+           in full while keeping its authoritative stopped state visible. */
+        const hasReadableReport = coordinatorRows.length > 0 || resultRows.length > 0;
+        const open = sheetDisclosure[sheet.id] ?? (
+          !(settled && hasReadableReport && allRowsSettled && !hasLiveActivity)
+        );
         const taskRows = sheet.rows.filter((row) => (
           row.assigned
           && !resultRows.includes(row)
@@ -120,7 +139,7 @@ export function PawRoomRoundSheet({
              participant. */
           && !(workerAssignmentExists && isCoordinatorRow(row, room))
         ));
-        const starterRows = taskRows.length || resultRows.length
+        const starterRows = taskRows.length || resultRows.length || coordinatorRows.length
           ? []
           : sheet.rows.filter((row) => !row.assigned && !coordinatorRows.includes(row));
         const standaloneTaskRow = taskRows.length === 1 ? taskRows[0] : undefined;
@@ -128,157 +147,129 @@ export function PawRoomRoundSheet({
         const countedResultRows = workerAssignmentExists
           ? resultRows.filter((row) => !isCoordinatorRow(row, room))
           : resultRows;
-        const planetCount = taskRows.length + countedResultRows.length || starterRows.length;
-        const toggleRound = () => setSheetDisclosure((current) => ({
+        const planetCount = taskRows.length + countedResultRows.length
+          + (workerAssignmentExists ? 0 : coordinatorRows.length) || starterRows.length;
+        const roundOpen = latest || Boolean(historicalDisclosure[sheet.id]);
+        const replyId = `${detailIdPrefix}-${domToken(sheet.id)}-reply`;
+        const processId = `${detailIdPrefix}-${domToken(sheet.id)}-process`;
+        const hasProcess = taskRows.length > 0 || starterRows.length > 0;
+        const toggleProcess = () => setSheetDisclosure((current) => ({
           ...current,
           [sheet.id]: !open,
         }));
-
-        if (!multiParticipantRows.length) {
-          return (
-            <article
-              className="paw-room-session-round"
-              data-round-id={sheet.id}
-              data-state={sheet.status}
-              key={sheet.id}
-            >
-              <header className="paw-room-session-round__prompt">
-                <button
-                  aria-expanded={open}
-                  aria-label={open ? '折叠本轮任务' : '展开本轮任务'}
-                  onClick={toggleRound}
-                  type="button"
-                >
-                  <span>
-                    <strong>{sheet.objective}</strong>
-                    <small>{planetCount} 颗行星 · {sheetStateLabels[sheet.status] ?? sheet.status}</small>
-                  </span>
-                  <ChevronDown aria-hidden="true" className="paw-room-session-round__chevron" data-open={open || undefined} size={15} />
-                </button>
-              </header>
-              {open ? (
-                <div className="paw-room-session-round__reply">
-                  {coordinatorRows.map((row) => (
-                    <StandaloneCoordinatorSummary
-                      key={row.key}
-                      onOpenParticipant={onOpenParticipant}
-                      row={row}
-                      selected={selectedParticipantId === row.participantId}
-                    />
-                  ))}
-                  {starterRows.map((starterRow) => (
-                    <StandaloneStarterPlanet
-                      key={starterRow.key}
-                      onOpenParticipant={onOpenParticipant}
-                      row={starterRow}
-                      selected={selectedParticipantId === starterRow.participantId}
-                    />
-                  ))}
-                  {standaloneTaskRow ? (
-                    <StandaloneTaskPlanet
-                      desktop={desktop}
-                      detailId={`${detailIdPrefix}-${domToken(standaloneTaskRow.key)}`}
-                      expanded={expandedRows.has(standaloneTaskRow.key)}
-                      onOpenParticipant={onOpenParticipant}
-                      onResumeBlocked={onResumeBlocked}
-                      onToggle={() => setExpandedRows((current) => toggled(current, standaloneTaskRow.key))}
-                      resumingWorkItemId={resumingWorkItemId}
-                      resumeError={resumeErrorByRow?.[standaloneTaskRow.key]}
-                      room={room}
-                      row={standaloneTaskRow}
-                      selected={selectedParticipantId === standaloneTaskRow.participantId}
-                    />
-                  ) : null}
-                  {resultRows.map((row) => (
-                    <StandaloneResultPlanet
-                      desktop={desktop}
-                      key={row.key}
-                      onOpenParticipant={onOpenParticipant}
-                      room={room}
-                      row={row}
-                      selected={selectedParticipantId === row.participantId}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </article>
-          );
-        }
+        const prompt = <span>
+          <strong>{sheet.objective}</strong>
+          <small>{planetCount} 颗行星 · {sheetStateLabels[sheet.status] ?? sheet.status}</small>
+        </span>;
 
         return (
-          <article className="paw-room-round-group" data-round-id={sheet.id} key={sheet.id}>
-            {coordinatorRows.map((row) => (
-              <StandaloneCoordinatorSummary
-                key={row.key}
-                onOpenParticipant={onOpenParticipant}
-                row={row}
-                selected={selectedParticipantId === row.participantId}
-              />
-            ))}
-            <section className="paw-room-round" data-state={sheet.status}>
-                <header className="paw-room-round__header">
-                  <button
-                    aria-expanded={open}
-                    aria-label={open ? '折叠本轮任务' : '展开本轮任务'}
-                    className="paw-room-round__toggle"
-                    onClick={toggleRound}
-                    type="button"
-                  >
-                    <span aria-hidden="true" className="paw-room-round__toggle-icon" data-open={open || undefined}>
-                      <ChevronRight size={17} />
+          <article
+            className="paw-room-session-round paw-room-session-round--collaboration"
+            data-round-id={sheet.id}
+            data-state={sheet.status}
+            key={sheet.id}
+          >
+            <header className="paw-room-session-round__prompt">
+              {latest ? <div className="paw-room-session-round__objective">{prompt}</div> : <button
+                aria-controls={replyId}
+                aria-expanded={roundOpen}
+                aria-label={roundOpen ? '折叠本轮任务' : '展开本轮任务'}
+                onClick={() => setHistoricalDisclosure((current) => ({ ...current, [sheet.id]: !roundOpen }))}
+                type="button"
+              >
+                {prompt}
+                <ChevronDown aria-hidden="true" className="paw-room-session-round__chevron" data-open={roundOpen || undefined} size={15} />
+              </button>}
+            </header>
+            <div className="paw-room-session-round__reply" hidden={!roundOpen} id={replyId}>
+              {roundOpen && hasProcess ? (
+                <section className={multiParticipantRows.length ? 'paw-room-round' : 'paw-room-round-process'} data-state={sheet.status}>
+                  <header className="paw-room-round__header">
+                    <button
+                      aria-controls={processId}
+                      aria-expanded={open}
+                      aria-label={open ? '收起协作过程' : '查看协作过程'}
+                      className="paw-room-round__toggle"
+                      onClick={toggleProcess}
+                      type="button"
+                    >
+                      <span aria-hidden="true" className="paw-room-round__toggle-icon" data-open={open || undefined}>
+                        <ChevronRight size={17} />
+                      </span>
+                      <span><strong>协作过程</strong><small>{[...taskRows, ...starterRows].map((row) => row.celestialName).join(' · ')}</small></span>
+                    </button>
+                    <span className="paw-room-round__state" data-state={sheet.status}>
+                      <i aria-hidden="true" />{sheetStateLabels[sheet.status] ?? sheet.status}
                     </span>
-                    <span>
-                      <strong>{sheet.objective}</strong>
-                      <small>{multiParticipantRows.length} 颗行星 · {sheetStateLabels[sheet.status] ?? sheet.status}</small>
-                    </span>
-                  </button>
-                  <span className="paw-room-round__state" data-state={sheet.status}>
-                    <i aria-hidden="true" />
-                    {sheetStateLabels[sheet.status] ?? sheet.status}
-                  </span>
-                </header>
-                {open ? (
-                  <div className="paw-room-round__table-scroll">
-                    <table aria-label={`${sheet.objective} · 行星进展`}>
-                      <thead>
-                        <tr>
-                          <th scope="col">行星</th>
-                          <th scope="col">当前任务</th>
-                          <th scope="col">阶段</th>
-                          <th scope="col">最新公开进展</th>
-                          <th scope="col"><span className="sr-only">操作</span></th>
-                        </tr>
-                      </thead>
-                      {multiParticipantRows.map((row) => (
-                        <TaskPlanetRows
+                  </header>
+                  <div hidden={!open} id={processId}>
+                    {open && multiParticipantRows.length ? (
+                      <div className="paw-room-round__table-scroll">
+                        <table aria-label={`${sheet.objective} · 行星进展`}>
+                          <thead><tr>
+                            <th scope="col">伙伴</th><th scope="col">分工</th>
+                            <th scope="col">状态</th><th scope="col">进展与交接</th>
+                            <th scope="col"><span className="sr-only">操作</span></th>
+                          </tr></thead>
+                          {multiParticipantRows.map((row) => (
+                            <TaskPlanetRows
+                              desktop={desktop}
+                              detailId={`${detailIdPrefix}-${domToken(row.key)}`}
+                              expanded={expandedRows.has(row.key)}
+                              key={row.key}
+                              onOpenParticipant={onOpenParticipant}
+                              onResumeBlocked={onResumeBlocked}
+                              onToggle={() => setExpandedRows((current) => toggled(current, row.key))}
+                              resumingWorkItemId={resumingWorkItemId}
+                              resumeError={resumeErrorByRow?.[row.key]}
+                              room={room}
+                              row={row}
+                              selected={selectedParticipantId === row.participantId}
+                            />
+                          ))}
+                        </table>
+                      </div>
+                    ) : null}
+                    {open ? <>
+                      {starterRows.map((row) => (
+                        <StandaloneStarterPlanet key={row.key} onOpenParticipant={onOpenParticipant} row={row} selected={selectedParticipantId === row.participantId} />
+                      ))}
+                      {standaloneTaskRow ? (
+                        <StandaloneTaskPlanet
                           desktop={desktop}
-                          detailId={`${detailIdPrefix}-${domToken(row.key)}`}
-                          expanded={expandedRows.has(row.key)}
-                          key={row.key}
+                          detailId={`${detailIdPrefix}-${domToken(standaloneTaskRow.key)}`}
+                          expanded={expandedRows.has(standaloneTaskRow.key)}
                           onOpenParticipant={onOpenParticipant}
                           onResumeBlocked={onResumeBlocked}
-                          onToggle={() => setExpandedRows((current) => toggled(current, row.key))}
+                          onToggle={() => setExpandedRows((current) => toggled(current, standaloneTaskRow.key))}
                           resumingWorkItemId={resumingWorkItemId}
-                          resumeError={resumeErrorByRow?.[row.key]}
+                          resumeError={resumeErrorByRow?.[standaloneTaskRow.key]}
                           room={room}
-                          row={row}
-                          selected={selectedParticipantId === row.participantId}
+                          row={standaloneTaskRow}
+                          selected={selectedParticipantId === standaloneTaskRow.participantId}
                         />
-                      ))}
-                    </table>
+                      ) : null}
+                    </> : null}
                   </div>
+                </section>
+              ) : null}
+              {roundOpen ? <>
+                {coordinatorRows.map((row) => (
+                  <StandaloneCoordinatorSummary desktop={desktop} key={row.key} onOpenParticipant={onOpenParticipant} room={room} row={row} selected={selectedParticipantId === row.participantId} />
+                ))}
+                {finalRows.map((row) => (
+                  <StandaloneResultPlanet desktop={desktop} key={row.key} onOpenParticipant={onOpenParticipant} room={room} row={row} selected={selectedParticipantId === row.participantId} />
+                ))}
+                {partnerResults.length ? (
+                  <section aria-label="伙伴交付" className="paw-room-round__partner-results">
+                    <header><h3>伙伴交付</h3><span>{partnerResults.length} 份结果</span></header>
+                    {partnerResults.map((row) => (
+                      <PartnerResult desktop={desktop} key={row.key} onOpenParticipant={onOpenParticipant} room={room} row={row} selected={selectedParticipantId === row.participantId} />
+                    ))}
+                  </section>
                 ) : null}
-            </section>
-            {resultRows.map((row) => (
-              <StandaloneResultPlanet
-                desktop={desktop}
-                key={row.key}
-                onOpenParticipant={onOpenParticipant}
-                room={room}
-                row={row}
-                selected={selectedParticipantId === row.participantId}
-              />
-            ))}
+              </> : null}
+            </div>
           </article>
         );
       })}
@@ -312,7 +303,7 @@ function TaskPlanetRows({
   selected: boolean;
 }) {
   return (
-    <tbody data-row-key={row.key} data-state={row.state}>
+    <tbody data-expanded={expanded || undefined} data-row-key={row.key} data-state={row.state}>
       <tr
         aria-selected={selected || undefined}
         data-planet-row={row.key}
@@ -404,7 +395,6 @@ function TaskPlanetRows({
           <td colSpan={5}>
             <div
               aria-label={`${row.celestialName} 公开进展与证据`}
-              aria-live={row.state === 'completed' ? 'polite' : undefined}
               className="paw-room-round__detail"
               data-result-ready={row.state === 'completed' && (row.result || row.evidenceRefs.length) ? true : undefined}
               id={detailId}
@@ -512,7 +502,7 @@ function isCoordinatorSummaryRow(row: RoomRoundTaskRow, room: RoomSummary): bool
      synthesis. Do not promote that bookkeeping-only row into a report card;
      require an actual result, public progress, or an explicit assignment. */
   return isCoordinator && (
-    Boolean(row.result)
+    Boolean(row.result || row.report)
     || progressIsPublic
     || (row.assigned && taskIsPublic)
   );
@@ -523,46 +513,34 @@ function isCoordinatorRow(row: RoomRoundTaskRow, room: RoomSummary): boolean {
 }
 
 function StandaloneCoordinatorSummary({
+  desktop,
   onOpenParticipant,
+  room,
   row,
   selected,
 }: {
+  desktop: ReturnType<typeof usePawOsDesktop>;
   onOpenParticipant: (participantId: string) => void;
+  room: RoomSummary;
   row: RoomRoundTaskRow;
   selected: boolean;
 }) {
-  const summary = row.result || row.latestProgress || row.task;
+  const summary = row.report || row.result || row.latestProgress || row.task;
   return (
     <section
       aria-label={`${row.celestialName} 主控汇报`}
-      className="paw-room-round__standalone paw-room-round__standalone--summary"
+      className="paw-room-round__report"
       data-coordinator="true"
       data-row-key={row.key}
       data-selected={selected || undefined}
       data-state={row.state}
       role="region"
     >
-      <header>
-        <span aria-hidden="true" className="paw-room-round__standalone-orbit"><Orbit size={18} /></span>
-        <span>
-          <strong>{row.celestialName}</strong>
-          <small>主控汇报 · {row.role}</small>
-        </span>
-        <span className="paw-room-round__row-state" data-state={row.state}>
-          <i aria-hidden="true" />{row.state === 'completed' ? '已汇合' : rowStateLabels[row.state]}
-        </span>
-      </header>
-      <div className="paw-room-round__standalone-body paw-room-round__standalone-summary-body">
-        <small>当前汇报</small>
+      <ReportHeading onOpenParticipant={onOpenParticipant} row={row} title="主控汇报" />
+      <div className="paw-room-round__prose">
         <MarkdownBody documentKey={`${row.key}:summary:${row.updatedAtMs}`} sessionId={row.sessionId} text={summary} />
       </div>
-      <button
-        aria-label={`打开 ${row.celestialName} Session`}
-        onClick={() => onOpenParticipant(row.participantId)}
-        type="button"
-      >
-        查看完整汇报 <ExternalLink aria-hidden="true" size={14} />
-      </button>
+      <ResultReferences desktop={desktop} room={room} row={row} />
     </section>
   );
 }
@@ -759,52 +737,144 @@ function StandaloneResultPlanet({
   return (
     <section
       aria-label={`${row.celestialName} 最终结果`}
-      aria-live="polite"
-      className="paw-room-round__standalone paw-room-round__standalone--result"
+      className="paw-room-round__report paw-room-round__report--final"
+      data-coordinator="true"
       data-row-key={row.key}
       data-result-ready="true"
       data-selected={selected || undefined}
       role="region"
     >
-      <header>
-        <span aria-hidden="true" className="paw-room-round__standalone-orbit"><Orbit size={18} /></span>
-        <span>
-          <strong>{row.celestialName}</strong>
-          <small>{row.role} · 最终结果</small>
+      <ReportHeading final onOpenParticipant={onOpenParticipant} row={row} title="最终结果" />
+      <div className="paw-room-round__prose">
+        <MarkdownBody documentKey={`${row.key}:result`} sessionId={row.sessionId} text={row.result ?? ''} />
+      </div>
+      <ResultReferences desktop={desktop} room={room} row={row} />
+    </section>
+  );
+}
+
+function ReportHeading({
+  final = false,
+  onOpenParticipant,
+  row,
+  title,
+}: {
+  final?: boolean;
+  onOpenParticipant: (participantId: string) => void;
+  row: RoomRoundTaskRow;
+  title: string;
+}) {
+  return (
+    <header className="paw-room-round__report-heading">
+      <div className="paw-room-round__report-title">
+        <h3>{title}</h3>
+        <span className="paw-room-round__row-state" data-state={row.state} role="status">
+          <i aria-hidden="true" />{final ? '已提交' : row.state === 'completed' ? '已回复' : rowStateLabels[row.state]}
         </span>
-        <span className="paw-room-round__row-state" data-state="completed"><i aria-hidden="true" />已提交</span>
-      </header>
-      <div className="paw-room-round__standalone-body">
-        {row.result ? (
-          <div className="paw-room-round__result">
-            <MarkdownBody
-              documentKey={`${row.key}:result`}
-              sessionId={row.sessionId}
-              text={row.result}
-            />
-          </div>
-        ) : <p>结果文件已经提交。</p>}
-        {row.evidenceRefs.length ? (
-          <ul aria-label="结果证据">
-            {row.evidenceRefs.map((ref) => {
-              const file = workspaceFileTarget(ref, row, room.artifacts);
-              return (
-                <li key={ref}>
-                  {file ? <FileReferenceAction desktop={desktop} target={file} /> : <span>{ref}</span>}
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
       </div>
       <button
         aria-label={`打开 ${row.celestialName} Session`}
+        className="paw-room-round__report-author"
         onClick={() => onOpenParticipant(row.participantId)}
         type="button"
       >
-        查看完整过程 <ExternalLink aria-hidden="true" size={14} />
+        <Orbit aria-hidden="true" size={16} />
+        <strong>{row.celestialName}</strong>
+        <span>查看过程</span>
+        <ExternalLink aria-hidden="true" size={13} />
       </button>
+    </header>
+  );
+}
+
+function PartnerResult({
+  desktop,
+  onOpenParticipant,
+  room,
+  row,
+  selected,
+}: {
+  desktop: ReturnType<typeof usePawOsDesktop>;
+  onOpenParticipant: (participantId: string) => void;
+  room: RoomSummary;
+  row: RoomRoundTaskRow;
+  selected: boolean;
+}) {
+  return (
+    <section
+      aria-label={`${row.celestialName} 伙伴结果`}
+      className="paw-room-round__partner-result"
+      data-row-key={row.key}
+      data-result-ready="true"
+      data-selected={selected || undefined}
+      role="region"
+    >
+      <details>
+        <summary>
+          <ChevronRight aria-hidden="true" className="paw-room-round__partner-chevron" size={16} />
+          <Orbit aria-hidden="true" size={17} />
+          <span><strong>{row.celestialName}</strong><small>{row.role}</small></span>
+          <span className="paw-room-round__partner-toggle">查看结果</span>
+        </summary>
+        <div className="paw-room-round__partner-body">
+          {row.result ? (
+            <div className="paw-room-round__prose">
+              <MarkdownBody documentKey={`${row.key}:result`} sessionId={row.sessionId} text={row.result} />
+            </div>
+          ) : <p>此伙伴已提交产物与证据。</p>}
+          <button
+            aria-label={`打开 ${row.celestialName} Session`}
+            className="paw-room-round__text-action"
+            onClick={() => onOpenParticipant(row.participantId)}
+            type="button"
+          >
+            查看 {row.celestialName} 的完整过程 <ExternalLink aria-hidden="true" size={13} />
+          </button>
+        </div>
+      </details>
+      <ResultReferences desktop={desktop} room={room} row={row} />
     </section>
+  );
+}
+
+function ResultReferences({
+  desktop,
+  room,
+  row,
+}: {
+  desktop: ReturnType<typeof usePawOsDesktop>;
+  room: RoomSummary;
+  row: RoomRoundTaskRow;
+}) {
+  const files = new Map<string, EvidenceEchoEntity>();
+  const references: string[] = [];
+  for (const ref of row.evidenceRefs) {
+    const file = workspaceFileTarget(ref, row, room.artifacts);
+    if (file) files.set(file.entityId, file);
+    else references.push(ref);
+  }
+  if (!files.size && !references.length) return null;
+  return (
+    <div className="paw-room-round__deliverables">
+      {files.size ? (
+        <section aria-label={`${row.celestialName} 产物`}>
+          <h4>产物</h4>
+          <ul className="paw-room-round__file-list">
+            {[...files.values()].map((target) => (
+              <li key={target.entityId}>
+                <FileReferenceAction desktop={desktop} showPath target={target} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {references.length ? (
+        <details className="paw-room-round__evidence">
+          <summary><ChevronRight aria-hidden="true" size={14} />引用与证据<span>{references.length}</span></summary>
+          <ul aria-label="结果证据">{references.map((ref) => <li key={ref}>{ref}</li>)}</ul>
+        </details>
+      ) : null}
+    </div>
   );
 }
 
@@ -855,21 +925,25 @@ function fileName(path: string): string {
 
 function FileReferenceAction({
   desktop,
+  showPath = false,
   target,
 }: {
   desktop: ReturnType<typeof usePawOsDesktop>;
+  showPath?: boolean;
   target: EvidenceEchoEntity;
 }) {
   return (
     <button
       aria-label={`打开文件 ${target.label}`}
       className="paw-room-round__file-reference"
+      data-show-path={showPath || undefined}
       onClick={() => openEvidenceEchoEntity(desktop, target)}
       title={target.entityId}
       type="button"
     >
-      <FileText aria-hidden="true" size={13} />
-      <span>{target.label}</span>
+      <FileText aria-hidden="true" size={showPath ? 19 : 13} />
+      <span>{showPath ? <><strong>{target.label}</strong><small>{target.entityId}</small></> : target.label}</span>
+      {showPath ? <ExternalLink aria-hidden="true" size={14} /> : null}
     </button>
   );
 }
