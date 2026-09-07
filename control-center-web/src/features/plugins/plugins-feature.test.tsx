@@ -8,7 +8,7 @@ import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { PawOsAppSurfaceProvider } from '@/features/paw-os/surface-context';
 import { pawExtensionApps } from '@/paw-os/extensions/registry';
-import type { ControlPathId } from '@/platform/routes';
+import { controlRoute, type ControlPathId } from '@/platform/routes';
 import type { ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import { PluginsFeature } from '.';
@@ -19,6 +19,56 @@ afterEach(() => {
 });
 
 describe('PluginsFeature', () => {
+  it('explains the actual Room operations and retains canonical names in technical details', async () => {
+    const user = userEvent.setup();
+    const operations = ['list', 'add_participant', 'remove_participant', 'delegate', 'delegate_batch', 'retry', 'accept', 'return', 'collect', 'wait', 'post', 'peer_list', 'peer_send', 'peer_ask', 'peer_reply'];
+    const transport = renderPlugins({ 'agent.tools.list': capabilityCatalog([
+      tool({ id: 'room_partner', displayName: 'Room 伙伴协作', description: '协作操作', operations }),
+    ]) });
+    await user.click(await screen.findByRole('button', { name: /Room 伙伴协作/ }));
+    const detail = screen.getByRole('complementary', { name: '能力详情' });
+    expect(within(detail).getByText('等待伙伴结果')).toBeVisible();
+    expect(within(detail).getByText('收集伙伴结果')).toBeVisible();
+    expect(within(detail).getByText('验收工作成果')).toBeVisible();
+    expect(within(detail).getByText('退回工作成果')).toBeVisible();
+    expect(within(detail).getByText('向伙伴提问')).toBeVisible();
+    expect(within(detail).getByText('回复伙伴')).toBeVisible();
+    expect(detail).not.toHaveTextContent('等待页面内容');
+    expect(detail).not.toHaveTextContent('其他');
+    await user.click(within(detail).getByText('查看技术参数'));
+    for (const operation of operations) expect(detail).toHaveTextContent(`"${operation}"`);
+    expect(transport.requests.every(({ request }) => controlRoute(request.pathId).method === 'GET')).toBe(true);
+  });
+
+  it('uses browser meanings for script execution, navigation and traces', async () => {
+    const user = userEvent.setup();
+    renderPlugins({ 'agent.tools.list': capabilityCatalog([
+      tool({ id: 'browser', displayName: 'PAW Browser', description: '网页操作', operations: ['status', 'tabs', 'snapshot', 'screenshot', 'trace', 'run', 'navigate', 'back', 'forward', 'click', 'type', 'scroll', 'wait', 'stop'] }),
+    ]) });
+    await user.click(await screen.findByRole('button', { name: /PAW Browser/ }));
+    const detail = screen.getByRole('complementary', { name: '能力详情' });
+    for (const label of ['执行网页操作脚本', '查看浏览器操作记录', '后退一页', '前进一页', '等待页面内容']) {
+      expect(within(detail).getByText(label)).toBeVisible();
+    }
+    expect(detail).not.toHaveTextContent('运行受控命令');
+    expect(detail).not.toHaveTextContent('查看来源链路');
+    expect(detail).not.toHaveTextContent('其他');
+  });
+
+  it('does not infer built-in operation meanings from a third-party display name', async () => {
+    const user = userEvent.setup();
+    renderPlugins({ 'agent.tools.list': capabilityCatalog([
+      tool({ id: 'third_party', displayName: 'Room 伙伴协作', description: '协作操作', operations: ['wait', 'accept', 'vendor.custom'] }),
+    ]) });
+    await user.click(await screen.findByRole('button', { name: /Room 伙伴协作/ }));
+    const detail = screen.getByRole('complementary', { name: '能力详情' });
+    expect(detail).not.toHaveTextContent('等待伙伴结果');
+    expect(detail).not.toHaveTextContent('等待页面内容');
+    expect(detail).toHaveTextContent('其他 3 项操作');
+    await user.click(within(detail).getByText('查看技术参数'));
+    expect(detail).toHaveTextContent('vendor.custom');
+  });
+
   it('uses the Runtime rollback target and still previews the canonical package action', async () => {
     const user = userEvent.setup();
     const transport = renderPlugins({

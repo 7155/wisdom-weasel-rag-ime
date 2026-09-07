@@ -95,7 +95,7 @@ const operationLabels: Record<string, string> = {
   propose_rollback: '提交回滚提议', propose_uninstall: '提交卸载提议',
   components: '检查运行组件', dashboard: '查看规划面板', deep_recall: '深度检索', delegate: '委派任务',
   diagnose: '运行诊断', export: '导出备份', export_preview: '预览备份', get_settings: '查看输入设置',
-  health: '检查服务状态', history: '查看输入记录', lexicon_apply: '应用词库更新', lexicon_review: '审阅词库建议',
+  health: '检查服务状态', history: '查看历史记录', lexicon_apply: '应用词库更新', lexicon_review: '审阅词库建议',
   lexicon_rollback: '撤销词库更新', list: '浏览内容', maintenance_apply: '应用记忆整理',
   curation_prepare: '生成记忆草案', maintenance_preview: '预览记忆整理', maintenance_review: '审阅记忆整理', maintenance_rollback: '撤销记忆整理',
   maintenance_status: '查看整理状态', pause_ai: '暂停智能功能', privacy_policy: '查看隐私保护', probe: '检查模型连接',
@@ -106,8 +106,23 @@ const operationLabels: Record<string, string> = {
   restart_sidecar: '重新连接本机补全服务', restore_apply: '恢复备份', restore_preview: '预览恢复内容', resume_ai: '恢复智能功能',
   rollback_settings: '撤销输入设置', route_status: '检查检索连接', run: '运行受控命令', search: '搜索内容',
   status: '查看当前状态', task_action: '更新任务', trace: '查看来源链路', undo_task_event: '撤销任务更新',
-  tabs: '查看浏览器标签页', snapshot: '读取页面快照', screenshot: '获取页面截图', navigate: '打开网页',
-  click: '点击页面元素', type: '向页面输入', scroll: '滚动页面', wait: '等待页面内容', stop: '停止浏览器操作',
+};
+
+// An operation token is meaningful within its Tool contract. Browser `wait`
+// and Room `wait` do different jobs, even though the token is the same.
+const toolOperationLabels: Record<string, Record<string, string>> = {
+  'tool:room_partner': {
+    list: '查看伙伴与分工', add_participant: '添加协作伙伴', remove_participant: '移除协作伙伴',
+    delegate: '分派工作', delegate_batch: '批量分派工作', retry: '重试已分派工作',
+    accept: '验收工作成果', return: '退回工作成果', collect: '收集伙伴结果', wait: '等待伙伴结果',
+    post: '发布协作进展与结果', peer_list: '查看可联系的伙伴', peer_send: '向伙伴发送消息',
+    peer_ask: '向伙伴提问', peer_reply: '回复伙伴',
+  },
+  'tool:browser': {
+    status: '查看浏览器状态', tabs: '查看浏览器标签页', snapshot: '读取页面快照', screenshot: '获取页面截图',
+    trace: '查看浏览器操作记录', run: '执行网页操作脚本', navigate: '打开网页', back: '后退一页', forward: '前进一页',
+    click: '点击页面元素', type: '向页面输入', scroll: '滚动页面', wait: '等待页面内容', stop: '停止浏览器操作',
+  },
 };
 
 export function PluginsFeature() {
@@ -1873,7 +1888,12 @@ function pluginInvocationStatusLabel(status: string): string {
 function publicPluginResourceKindLabel(kind: string): string {
   return ({ extension: 'Extension', tool: 'Tool', command: 'Command', skill: 'Skill', prompt: 'Prompt', theme: 'Theme' } as Record<string, string>)[kind] ?? kind;
 }
-function operationLabelsFor(item: ToolRecord): string[] { return stringArray(item.operations).map((operation) => operationLabels[operation]).filter((operation): operation is string => Boolean(operation)); }
+function operationLabelsFor(item: ToolRecord): string[] {
+  const labels = toolOperationLabels[item.canonicalId];
+  return stringArray(item.operations)
+    .map((operation) => labels?.[operation] ?? operationLabels[operation])
+    .filter((operation): operation is string => Boolean(operation));
+}
 function capabilityNeedsRoomContext(item: ToolRecord): boolean {
   return item.disclosure.effective === 'disabled'
     && (item.disclosure.reason === 'room_context_required' || item.reasons.includes('room_context_required'));
