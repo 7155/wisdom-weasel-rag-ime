@@ -1434,7 +1434,7 @@ export function PawSessionWorkspace({
                     subtitle: `Session · ${workspaceRecord.title || recordId}`,
                   },
                 })}
-                onOpenWorkbench={() => setPanel('subagents')}
+                onOpenWorkbench={() => { setWorkspaceView('conversation'); setPanel('subagents'); }}
               /> : null}
             </section>}
           </div>

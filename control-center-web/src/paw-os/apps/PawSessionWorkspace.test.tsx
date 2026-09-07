@@ -592,6 +592,13 @@ describe('PAWOS Agent Session structural migration', () => {
     await user.click(within(sky).getByRole('button', { name: /返回对话/ }));
     expect(screen.queryByRole('dialog', { name: 'Session 星空' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-session-workspace__conversation')).not.toHaveAttribute('inert');
+
+    await user.click(screen.getByRole('button', { name: '星空' }));
+    const reopenedSky = await screen.findByRole('dialog', { name: 'Session 星空' });
+    await user.click(within(reopenedSky).getByRole('button', { name: '子 Agent 工作台' }));
+    expect(screen.queryByRole('dialog', { name: 'Session 星空' })).not.toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Session 子 Agent 工作台' })).toBeInTheDocument();
+    expect(container.querySelector('.paw-session-workspace__conversation')).not.toHaveAttribute('inert');
   });
 
   it('opens every secondary tool from one menu into one mutually exclusive sidebar', async () => {
