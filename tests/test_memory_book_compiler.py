@@ -1685,6 +1685,48 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(merges[0]["payload"]["sourceBookIds"], [source_bundle["existingMemoryBooks"][1]["bookId"]])
         self.assertTrue(inspect_memory_book_plan(plan)["ok"])
 
+    def test_catalog_skips_member_scope_mismatch_but_keeps_independent_merges(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            for name in ("target", "source", "bad-target", "bad-source"):
+                conn.execute(
+                    "INSERT INTO memory_atoms(id, kind, text, canonical_text, scope_project, "
+                    "owner_kind, owner_id, status, created_at_ms, updated_at_ms) "
+                    "VALUES (?, 'project_fact', ?, ?, ?, 'user', 'default', 'active', 1, 1)",
+                    (f"atom:{name}", f"事实 {name}", f"事实 {name}",
+                     "foreign-project" if name == "bad-source" else "wisdom-weasel-rag-ime"),
+                )
+                conn.execute(
+                    "INSERT INTO memory_books(book_id, book_type, book_key, title, project, "
+                    "owner_kind, owner_id, memory_atom_ids_json, status, created_at_ms, updated_at_ms) "
+                    "VALUES (?, 'topic', ?, ?, 'wisdom-weasel-rag-ime', 'user', 'default', ?, 'active', 1, 1)",
+                    (f"book:{name}", name, f"主题 {name}", json.dumps([f"atom:{name}"])),
+                )
+            bundle = build_memory_book_source_bundle(
+                conn, project="wisdom-weasel-rag-ime", curation_scope="global", catalog_only=True,
+            )
+            output = {"bookMerges": [
+                {"targetBookId": f"book:{prefix}target", "sourceBookIds": [f"book:{prefix}source"],
+                 "reason": "相关子问题属于同一长期主题", "confidence": 0.95}
+                for prefix in ("", "bad-")
+            ]}
+            plan = memory_book_plan_from_compile_output(
+                output, project="wisdom-weasel-rag-ime", provider="test", model="test", source_bundle=bundle,
+            )
+            validation = inspect_memory_book_plan(plan)
+            self.assertTrue(validation["ok"], validation)
+            self.assertEqual([diff["targetId"] for diff in plan["diffs"]], ["book:target"])
+            self.assertTrue(any("book_merge_member_scope_mismatch" in warning for warning in plan["metadata"]["warnings"]))
+            atoms_before = [tuple(row) for row in conn.execute("SELECT * FROM memory_atoms ORDER BY id")]
+            applied = apply_memory_book_plan(conn, plan)
+            self.assertEqual(applied["status"], "applied")
+            target = conn.execute("SELECT memory_atom_ids_json FROM memory_books WHERE book_id='book:target'").fetchone()
+            self.assertEqual(set(json.loads(target[0])), {"atom:source", "atom:target"})
+            self.assertEqual(
+                [row[0] for row in conn.execute("SELECT status FROM memory_books WHERE book_id LIKE 'book:bad-%' ORDER BY book_id")],
+                ["active", "active"],
+            )
+            self.assertEqual(atoms_before, [tuple(row) for row in conn.execute("SELECT * FROM memory_atoms ORDER BY id")])
+
     def test_topic_book_merge_apply_preserves_members_redirects_and_rolls_back(self) -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             conn.execute(

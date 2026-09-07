@@ -385,6 +385,9 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
             "sourceEventIds": _positive_ints(item.get("sourceEventIds")),
             "app": catalog_text(item.get("app"), max_chars=120),
             "project": catalog_text(item.get("project"), max_chars=120),
+            "ownerKind": compact_whitespace(str(item.get("ownerKind") or "")),
+            "ownerId": compact_whitespace(str(item.get("ownerId") or "")),
+            "privacyLevel": compact_whitespace(str(item.get("privacyLevel") or "")),
             "knowledgeDomain": compact_whitespace(
                 str(item.get("knowledgeDomain") or "")
             ),

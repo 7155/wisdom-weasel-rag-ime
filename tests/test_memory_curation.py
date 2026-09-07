@@ -71,6 +71,20 @@ class MemoryCurationTests(unittest.TestCase):
         self.assertEqual(result["existingTags"][0]["ref"], "T1")
         self.assertNotIn("rimeRankFeedback", result)
 
+    def test_model_and_verifier_keep_atom_owner_and_privacy(self) -> None:
+        from rag_ime.deepseek_memory_organizer import _semantic_curation_prompt_bundle
+
+        bundle = _source_bundle()
+        authority = {"ownerKind": "user", "ownerId": "catalog-owner", "privacyLevel": "private"}
+        bundle["existingMemoryAtoms"][0].update(authority)
+        model_bundle = build_memory_curation_model_bundle(bundle)
+        snapshot = _semantic_curation_prompt_bundle(model_bundle)
+        for packet in (model_bundle, snapshot):
+            self.assertEqual(
+                {key: packet["existingAtoms"][0].get(key) for key in authority},
+                authority,
+            )
+
     def test_atom_first_prompt_keeps_full_book_index_and_atom_identity_mapping(self) -> None:
         from rag_ime.deepseek_memory_organizer import _semantic_curation_prompt_bundle
 

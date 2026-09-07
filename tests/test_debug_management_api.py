@@ -1671,6 +1671,46 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         self.assertTrue(handed_off_bundle["catalogComplete"])
 
+    def test_generic_memory_organizer_reports_invalid_plan_without_masking_validation(self) -> None:
+        request = KnowledgeWorkbenchRequest(
+            question="整理记忆", mode="database_organize", project="wisdom-weasel-rag-ime",
+            curation_scope="incremental", curation_policy="conservative",
+        )
+        organizer = Mock(provider_name="test")
+        organizer.config.model = "test"
+        organizer.compile_memory_curation.return_value = {}
+        validation = {"ok": False, "errors": [{"code": "book_merge_member_scope_mismatch"}]}
+        with (
+            patch("rag_ime.debug_server.build_governed_memory_model_executor"),
+            patch("rag_ime.debug_server.ManagedPiMemoryOrganizer", return_value=organizer),
+            patch("rag_ime.debug_server.inspect_memory_book_plan", return_value=validation),
+            patch("rag_ime.debug_server.store_memory_book_plan") as store,
+            patch.object(self.service.agent.observations, "emit_memory_event", wraps=self.service.agent.observations.emit_memory_event) as emit,
+        ):
+            result = self.service._knowledge_workbench_database_organizer(request)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["validation"], validation)
+        self.assertEqual(result["error"], "memory_book_plan_failed_validation")
+        self.assertEqual(emit.call_args.kwargs["run_id"], result["plan"]["runId"])
+        store.assert_not_called()
+
+    def test_generic_memory_organizer_observation_failure_preserves_stored_result(self) -> None:
+        request = KnowledgeWorkbenchRequest(
+            question="整理记忆", mode="database_organize", project="wisdom-weasel-rag-ime",
+            curation_scope="incremental", curation_policy="conservative",
+        )
+        organizer = Mock(provider_name="test")
+        organizer.config.model = "test"
+        organizer.compile_memory_curation.return_value = {}
+        with (
+            patch("rag_ime.debug_server.build_governed_memory_model_executor"),
+            patch("rag_ime.debug_server.ManagedPiMemoryOrganizer", return_value=organizer),
+            patch.object(self.service.agent.observations, "emit_memory_event", side_effect=RuntimeError("journal unavailable")),
+        ):
+            result = self.service._knowledge_workbench_database_organizer(request)
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["storedRun"]["runId"])
+
     def test_generic_memory_organizer_auto_applies_a_valid_reused_draft(self) -> None:
         event_ref = self.core.record_event(
             InputEvent(

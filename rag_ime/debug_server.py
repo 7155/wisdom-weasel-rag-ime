@@ -3770,7 +3770,7 @@ class DebugImeService:
                 "validation": validation,
                 "storedRun": stored_run,
             }
-            self.agent.observations.emit_memory_event(
+            self._emit_memory_organizer_event(
                 phase="applied" if auto_applied else "draft_ready",
                 status="completed" if auto_applied else "waiting",
                 summary=(
@@ -3880,9 +3880,12 @@ class DebugImeService:
                     or bool(stored_run.get("diffs"))
                 )
             )
+            run_id = _string(stored_run.get("runId") or stored_run.get("run_id")) or _string(plan.get("runId"))
             response = {
                 "schemaVersion": "rag-ime.knowledge-database-organize.v1",
                 "ok": bool(validation.get("ok")),
+                "runId": run_id,
+                **({"error": "memory_book_plan_failed_validation"} if not validation.get("ok") else {}),
                 "dryRun": not auto_applied,
                 "applySupported": not auto_applied,
                 "applyRequiresReview": stored_draft,
@@ -3912,8 +3915,7 @@ class DebugImeService:
                 "validation": validation,
                 "storedRun": stored_run,
             }
-            run_id = _string(stored_run.get("runId") or stored_run.get("run_id"))
-            self.agent.observations.emit_memory_event(
+            self._emit_memory_organizer_event(
                 phase=(
                     "applied"
                     if auto_applied
@@ -3959,6 +3961,15 @@ class DebugImeService:
         finally:
             if organizer is not None:
                 organizer.close()
+
+    def _emit_memory_organizer_event(self, **payload: Any) -> None:
+        try:
+            self.agent.observations.emit_memory_event(**payload)
+        except Exception:
+            # The plan/validation receipt is authoritative. Optional journal
+            # projection must not replace it with a second failure or make an
+            # already committed merge appear to have failed.
+            return
 
     def agent_memory_maintenance_trigger(
         self,

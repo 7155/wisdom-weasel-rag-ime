@@ -119,3 +119,19 @@ The change passed 161 organizer, compiler, scheduler and owner-curation tests,
 plus two focused Gateway cache regressions. These checks cover scope, member
 preservation, freshness and repeat behavior; a real model run is still required
 to measure the resulting topic organization.
+
+The first production aggregation proposed 19 Book groups and passed its semantic
+verifier, but four groups contained historical member references outside the
+Books' authority scope. Final validation rejected the batch; a missing run ID in
+the failure observation then hid the validation result. The compiler now excludes
+each incompatible group with its member references recorded, while preserving
+independent valid groups. Final inspection and transactional scope checks remain
+in place. Atom owner and privacy fields now reach both model and verifier inputs.
+Failed plans retain their own run identity and validation error; an observation
+failure cannot replace the primary result or misreport a committed merge.
+
+Replaying the frozen production decisions locally yields 15 valid groups covering
+32 source Books, with four skipped groups recorded and no data mutation. Focused
+regressions cover independent group application, unchanged Atoms, retained
+incompatible Books, model scope fields, and failure receipts. This replay is
+diagnostic evidence; production application still requires the governed Runtime.

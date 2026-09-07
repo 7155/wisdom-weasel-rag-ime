@@ -1081,6 +1081,24 @@ def _filter_global_catalog_diffs(
             ):
                 warnings.append(f"global_catalog_unsafe_book_merge:{index}")
                 continue
+            # Historical Books can already contain members from another
+            # authority scope. Exclude that complete merge before inspection
+            # so independent, valid groups can still be applied. Keep the
+            # original Books and Atoms intact and expose the rejected refs.
+            incompatible_members = sorted({
+                member_id
+                for book in [target, *sources]
+                if book is not None
+                for member_id in _strings(book.get("memoryAtomIds"))
+                if member_id in atoms_by_id
+                and not _memory_book_atom_scope_matches(target, atoms_by_id[member_id])
+            })
+            if incompatible_members:
+                warnings.append(
+                    f"global_catalog_book_merge_member_scope_mismatch:{index}:"
+                    + ",".join(incompatible_members)
+                )
+                continue
             accepted_book_merges.add(index)
         else:
             warnings.append(f"global_catalog_disallowed_diff:{index}:{op or 'empty'}")
