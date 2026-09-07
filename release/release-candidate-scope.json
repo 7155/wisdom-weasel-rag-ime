@@ -1,11 +1,11 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-06T23:48:00.458423+00:00",
+  "generatedAt": "2026-09-07T02:22:31.623147+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
     "baseCommit": "f0bcdab577bb5d7f33afec1797bffd23f7946323",
-    "candidateCommitPolicy": "Inventory covers base through the September 6 integrated source commit including this inventory. Installation and foreground acceptance remain separate."
+    "candidateCommitPolicy": "Inventory covers base through the September 7 Agent interface source commit and this inventory. Installation and foreground acceptance remain separate."
   },
   "dispositions": {
     "keep_release": "Retain this path change in the source release candidate.",
@@ -23,7 +23,7 @@
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 392
+      "pathCount": 404
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -63,15 +63,15 @@
     }
   },
   "summary": {
-    "pathCount": 919,
+    "pathCount": 931,
     "dispositionCounts": {
-      "keep_release": 918,
+      "keep_release": 930,
       "delete_old_implementation": 1
     },
     "groupCounts": {
       "project_harness": 7,
       "requirement_evidence": 51,
-      "control_center_release_ui": 392,
+      "control_center_release_ui": 404,
       "memory_context_continuity": 30,
       "execution_reliability": 30,
       "evaluation_audit": 134,
@@ -945,6 +945,13 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "control-center-web/src/features/agent/composer/tool-picker.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
+    },
+    {
       "path": "control-center-web/src/features/agent/composer/tool-policy.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -1041,6 +1048,27 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/ContextUsagePopover.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/ContextUsagePopover.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/ContextUsagePopover.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
     },
     {
       "path": "control-center-web/src/features/agent/timeline/ActivitySummary.tsx",
@@ -2541,6 +2569,13 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/PawStarfield.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -2679,6 +2714,27 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/starfield/starfield-scene.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/starfield/starfield-textures.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/starfield/starfield-textures.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
     },
     {
       "path": "control-center-web/src/paw-os/assets/stellar/nebula.png",
@@ -3087,11 +3143,32 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/src/paw-os/shell/window-arrival.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/window-arrival.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
+    },
+    {
       "path": "control-center-web/src/paw-os/styles/paw-os-agent-fx.css",
       "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-agent-migrated-v1.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
     },
     {
       "path": "control-center-web/src/paw-os/styles/paw-os-agent-next.css",
@@ -3127,6 +3204,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-starfield.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the committed Agent page refinements, celestial depth and bounded window entry effects; installed acceptance remains separate."
     },
     {
       "path": "control-center-web/src/paw-os/styles/paw-os-stellar-dark.css",
