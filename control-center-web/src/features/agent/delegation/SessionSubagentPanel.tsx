@@ -2,12 +2,14 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Bot,
   CheckCircle2,
+  ChevronDown,
   CircleDashed,
   GitFork,
   LoaderCircle,
   Network,
   PanelRightClose,
   PanelsTopLeft,
+  Plus,
   Settings2,
   ShieldAlert,
   TriangleAlert,
@@ -112,7 +114,7 @@ export const SessionSubagentPanel = forwardRef<HTMLElement, {
             <small>{activeCount ? `${activeCount} 个节点正在运行` : runs.length ? '运行图已同步' : '由当前 Session 启动与治理'}</small>
           </span>
           <div className="session-subagent-panel__actions">
-            <a aria-label="打开子 Agent 设置" href="#/configuration?section=subagents">
+            <a aria-label="打开子 Agent 设置" title="打开子 Agent 设置" href="#/configuration?section=subagents">
               <Settings2 size={16} />
             </a>
             <IconButton icon={<PanelRightClose size={17} />} label="收起子 Agent 工作台" onClick={onClose} tooltip />
@@ -121,22 +123,26 @@ export const SessionSubagentPanel = forwardRef<HTMLElement, {
 
         <div className="session-subagent-panel__body">
           {showCompactEmpty ? (
-            <Disclosure className="session-subagent-launch" data-compact-empty summary={<><CircleDashed size={14} /><span>当前没有子 Agent；需要时可在这里启动。</span></>}>
-              <SubagentLaunchPanel
-                availableTools={tools}
-                parents={[{
-                  sessionId,
-                  label: session?.title || '当前 Session',
-                  detail: session?.mode === 'coordinator' ? '主持 Session' : '助手 Session',
-                  canWrite: session?.mode === 'coordinator'
-                    && session.executionMode !== 'read_only'
-                    && Boolean(session.workspaceRoots?.length),
-                  workspaceRoots: session?.workspaceRoots ?? [],
-                  piSkillsEnabled: session?.piSkillsEnabled,
-                  codexSkillsEnabled: session?.codexSkillsEnabled,
-                }]}
-              />
-            </Disclosure>
+            <div className="session-subagent-empty">
+              <p>还没有子 Agent</p>
+              <p>把一项明确的工作交给子 Agent，完成后在这里查看结果。</p>
+              <Disclosure className="session-subagent-launch" data-compact-empty summary={<><Plus size={16} /><span>配置子 Agent</span><ChevronDown className="session-subagent-launch__chevron" size={15} /></>}>
+                <SubagentLaunchPanel
+                  availableTools={tools}
+                  parents={[{
+                    sessionId,
+                    label: session?.title || '当前 Session',
+                    detail: session?.mode === 'coordinator' ? '主持 Session' : '助手 Session',
+                    canWrite: session?.mode === 'coordinator'
+                      && session.executionMode !== 'read_only'
+                      && Boolean(session.workspaceRoots?.length),
+                    workspaceRoots: session?.workspaceRoots ?? [],
+                    piSkillsEnabled: session?.piSkillsEnabled,
+                    codexSkillsEnabled: session?.codexSkillsEnabled,
+                  }]}
+                />
+              </Disclosure>
+            </div>
           ) : <><section className="session-subagent-graph" aria-label="子 Agent 运行图">
             <header>
               <span><Network size={17} /><strong>子 Agent 运行图</strong></span>
@@ -182,7 +188,7 @@ export const SessionSubagentPanel = forwardRef<HTMLElement, {
             />
           ) : null}
 
-          <Disclosure className="session-subagent-launch" summary={<><Settings2 size={14} /><span>启动与模板配置</span></>}>
+          <Disclosure className="session-subagent-launch" summary={<><Plus size={16} /><span>配置新的子 Agent</span><ChevronDown className="session-subagent-launch__chevron" size={15} /></>}>
             <SubagentLaunchPanel
               availableTools={tools}
               parents={[{

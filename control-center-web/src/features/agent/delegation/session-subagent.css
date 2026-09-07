@@ -95,8 +95,14 @@
 .session-subagent-launch > summary svg { color: var(--color-accent); }
 .session-subagent-launch[open] > summary { border-bottom: 1px solid var(--color-border); }
 .session-subagent-launch > .ui-disclosure__reveal > div { margin: 10px; }
-.session-subagent-launch[data-compact-empty] { margin: 0; border: 0; background: transparent; }
-.session-subagent-launch[data-compact-empty] > summary { min-height: 38px; padding: 6px 2px; font-weight: 500; }
+.session-subagent-empty { padding-top: 6px; }
+.session-subagent-empty > p { margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 600; }
+.session-subagent-empty > p + p { margin-top: 5px; color: var(--color-text-secondary); font-size: 12px; font-weight: 400; line-height: 1.6; }
+.session-subagent-launch[data-compact-empty] { margin-top: 14px; }
+.session-subagent-launch[data-compact-empty] > summary { min-height: 42px; color: var(--color-accent); }
+.session-subagent-launch > summary:hover { background: var(--color-surface-hover); }
+.session-subagent-launch__chevron { margin-left: auto; flex: none; transition: transform 160ms ease; }
+.session-subagent-launch[open] > summary .session-subagent-launch__chevron { transform: rotate(180deg); }
 
 @media (max-width: 1360px) {
   .session-subagent-panel { position: absolute; z-index: 14; top: 0; right: 0; bottom: 0; width: min(480px, 92vw); box-shadow: var(--shadow-menu); }
@@ -113,6 +119,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .session-subagent-panel,
+  .session-subagent-launch__chevron,
   .session-subagent-tree li[data-state='running'] .session-subagent-node__icon svg,
   .session-subagent-graph__state[data-spinning] > svg { transition: none; animation: none; }
 }
+
+:root[data-reduce-motion='true'] .session-subagent-launch__chevron { transition: none; }

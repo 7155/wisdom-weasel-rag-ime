@@ -30,6 +30,8 @@
 .subagent-launch-shell[open] .subagent-launch-shell__chevron { transform: rotate(180deg); }
 
 .subagent-launch {
+  container: subagent-launch / inline-size;
+  min-width: 0;
   --launch-accent: var(--color-accent, #087d6b);
   display: grid;
   gap: 14px;
@@ -47,7 +49,7 @@
 .subagent-launch__header > em { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 999px; color: var(--launch-accent); background: var(--color-accent-soft); font-size: 10px; font-style: normal; font-weight: 650; }
 .subagent-launch__mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: white; background: var(--launch-accent); box-shadow: 0 8px 24px color-mix(in srgb, var(--launch-accent) 22%, transparent); }
 
-.subagent-launch fieldset { margin: 0; padding: 0; border: 0; }
+.subagent-launch fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .subagent-launch legend,
 .subagent-launch__field > span,
 .subagent-launch__brief label > span { display: flex; align-items: baseline; gap: 6px; margin-bottom: 7px; font-size: 11px; font-weight: 700; }
@@ -57,6 +59,7 @@
 .subagent-launch__field select,
 .subagent-launch__brief input,
 .subagent-launch__brief textarea {
+  min-width: 0;
   width: 100%;
   border: 1px solid var(--color-border-strong);
   border-radius: 10px;
@@ -132,7 +135,9 @@
 .subagent-launch > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .subagent-launch > footer > small { color: var(--color-text-muted); font-size: 10px; }
 
-@media (max-width: 760px) {
+/* The form also lives in a 320px side panel on a wide desktop. Its own
+   available width decides when choices stack; viewport width cannot. */
+@container subagent-launch (max-width: 420px) {
   .subagent-launch__header { grid-template-columns: auto 1fr; }
   .subagent-launch__header > em { grid-column: 2; justify-self: start; }
   .subagent-launch__templates > div,
@@ -141,6 +146,9 @@
   .subagent-launch__skill-flags { grid-template-columns: 1fr; }
   .subagent-launch > footer { align-items: stretch; flex-direction: column; }
   .subagent-launch > footer .ui-button { width: 100%; }
+  .subagent-launch__header > span { min-width: 0; }
+  .subagent-launch legend { flex-wrap: wrap; }
+  .subagent-launch__templates label { min-height: 76px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

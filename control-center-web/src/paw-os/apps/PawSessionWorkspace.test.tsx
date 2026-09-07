@@ -2238,7 +2238,8 @@ describe('PAWOS Agent Session structural migration', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('当前没有子 Agent；需要时可在这里启动。')).toBeVisible();
+    expect(await screen.findByText('还没有子 Agent')).toBeVisible();
+    expect(screen.getByText('配置子 Agent')).toBeVisible();
     expect(screen.queryByRole('region', { name: '子 Agent 运行图' })).not.toBeInTheDocument();
   });
 
