@@ -106,5 +106,5 @@ jobs:
         run: scripts/build_patched_squirrel.sh build
       - name: Verify native signatures
         run: |
-          codesign --verify --deep --strict build/RagImeControl.app
+          codesign --verify --deep --strict build/RagImeControlElectron.app
           codesign --verify --deep --strict build/RagImeVoice.app

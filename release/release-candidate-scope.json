@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-07T14:32:53.152184+00:00",
+  "generatedAt": "2026-09-07T14:40:37.566349+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -59,16 +59,17 @@
     },
     "verification": {
       "description": "Backend and cross-layer regression tests.",
-      "pathCount": 130
+      "pathCount": 131
     }
   },
   "summary": {
-    "pathCount": 990,
+    "pathCount": 991,
     "dispositionCounts": {
-      "keep_release": 989,
+      "keep_release": 990,
       "delete_old_implementation": 1
     },
     "groupCounts": {
+      "verification": 131,
       "release_scope": 6,
       "project_harness": 7,
       "requirement_evidence": 51,
@@ -79,8 +80,7 @@
       "session_room_skill_flow": 16,
       "session_runtime": 135,
       "product_installation": 4,
-      "input_adapter": 5,
-      "verification": 130
+      "input_adapter": 5
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -112,6 +112,13 @@
     "sourcePreviewRelease": "v0.1.0-alpha.1; current checks and source commit will be recorded in the GitHub prerelease. Existing historicalReceipts remain historical."
   },
   "items": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "group": "verification",
+      "disposition": "keep_release",
+      "reason": "Align source-release verification with the current Electron artifact and fixed-runtime metadata boundary.",
+      "status": "modified"
+    },
     {
       "path": ".gitignore",
       "disposition": "keep_release",

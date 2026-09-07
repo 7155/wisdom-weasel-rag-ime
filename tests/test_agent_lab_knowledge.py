@@ -262,7 +262,10 @@ class KnowledgeResourceTests(unittest.TestCase):
             saved = json.loads(conn.execute('SELECT payload_json FROM agent_lab_app_versions').fetchone()[0])
         self.assertNotIn('resourceFiles', saved)
         self.assertNotIn('base64', json.dumps(saved))
-        self.assertLess(len(json.dumps(saved)), 45000)
+        # The frozen runtime is fixed source, independent of corpus size. Bound
+        # the remaining row so growing documents cannot hide inside metadata.
+        self.assertLess(len(json.dumps({key: value for key, value in saved.items()
+                                       if key != 'runtimeSource'})), 12000)
         public = apps.read({'appId':app['appId']})
         self.assertEqual(public['version']['spec']['knowledge']['documentCount'],20)
         self.assertNotIn('refundcode7', json.dumps(public))
