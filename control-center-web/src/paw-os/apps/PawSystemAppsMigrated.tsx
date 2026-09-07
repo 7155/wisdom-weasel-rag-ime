@@ -27,11 +27,10 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState, Input, SegmentedControl, Switch } from '@/components/primitives';
-import { ApprovalsFeature } from '@/features/approvals';
 import {
   useAgentPreferencesAuthority,
   type AgentExecutionMode,
@@ -45,15 +44,7 @@ import {
   parsePiModelCatalogOptions,
   supportedPiThinkingLevels,
 } from '@/features/agent/model-catalog-options';
-import { ConfigurationFeature } from '@/features/configuration';
-import { PluginScenes } from '@/features/plugins/PluginScenes';
-import { PawOsAppearanceSettings } from '@/features/configuration/PawOsAppearanceSettings';
-import { ContextDebugFeature } from '@/features/context-debug';
-import { DiagnosticsFeature } from '@/features/diagnostics';
 import { diagnosticsQueryKeys } from '@/features/diagnostics/api';
-import { GovernanceFeature } from '@/features/governance';
-import { HistoryFeature } from '@/features/history';
-import { InputLexiconFeature, InputMethodFeature } from '@/features/input-method';
 import {
   InlineNotice,
   ManagementPage,
@@ -66,9 +57,7 @@ import {
   stringValue,
 } from '@/features/overview/management-ui';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
-import { PluginsFeature } from '@/features/plugins';
 import { pluginQueryKeys, usePluginCatalog } from '@/features/plugins/api';
-import { ModelRoutingPanel } from '@/features/roles';
 import {
   agentModelRouting,
   roleModelCatalog,
@@ -76,11 +65,24 @@ import {
   type AgentModelRouting,
   type ModelRouteId,
 } from '@/features/roles/role-model';
-import { ObservabilityFeature } from '@/features/observability';
-import { TraceAgentFeature } from '@/features/trace-agent';
-import { VoiceFeature } from '@/features/voice';
 import type { PawAppId } from '../runtime/app-registry';
 import { pawApp } from '../runtime/app-registry';
+
+const ApprovalsFeature = lazy(async () => ({ default: (await import('@/features/approvals')).ApprovalsFeature }));
+const ConfigurationFeature = lazy(async () => ({ default: (await import('@/features/configuration')).ConfigurationFeature }));
+const PluginScenes = lazy(async () => ({ default: (await import('@/features/plugins/PluginScenes')).PluginScenes }));
+const PawOsAppearanceSettings = lazy(async () => ({ default: (await import('@/features/configuration/PawOsAppearanceSettings')).PawOsAppearanceSettings }));
+const ContextDebugFeature = lazy(async () => ({ default: (await import('@/features/context-debug')).ContextDebugFeature }));
+const DiagnosticsFeature = lazy(async () => ({ default: (await import('@/features/diagnostics')).DiagnosticsFeature }));
+const GovernanceFeature = lazy(async () => ({ default: (await import('@/features/governance')).GovernanceFeature }));
+const HistoryFeature = lazy(async () => ({ default: (await import('@/features/history')).HistoryFeature }));
+const PluginsFeature = lazy(async () => ({ default: (await import('@/features/plugins')).PluginsFeature }));
+const ModelRoutingPanel = lazy(async () => ({ default: (await import('@/features/roles')).ModelRoutingPanel }));
+const ObservabilityFeature = lazy(async () => ({ default: (await import('@/features/observability')).ObservabilityFeature }));
+const TraceAgentFeature = lazy(async () => ({ default: (await import('@/features/trace-agent')).TraceAgentFeature }));
+const VoiceFeature = lazy(async () => ({ default: (await import('@/features/voice')).VoiceFeature }));
+const InputLexiconFeature = lazy(async () => ({ default: (await import('@/features/input-method')).InputLexiconFeature }));
+const InputMethodFeature = lazy(async () => ({ default: (await import('@/features/input-method')).InputMethodFeature }));
 
 export const pawSystemAppIds = [
   'input-studio',
@@ -234,7 +236,9 @@ export function PawSystemAppsMigrated({
             <MemoryRouter initialEntries={[route]} key={route}>
               <PawSystemRouteReporter expectedRoute={route} />
               <div className="paw-system-app__page" key={`${appId}:${page.id}`}>
-                <PawSystemSurface appId={appId} pageId={page.id} />
+                <Suspense fallback={<div className="paw-app-loading" role="status">正在打开 {page.label}…</div>}>
+                  <PawSystemSurface appId={appId} pageId={page.id} />
+                </Suspense>
               </div>
             </MemoryRouter>
           </div>

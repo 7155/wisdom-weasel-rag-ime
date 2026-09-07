@@ -231,9 +231,9 @@ describe('PawSystemAppsMigrated', () => {
     const user = userEvent.setup();
     renderSystemApp('input-studio', '/input');
 
-    expect(screen.getByRole('heading', { name: '输入法真实界面' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '输入法真实界面' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '语音' }));
-    expect(screen.getByRole('heading', { name: '语音真实界面' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '语音真实界面' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '语音' })).toHaveAttribute('aria-current', 'page');
   });
 
@@ -241,12 +241,12 @@ describe('PawSystemAppsMigrated', () => {
     const user = userEvent.setup();
     renderSystemApp('input-studio', '/input');
 
-    expect(screen.getByRole('heading', { name: '输入法真实界面' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '输入法真实界面' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '词库真实界面' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '词库' }));
 
-    expect(screen.getByRole('heading', { name: '词库真实界面' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '词库真实界面' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '输入法真实界面' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '词库' })).toHaveAttribute('aria-current', 'page');
   });

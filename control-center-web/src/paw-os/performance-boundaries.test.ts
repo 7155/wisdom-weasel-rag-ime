@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import appSource from '@/app/App.tsx?raw';
 import structuredRenderersSource from '@/features/agent/timeline/StructuredRenderers.tsx?raw';
 import workDocumentsCss from '@/features/work-documents/work-documents.css?raw';
@@ -81,4 +81,37 @@ describe('PAWOS production loading boundaries', () => {
     expect(agentFxCss).toMatch(/\.fx-track \.fill\s*\{[^}]*transform:\s*scaleX\(var\(--fx-progress-scale, 0\)\);[^}]*transition:\s*transform/s);
     expect(structuredRenderersSource).toContain("'--fx-progress-scale': percent / 100");
   });
+
+  it('does not evaluate unopened feature modules when the native App shell loads', async () => {
+    const evaluated: string[] = [];
+    const features: Record<string, string[]> = {
+      '@/features/memory': ['MemoryFeature'],
+      '@/features/knowledge': ['KnowledgeFeature'],
+      '@/features/eval-lab': ['EvalLabFeature'],
+      '@/features/voice': ['VoiceFeature'],
+      '@/features/diagnostics': ['DiagnosticsFeature'],
+      '@/features/configuration': ['ConfigurationFeature'],
+      '@/features/trace-agent': ['TraceAgentFeature'],
+      '@/features/context-debug': ['ContextDebugFeature'],
+      '@/features/history': ['HistoryFeature'],
+      '@/features/approvals': ['ApprovalsFeature'],
+      '@/features/observability': ['ObservabilityFeature'],
+      '@/features/input-method': ['InputMethodFeature', 'InputLexiconFeature'],
+      '@/features/plugins': ['PluginsFeature'],
+      '@/features/roles': ['ModelRoutingPanel'],
+    };
+    vi.resetModules();
+    for (const [path, names] of Object.entries(features)) vi.doMock(path, () => {
+      evaluated.push(path);
+      return Object.fromEntries(names.map((name) => [name, () => null]));
+    });
+    try {
+      await import('./apps/PawNativeApps');
+      expect(evaluated).toEqual([]);
+    } finally {
+      for (const path of Object.keys(features)) vi.doUnmock(path);
+      vi.resetModules();
+    }
+  });
+
 });
