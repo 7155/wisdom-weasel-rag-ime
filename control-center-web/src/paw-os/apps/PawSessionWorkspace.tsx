@@ -141,6 +141,7 @@ export function PawSessionWorkspace({
   active = true,
   persona,
   record,
+  recordMetadataKnown = Boolean(record),
   recordId,
   initialDraft = '',
   initialAttachments = [],
@@ -159,6 +160,7 @@ export function PawSessionWorkspace({
   active?: boolean;
   persona?: AgentPersonaV1;
   record?: SessionSummary;
+  recordMetadataKnown?: boolean;
   recordId: string;
   initialDraft?: string;
   initialAttachments?: ComposerAttachment[];
@@ -1495,7 +1497,7 @@ export function PawSessionWorkspace({
                 persona={persona}
                 sending={sending}
                 session={workspaceRecord}
-                sessionMetadataKnown={record?.id === recordId}
+                sessionMetadataKnown={recordMetadataKnown && record?.id === recordId}
                 stopping={stopping}
                 toolCatalogStatus={toolCatalogStatus}
                 toolPickerRequest={toolPickerRequest}

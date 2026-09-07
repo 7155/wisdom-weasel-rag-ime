@@ -15,10 +15,11 @@ import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { parseRoomEvent } from '@/contracts/validators';
 
 vi.mock('./PawSessionWorkspace', () => ({
-  PawSessionWorkspace: ({ record, recordId }: { record?: { id?: string; evaluationSnapshot?: boolean }; recordId: string }) => (
+  PawSessionWorkspace: ({ record, recordId, recordMetadataKnown }: { recordMetadataKnown?: boolean; record?: { id?: string; evaluationSnapshot?: boolean }; recordId: string }) => (
     <div>
       Session 工作区
       <output data-testid="session-record-id">{record?.id ?? `missing:${recordId}`}</output>
+      <output data-testid="session-record-known">{String(recordMetadataKnown)}</output>
       <output data-testid="session-record-read-only">{record?.evaluationSnapshot ? 'true' : 'false'}</output>
     </div>
   ),
@@ -196,7 +197,9 @@ describe('PAWOS Agent App', () => {
     renderAgent(transport, { initialRoute: `/agent?session=${sessionId}` });
 
     expect(screen.getByTestId('session-record-id')).toHaveTextContent(sessionId);
+    expect(screen.getByTestId('session-record-known')).toHaveTextContent('false');
     await waitFor(() => expect(screen.getByTestId('session-record-read-only')).toHaveTextContent('true'));
+    expect(screen.getByTestId('session-record-known')).toHaveTextContent('true');
     expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.list')).toHaveLength(1);
   });
 

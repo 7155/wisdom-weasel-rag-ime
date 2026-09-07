@@ -59,13 +59,13 @@ afterEach(() => {
 });
 
 describe('PAWOS Agent Session structural migration', () => {
-  it('does not invent a permission preset while canonical Session metadata is unavailable', async () => {
+  it.each(['missing', 'provisional'])('does not invent a permission preset with %s canonical Session metadata', async (kind) => {
     const transport = new StubControlTransport('mock', idleSessionRoutes());
-    const workspace = (record?: SessionSummary) => <ControlTransportProvider transport={transport}><TooltipProvider>
-      <PawSessionWorkspace record={record} recordId="session-live"
+    const workspace = (record?: SessionSummary, known = Boolean(record)) => <ControlTransportProvider transport={transport}><TooltipProvider>
+      <PawSessionWorkspace record={record} recordMetadataKnown={known} recordId="session-live"
         onNewWork={vi.fn()} onSessionCreated={vi.fn()} onSessionUpdated={vi.fn()} />
     </TooltipProvider></ControlTransportProvider>;
-    const view = render(workspace());
+    const view = render(workspace(kind === 'provisional' ? { ...liveSession(), mode: 'assistant', executionMode: undefined, toolProfileVersion: undefined } : undefined, false));
     expect(screen.getByRole('button', { name: '对话权限：尚未同步' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '对话权限：写入与命令确认' })).not.toBeInTheDocument();
     const user = userEvent.setup();

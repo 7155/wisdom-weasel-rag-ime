@@ -460,6 +460,7 @@ export function PawAgentApp({
             initialDraft={selection.draft}
             persona={personas.find((item) => item.roleId === sessions.find((session) => session.id === selection.id)?.roleId)}
             record={selectedSessionRecord}
+            recordMetadataKnown={Boolean(selectedSession)}
             recordId={selection.id}
             traceFocusNodeId={evidenceFocus}
             toolPickerIntent={toolPickerIntent}
