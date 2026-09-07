@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { previewRoomSnapshot } from '@/app/preview-room-data';
@@ -55,13 +56,57 @@ describe('星空 lazy bundle boundary', () => {
     const focus = buildRoomFocusProjection(room);
     render(<LazyPawRoomStarfield focus={focus} roomId={room.id} />);
 
-    const sky = await screen.findByRole('region', { name: 'Room 星空' });
+    const sky = await screen.findByRole('dialog', { name: 'Room 星空' });
     expect(sky).toHaveAttribute('data-immersive');
     expect(within(sky).getByText('Sol')).toBeInTheDocument();
   });
 });
 
 describe('PAWOS 星空 v2 immersive visualization', () => {
+  it('owns keyboard focus while immersive and restores the opener after Escape', async () => {
+    const room = previewRoomSnapshot('room-keyboard').room as unknown as RoomSummary;
+    const focus = buildRoomFocusProjection(room);
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <>
+        <button onClick={() => setOpen(true)}>进入测试星空</button>
+        <button>背后的对话操作</button>
+        {open ? <PawRoomStarfield focus={focus} roomId={room.id} onExit={() => setOpen(false)} /> : null}
+      </>;
+    }
+    render(<Harness />);
+    const user = userEvent.setup();
+    const opener = screen.getByRole('button', { name: '进入测试星空' });
+    await user.click(opener);
+    const exit = screen.getByRole('button', { name: /返回 Room/ });
+    const sky = exit.closest('section')!;
+    expect(exit).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(sky.contains(document.activeElement)).toBe(true);
+    const last = document.activeElement;
+    await user.tab();
+    expect(sky.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(last);
+    expect(screen.queryByRole('button', { name: '背后的对话操作' })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(exit).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
+  it('releases an inactive owner without stealing focus from another window', async () => {
+    const room = previewRoomSnapshot('room-keyboard-inactive').room as unknown as RoomSummary;
+    const focus = buildRoomFocusProjection(room);
+    const view = render(<><button>其他窗口</button><PawRoomStarfield focus={focus} roomId={room.id} onExit={vi.fn()} /></>);
+    const sky = screen.getByRole('dialog', { name: 'Room 星空' });
+    expect(sky.contains(document.activeElement)).toBe(true);
+    view.rerender(<><button>其他窗口</button><PawRoomStarfield active={false} focus={focus} roomId={room.id} onExit={vi.fn()} /></>);
+    const otherWindow = screen.getByRole('button', { name: '其他窗口' });
+    otherWindow.focus();
+    await waitFor(() => expect(document.body.style.pointerEvents).not.toBe('none'));
+    expect(otherWindow).toHaveFocus();
+    expect(screen.queryByRole('dialog', { name: 'Room 星空' })).not.toBeInTheDocument();
+  });
+
   it('unmounts the immersive Room portal while its owning window is inactive', () => {
     const room = previewRoomSnapshot('room-inactive').room as unknown as RoomSummary;
     const focus = buildRoomFocusProjection(room);
@@ -70,7 +115,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     try {
       render(<PawRoomStarfield active={false} focus={focus} roomId={room.id} />);
 
-      expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Room 星空' })).not.toBeInTheDocument();
       expect(setInterval).not.toHaveBeenCalledWith(expect.any(Function), 30_000);
     } finally {
       setInterval.mockRestore();
@@ -82,7 +127,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
 
     // Immersive by default; jsdom has no WebGL so the sky reports the
     // graceful fullscreen 2D fallback while keeping every identity.
-    const sky = await screen.findByRole('region', { name: 'Session 星空' });
+    const sky = await screen.findByRole('dialog', { name: 'Session 星空' });
     expect(sky).toHaveAttribute('data-immersive');
     expect(sky).toHaveAttribute('data-render', '2d');
     expect(within(sky).getByText('预览 Session')).toBeInTheDocument();
@@ -118,7 +163,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     const onOpenRun = vi.fn();
     renderSessionSky({ onOpenRun });
 
-    const sky = await screen.findByRole('region', { name: 'Session 星空' });
+    const sky = await screen.findByRole('dialog', { name: 'Session 星空' });
     const runningMoon = await within(sky).findByRole('button', { name: /研究员 卫星 .*进行中/ });
     await userEvent.setup().click(runningMoon);
 
@@ -141,7 +186,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     renderSessionSky({ onExit });
     const user = userEvent.setup();
 
-    const sky = await screen.findByRole('region', { name: 'Session 星空' });
+    const sky = await screen.findByRole('dialog', { name: 'Session 星空' });
     const exit = within(sky).getByRole('button', { name: /返回对话/ });
 
     // Esc with an open detail card closes the card, not the sky.
@@ -162,7 +207,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     const room = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
     const focus = buildRoomFocusProjection(room);
     const first = render(<PawRoomStarfield focus={focus} roomId={room.id} />);
-    const sky = screen.getByRole('region', { name: 'Room 星空' });
+    const sky = screen.getByRole('dialog', { name: 'Room 星空' });
 
     // Shooting stars and the aurora veil are aria-hidden decoration only.
     const meteors = [...sky.querySelectorAll<HTMLElement>('.paw-sf2__meteor')];
@@ -190,7 +235,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     first.unmount();
     render(<PawRoomStarfield focus={focus} roomId={room.id} />);
     const replay = [
-      ...screen.getByRole('region', { name: 'Room 星空' }).querySelectorAll<HTMLElement>('.paw-sf2__meteor'),
+      ...screen.getByRole('dialog', { name: 'Room 星空' }).querySelectorAll<HTMLElement>('.paw-sf2__meteor'),
     ].map((meteor) => [
       meteor.style.getPropertyValue('--sf-meteor-x'),
       meteor.style.getPropertyValue('--sf-meteor-y'),
@@ -217,7 +262,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
       const room = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
       const focus = buildRoomFocusProjection(room);
       const view = render(<PawRoomStarfield focus={focus} roomId={room.id} />);
-      const sky = screen.getByRole('region', { name: 'Room 星空' });
+      const sky = screen.getByRole('dialog', { name: 'Room 星空' });
 
       // The shell acquires system fullscreen on its own root element.
       await userEvent.setup().click(screen.getByRole('button', { name: '进入系统全屏' }));
@@ -250,7 +295,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
       <PawRoomStarfield focus={focus} roomId={room.id} onOpenParticipant={onOpenParticipant} />,
     );
 
-    const sky = screen.getByRole('region', { name: 'Room 星空' });
+    const sky = screen.getByRole('dialog', { name: 'Room 星空' });
     expect(sky).toHaveAttribute('data-immersive');
     expect(within(sky).getByText('Sol')).toBeInTheDocument();
     for (const partner of focus.partners) {
@@ -271,7 +316,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     const room = previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
     const focus = buildRoomFocusProjection(room);
     render(<PawRoomStarfield focus={focus} roomId={room.id} />);
-    const sky = screen.getByRole('region', { name: 'Room 星空' });
+    const sky = screen.getByRole('dialog', { name: 'Room 星空' });
 
     // Every partner planet says what it is working on, from the real
     // projection — the task is part of the accessible name, not decoration.
@@ -316,7 +361,7 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
     };
     const focus = buildRoomFocusProjection(unhosted);
     render(<PawRoomStarfield focus={focus} roomId={unhosted.id} />);
-    const sky = screen.getByRole('region', { name: 'Room 星空' });
+    const sky = screen.getByRole('dialog', { name: 'Room 星空' });
 
     // No Sol body, and the sky says why instead of faking a center.
     expect(within(sky).queryByText('Sol')).toBeNull();
@@ -373,8 +418,9 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
 
     // Fullscreen expansion and the way back.
     await user.click(within(galaxy).getByRole('button', { name: '全屏星空' }));
-    expect(screen.getByRole('region', { name: 'Room 星系' })).toHaveAttribute('data-immersive');
+    expect(screen.getByRole('dialog', { name: 'Room 星系' })).toHaveAttribute('data-immersive');
     await user.click(screen.getByRole('button', { name: /返回工作台/ }));
     expect(screen.getByRole('region', { name: 'Room 星系' })).not.toHaveAttribute('data-immersive');
+    await waitFor(() => expect(screen.getByRole('button', { name: '全屏星空' })).toHaveFocus());
   });
 });

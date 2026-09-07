@@ -388,7 +388,7 @@ describe('PAWOS Room collaboration tools', () => {
 
     /* Default conversation path pays nothing for the sky: no region, no
      * canvas, and the starfield module itself was never evaluated. */
-    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Room 星空' })).not.toBeInTheDocument();
     expect(starfieldChunk.evaluated).toBe(false);
   });
   it('opens a participant observer from the main result while external Room focus owns the details', async () => {
@@ -503,7 +503,7 @@ describe('PAWOS Room collaboration tools', () => {
     rendered.setDesktopFocusGroup('room:room-preview');
 
     expect(rendered.container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'rounds');
-    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Room 星空' })).not.toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBe(composer);
     expect(composer).toHaveValue('外部聚焦继续保留');
@@ -754,11 +754,11 @@ describe('PAWOS Room collaboration tools', () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
     const { container } = renderRoom(900, openWindow);
-    await screen.findByRole('textbox', { name: '协作消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
 
     // Before the explicit 星空 click nothing starfield exists — neither the
     // region nor the module (the chunk stays un-fetched in production).
-    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Room 星空' })).not.toBeInTheDocument();
     expect(starfieldChunk.evaluated).toBe(false);
 
     await user.click(screen.getByRole('button', { name: '星空' }));
@@ -766,12 +766,13 @@ describe('PAWOS Room collaboration tools', () => {
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'starfield');
     // The sky is an immersive fullscreen overlay portaled to <body>; it
     // resolves through the lazy boundary, so the lookup awaits the chunk.
-    const sky = await screen.findByRole('region', { name: 'Room 星空' });
+    const sky = await screen.findByRole('dialog', { name: 'Room 星空' });
     expect(starfieldChunk.evaluated).toBe(true);
     expect(sky).toHaveAttribute('data-immersive');
     expect(within(sky).getByText('Sol')).toBeInTheDocument();
-    // The workspace behind the overlay keeps its state for the way back.
-    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
+    // Preserve the conversation while removing its covered controls from navigation.
+    expect(composer).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '协作消息' })).not.toBeInTheDocument();
 
     // Picking a planet opens its detail card; opening the partner window is
     // an explicit second action, so a stray click never steals the stage.
@@ -792,7 +793,7 @@ describe('PAWOS Room collaboration tools', () => {
     // The exit control returns to the conversation view and tears the whole
     // stage down: no region, no leftover sky DOM, nothing left animating.
     await user.click(within(sky).getByRole('button', { name: /返回 Room/ }));
-    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Room 星空' })).not.toBeInTheDocument();
     expect(document.querySelector('.paw-sf')).toBeNull();
     expect(document.querySelector('.paw-sf__canvas')).toBeNull();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'conversation');

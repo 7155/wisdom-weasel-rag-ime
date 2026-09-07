@@ -573,14 +573,14 @@ describe('PAWOS Agent Session structural migration', () => {
 
     await screen.findByRole('textbox', { name: '消息' });
     // Not watched → not mounted: the sky never polls behind the conversation.
-    expect(screen.queryByRole('region', { name: 'Session 星空' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Session 星空' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '星空' }));
     // This is the cold lazy-import acceptance path.  PawStarfield intentionally
     // stays out of the default Session bundle, so a clean test worker can spend
     // more than Testing Library's one-second default transforming the chunk.
     const sky = await screen.findByRole(
-      'region',
+      'dialog',
       { name: 'Session 星空' },
       { timeout: 15_000 },
     );
@@ -589,8 +589,8 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(container.querySelector('.paw-session-workspace__conversation')).toHaveAttribute('inert');
     expect(container.querySelector('.paw-session-workspace__starfield')).not.toHaveAttribute('inert');
 
-    await user.click(screen.getByRole('button', { name: '对话' }));
-    expect(screen.queryByRole('region', { name: 'Session 星空' })).not.toBeInTheDocument();
+    await user.click(within(sky).getByRole('button', { name: /返回对话/ }));
+    expect(screen.queryByRole('dialog', { name: 'Session 星空' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-session-workspace__conversation')).not.toHaveAttribute('inert');
   });
 
