@@ -9,6 +9,7 @@ import type {
 import { previewSessions } from '../preview-data';
 import type { ToolManifest } from '../types';
 import { ToolPicker } from './ToolPicker';
+import { countAvailableTools } from './tool-policy';
 
 afterEach(cleanup);
 
@@ -93,10 +94,12 @@ function catalog(): CapabilityCatalog {
 
 function renderPicker({
   adjustmentDisabled = false,
+  capabilityCatalog = catalog(),
   onCapabilityPreferenceChange,
   onSelect = () => {},
 }: {
   adjustmentDisabled?: boolean;
+  capabilityCatalog?: CapabilityCatalog;
   onCapabilityPreferenceChange?: (
     canonicalId: string,
     preference: CapabilityPreference,
@@ -107,7 +110,7 @@ function renderPicker({
   render(
     <ToolPicker
       adjustmentDisabled={adjustmentDisabled}
-      capabilityCatalog={catalog()}
+      capabilityCatalog={capabilityCatalog}
       capabilityPolicyPending={false}
       disabled={false}
       onCapabilityPreferenceChange={handlePreferenceChange}
@@ -122,6 +125,26 @@ function renderPicker({
 }
 
 describe('ToolPicker conversation capability presentation', () => {
+  it('keeps a stale Session catalog out of the current memory label and controls', () => {
+    const stale = catalog();
+    stale.sessionPolicy!.sessionId = 'previous-session';
+    renderPicker({ capabilityCatalog: stale });
+    expect(screen.getByRole('button', { name: '能力列表正在读取' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /当前对话记忆/ })).not.toBeInTheDocument();
+  });
+
+  it('uses the matching backend capability policy before Session display metadata arrives', () => {
+    const coordinatorTool = { ...tools[0], sessionModes: ['coordinator'] as const } as ToolManifest;
+    const provisional = { ...previewSessions[0], mode: 'assistant' as const, toolProfileVersion: undefined };
+    expect(countAvailableTools([coordinatorTool], provisional, catalog())).toBe(1);
+  });
+
+  it('does not use another Session capability policy to count executable tools', () => {
+    const wrongOwner = catalog();
+    wrongOwner.sessionPolicy!.sessionId = 'different-session';
+    expect(countAvailableTools(tools, previewSessions[0], wrongOwner)).toBe(0);
+  });
+
   it('shows the current memory state before opening the menu and jumps directly to its control', async () => {
     const change = renderPicker();
     const user = userEvent.setup();

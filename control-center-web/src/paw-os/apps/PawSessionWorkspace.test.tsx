@@ -59,6 +59,22 @@ afterEach(() => {
 });
 
 describe('PAWOS Agent Session structural migration', () => {
+  it('does not invent a permission preset while canonical Session metadata is unavailable', async () => {
+    const transport = new StubControlTransport('mock', idleSessionRoutes());
+    const workspace = (record?: SessionSummary) => <ControlTransportProvider transport={transport}><TooltipProvider>
+      <PawSessionWorkspace record={record} recordId="session-live"
+        onNewWork={vi.fn()} onSessionCreated={vi.fn()} onSessionUpdated={vi.fn()} />
+    </TooltipProvider></ControlTransportProvider>;
+    const view = render(workspace());
+    expect(screen.getByRole('button', { name: '对话权限：尚未同步' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '对话权限：写入与命令确认' })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('textbox', { name: '消息' }), '保留正在输入的内容');
+    view.rerender(workspace({ ...liveSession(), executionMode: 'full_trust', toolProfileVersion: 'control-center-auto-approve-v1' }));
+    expect(await screen.findByRole('button', { name: '对话权限：全自动' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('保留正在输入的内容');
+  });
+
   it('opens the linked memory control while model discovery is still pending', async () => {
     const transport = createPreviewTransport();
     const request = transport.request.bind(transport);

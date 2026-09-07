@@ -36,6 +36,7 @@ import { toolAvailableForPolicy } from './tool-policy';
 
 export function PermissionPicker({
   session,
+  metadataKnown = Boolean(session),
   persona,
   tools,
   disabled,
@@ -44,6 +45,7 @@ export function PermissionPicker({
   onWorkspaceRootsChange,
 }: {
   session?: SessionSummary;
+  metadataKnown?: boolean;
   persona?: AgentPersonaV1;
   tools: ToolManifest[];
   disabled: boolean;
@@ -62,32 +64,32 @@ export function PermissionPicker({
   const scopedWorkspaceRoots = (session?.workspaceRoots ?? []).filter((root) => root !== '/');
 
   useEffect(() => {
-    if (requestOpen > 0 && session && !disabled) setOpen(true);
-  }, [disabled, requestOpen, session]);
+    if (requestOpen > 0 && session && metadataKnown && !disabled) setOpen(true);
+  }, [disabled, metadataKnown, requestOpen, session]);
 
   useEffect(() => {
-    if (!disabled) return;
+    if (!disabled && metadataKnown) return;
     setOpen(false);
     setDangerousOpen(false);
-  }, [disabled]);
+  }, [disabled, metadataKnown]);
 
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
-            aria-label={`对话权限：${current.label}`}
+            aria-label={metadataKnown ? `对话权限：${current.label}` : '对话权限：尚未同步'}
             className="agent-composer__picker"
-            data-permission={current.id}
+            data-permission={metadataKnown ? current.id : 'unknown'}
             size="small"
-            title={disabled
+            title={!metadataKnown ? '会话权限信息尚未返回，载入后可调整。消息仍可编辑。' : disabled
               ? '请先结束或停止当前任务，再调整运行权限。'
               : `对话权限：${current.label}`}
             variant="quiet"
-            disabled={!session || disabled}
-            leadingIcon={<PermissionMark mode={current.executionMode} size={16} />}
+            disabled={!session || !metadataKnown || disabled}
+            leadingIcon={metadataKnown ? <PermissionMark mode={current.executionMode} size={16} /> : <LockKeyhole size={16} />}
           >
-            <span className="agent-composer__picker-text">{current.label}</span>
+            <span className="agent-composer__picker-text">{metadataKnown ? current.label : '权限待同步'}</span>
           </Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="agent-picker-popover">

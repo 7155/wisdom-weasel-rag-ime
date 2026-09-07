@@ -110,6 +110,7 @@ export function AgentComposer({
   draft,
   attachments,
   session,
+  sessionMetadataKnown = Boolean(session),
   persona,
   catalog,
   commands: piCommands,
@@ -156,6 +157,7 @@ export function AgentComposer({
   draft: string;
   attachments: ComposerAttachment[];
   session?: SessionSummary;
+  sessionMetadataKnown?: boolean;
   persona?: AgentPersonaV1;
   catalog?: ModelCatalog;
   commands: AgentCommand[];
@@ -558,7 +560,7 @@ export function AgentComposer({
             />
             {minimal ? null : (
               <>
-                <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
+                <PermissionPicker session={session} metadataKnown={sessionMetadataKnown} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
                 <ToolPicker
                   adjustmentDisabled={busy || sending}
                   capabilityCatalog={capabilityCatalog}

@@ -46,13 +46,26 @@ export function toolAvailableForConversation(
   session: SessionSummary | undefined,
   capabilityCatalog?: CapabilityCatalog,
 ): boolean {
+  if (capabilityCatalog?.sessionPolicy) {
+    // This response already applies the backend's mode, profile and allowlist.
+    // A provisional display record must not reinterpret that confirmed result.
+    if (!session || capabilityCatalog.sessionPolicy.sessionId !== session.id) return false;
+    const item = capabilityCatalog.items.find(
+      (candidate) => candidate.kind === 'tool' && candidate.id === tool.id,
+    );
+    const effectiveOperations = record(tool).effectiveOperations;
+    if (!item) return false;
+    return tool.availability === 'online'
+      && tool.enabled !== false
+      && (!Array.isArray(effectiveOperations) || effectiveOperations.length > 0)
+      && item.authorization.state !== 'denied'
+      && item.disclosure.effective === 'enabled';
+  }
   if (!toolAvailableForCurrentSession(tool, session)) return false;
   const item = capabilityCatalog?.items.find(
     (candidate) => candidate.kind === 'tool' && candidate.id === tool.id,
   );
-  if (!item) return true;
-  return item.authorization.state !== 'denied'
-    && item.disclosure.effective === 'enabled';
+  return !item || (item.authorization.state !== 'denied' && item.disclosure.effective === 'enabled');
 }
 
 /** Count distinct executable tools, keeping the UI and Runtime vocabulary aligned. */

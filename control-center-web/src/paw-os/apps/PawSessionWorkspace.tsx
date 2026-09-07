@@ -1495,6 +1495,7 @@ export function PawSessionWorkspace({
                 persona={persona}
                 sending={sending}
                 session={workspaceRecord}
+                sessionMetadataKnown={record?.id === recordId}
                 stopping={stopping}
                 toolCatalogStatus={toolCatalogStatus}
                 toolPickerRequest={toolPickerRequest}

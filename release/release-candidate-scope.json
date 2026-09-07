@@ -1,11 +1,11 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-07T03:24:00.859047+00:00",
+  "generatedAt": "2026-09-07T03:43:09.952083+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
     "baseCommit": "f0bcdab577bb5d7f33afec1797bffd23f7946323",
-    "candidateCommitPolicy": "Inventory covers base through the September 7 Agent, memory control, and capability settings refinements. Installation and foreground acceptance remain separate."
+    "candidateCommitPolicy": "Inventory covers base through the September 7 Agent, memory/capability controls, and truthful Session opening state refinements. Installation and foreground acceptance remain separate."
   },
   "dispositions": {
     "keep_release": "Retain this path change in the source release candidate.",

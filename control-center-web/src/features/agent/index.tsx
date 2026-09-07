@@ -2268,6 +2268,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
             persona={persona}
             sending={sending || rewriteResolving}
             session={session}
+            sessionMetadataKnown={sessionMetadataKnown}
             showJumpLatest={!timelineFollow.following}
             unseenUpdates={timelineFollow.unseenUpdates}
             stopping={stopping}

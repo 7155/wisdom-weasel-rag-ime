@@ -30,7 +30,7 @@ export function ToolPicker({
   capabilityCatalog,
   capabilityPolicyPending,
   tools,
-  status,
+  status: receivedStatus,
   session,
   disabled,
   requestOpen,
@@ -50,6 +50,9 @@ export function ToolPicker({
   onCapabilityPreferenceChange: (canonicalId: string, preference: CapabilityPreference) => void;
   onSelect: (tool: ToolManifest) => void;
 }) {
+  const catalogMatchesSession = !capabilityCatalog?.sessionPolicy
+    || capabilityCatalog.sessionPolicy.sessionId === session?.id;
+  const status = catalogMatchesSession ? receivedStatus : 'loading';
   const desktop = usePawOsDesktop();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -59,8 +62,9 @@ export function ToolPicker({
     if (requestOpen > 0 && status === 'ready' && !disabled) { setQuery(requestQuery); setOpen(true); }
   }, [disabled, requestOpen, requestQuery, status]);
 
-  const memory = capabilityCatalog?.items.find((item) => item.canonicalId === 'tool:memory');
+  const memory = catalogMatchesSession ? capabilityCatalog?.items.find((item) => item.canonicalId === 'tool:memory') : undefined;
   const memoryEnabled = memory?.disclosure.effective === 'enabled';
+  useEffect(() => { if (!catalogMatchesSession) setOpen(false); }, [catalogMatchesSession]);
   const availableCount = countAvailableTools(tools, session, capabilityCatalog);
   const registeredCount = countRegisteredTools(tools);
   const auxiliaryCapabilityCount = capabilityCatalog
@@ -102,7 +106,7 @@ export function ToolPicker({
           variant="quiet"
         >记忆 · {memoryEnabled ? '开' : '关'}</Button>
       ) : null}
-    <Popover open={open} onOpenChange={(nextOpen) => {
+    <Popover open={open && catalogMatchesSession} onOpenChange={(nextOpen) => {
       setOpen(nextOpen);
       if (nextOpen) setQuery('');
     }}>
