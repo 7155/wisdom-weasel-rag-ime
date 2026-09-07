@@ -969,8 +969,8 @@ export function PluginsFeature() {
         const resourceSummary = packageResourceSummary(plugin.resources);
         const source = asRecord(plugin.source);
         const sourceKind = stringValue(source.kind);
-        const sourceRequested = stringValue(source.requested);
-        const previousVersion = stringValue(plugin.previousVersion);
+        const description = publicInstalledPluginDescription(plugin);
+        const previousVersion = stringValue(asRecord(plugin.rollbackTarget).version, stringValue(plugin.previousVersion));
         const rollbackReady = plugin.rollbackAvailable === true;
         const update = availableUpdateFor(pluginId);
         const usageSummary = asRecord(plugin.usage);
@@ -998,11 +998,10 @@ export function PluginsFeature() {
               <strong>{displayName}</strong>
               <small>
                 <span>v{stringValue(plugin.version)}</span>
-                {pluginId && pluginId !== displayName ? <span>{pluginId}</span> : null}
                 {sourceKind ? <span>{publicPluginSourceLabel(sourceKind)}</span> : null}
-                {sourceRequested ? <span>{sourceRequested}</span> : null}
                 {extensionApp ? <ExtensionAppBadge /> : null}
               </small>
+              {description ? <p className="installed-plugin__description">{description}</p> : null}
             </div>
             <span className="installed-plugin__state">
               {update ? <StatusBadge label="有更新" tone="warning" /> : null}
@@ -1014,7 +1013,7 @@ export function PluginsFeature() {
               <li><ShieldCheck aria-hidden="true" size={13} />{permissions.length ? permissions.map(publicPluginPermissionLabel).join('、') : '无额外权限'}</li>
               <li><Boxes aria-hidden="true" size={13} />{resourceCount ? `${resourceCount} 项资源` : '无附带资源'}</li>
               {resourceSummary ? <li><Boxes aria-hidden="true" size={13} />{resourceSummary}</li> : null}
-              <li><History aria-hidden="true" size={13} />{rollbackReady && previousVersion ? `可恢复到 v${previousVersion}` : '没有可恢复的历史版本'}</li>
+              <li><History aria-hidden="true" size={13} />{rollbackReady ? (previousVersion ? `可恢复到 v${previousVersion}` : '可恢复上一版本，具体版本将在预览中显示') : '没有可恢复的历史版本'}</li>
             </ul>
             {Object.keys(usageSummary).length ? (
               <dl className="installed-plugin__usage">
@@ -1023,6 +1022,16 @@ export function PluginsFeature() {
                 {invoked ? <div><dt>最近调用</dt><dd>{pluginInvocationStatusLabel(stringValue(lastInvocation.status))} · {lastInvocationDurationMs} ms{lastInvocationAtMs ? ` · ${formatPluginTime(lastInvocationAtMs)}` : ''} · {publicPluginResourceKindLabel(stringValue(lastInvocation.resourceKind))} {lastInvocationResource}</dd></div> : null}
               </dl>
             ) : null}
+            <Disclosure className="installed-plugin__details" summary={<><ChevronRight aria-hidden="true" size={14} />包标识与原始信息</>}>
+              <pre>{JSON.stringify({
+                id: pluginId,
+                displayName: plugin.displayName,
+                description: plugin.description,
+                version: plugin.version,
+                source: { kind: source.kind, label: source.label, requested: source.requested },
+                permissions,
+              }, null, 2)}</pre>
+            </Disclosure>
             <div className="installed-plugin__actions">
               {canOpenExtensionApp ? (
                 <Button
@@ -1746,6 +1755,9 @@ function publicPluginDisplayName(label: string): string {
   return ({
     'Session Review': '对话复盘',
     'Timeline Inspector': '时间线检查',
+    '@paw/pi-session-workflow': '对话工作流',
+    '@paw/zhanggui-wenshu': '掌柜问数',
+    'Vertical Agent Sandbox': '垂直场景沙盒',
   } as Record<string, string>)[label] ?? label;
 }
 function publicPluginSourceLabel(label: string): string {
@@ -1753,16 +1765,22 @@ function publicPluginSourceLabel(label: string): string {
     'Personal Agent Workbench': '系统内置',
     'Product bundle': '随产品提供',
     bundled: '随产品提供',
+    managed: '由运行环境管理',
     npm: 'npm 包',
     git: 'Git 仓库',
     local: '本地目录',
   } as Record<string, string>)[label] ?? label;
 }
 function publicPluginPermissionLabel(permission: string): string {
+  return publicCapabilityPermissionLabel(permission);
+}
+function publicInstalledPluginDescription(plugin: Record<string, unknown>): string {
   return ({
-    'session.read': '读取对话内容',
-    'memory.review': '提交记忆复盘建议',
-  } as Record<string, string>)[permission] ?? permission;
+    '@paw/pi-session-workflow': '管理当前对话的目标、计划、任务清单和工作流程。',
+    '@paw/zhanggui-wenshu': '为掌柜问数提供经营问答技能，并连接 SGG 沙盒。',
+    'session-review': '整理对话成果及其依据，供你复盘查看。',
+    'vertical-agent-sandbox': '为当前对话连接由运行环境管理的垂直场景沙盒。',
+  } as Record<string, string>)[stringValue(plugin.id)] ?? stringValue(plugin.description);
 }
 function skillSourceLabel(value: string): string {
   return ({
@@ -1801,10 +1819,10 @@ function packageResourceCount(value: unknown): number {
 function packageResourceSummary(value: unknown): string {
   const resources = asRecord(value);
   return [
-    ['extensions', 'Extension'],
-    ['skills', 'Skill'],
-    ['prompts', 'Prompt'],
-    ['themes', 'Theme'],
+    ['extensions', '扩展'],
+    ['skills', '技能'],
+    ['prompts', '提示词'],
+    ['themes', '主题'],
   ].map(([key, label]) => [label, stringArray(resources[key]).length] as const)
     .filter(([, count]) => count > 0)
     .map(([label, count]) => `${label} ${count}`)

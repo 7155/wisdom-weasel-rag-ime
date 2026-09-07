@@ -19,6 +19,56 @@ afterEach(() => {
 });
 
 describe('PluginsFeature', () => {
+  it('uses the Runtime rollback target and still previews the canonical package action', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins({
+      'agent.extensions.list': { ok: true, items: [{
+        id: '@paw/zhanggui-wenshu', displayName: '@paw/zhanggui-wenshu', version: '0.2.0', enabled: true,
+        rollbackAvailable: true, rollbackTarget: { version: '0.1.1', digest: 'target-digest' },
+        previousVersion: '0.0.1', source: { kind: 'managed' },
+      }, {
+        id: 'unknown-target', displayName: 'Unknown target', enabled: true, rollbackAvailable: true,
+      }] },
+    }, '/plugins', true);
+    const card = await screen.findByRole('article', { name: '掌柜问数 Package' });
+    expect(card).toHaveTextContent('可恢复到 v0.1.1');
+    expect(card).not.toHaveTextContent('没有可恢复的历史版本');
+    expect(card).not.toHaveTextContent('v0.0.1');
+    const unknown = screen.getByRole('article', { name: 'Unknown target Package' });
+    expect(unknown).toHaveTextContent('可恢复上一版本，具体版本将在预览中显示');
+    await user.click(within(card).getByRole('button', { name: '恢复上一版本' }));
+    await waitFor(() => expect(transport.requests.find(({ request }) =>
+      request.pathId === 'agent.extensions.preview',
+    )?.request.body).toEqual({ action: 'rollback', pluginId: '@paw/zhanggui-wenshu' }));
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.extensions.apply')).toBe(false);
+  });
+
+  it('explains known installed packages and preserves original fields in an explicit disclosure', async () => {
+    const user = userEvent.setup();
+    renderPlugins({ 'agent.extensions.list': { ok: true, items: [{
+      id: '@paw/pi-session-workflow', displayName: '@paw/pi-session-workflow',
+      description: 'Optional Session-local Goal, Plan, Todo, and Workflow controls for Pi',
+      version: '0.1.0', enabled: true, permissions: ['sandbox.run', 'vendor.custom'],
+      source: { kind: 'managed', requested: 'npm:@paw/pi-session-workflow' },
+      resources: { extensions: ['session_workflow'], skills: ['workflow'] },
+      privatePath: '/private/should-not-be-disclosed',
+    }, { id: 'third-party', displayName: 'Third Party', description: 'Author supplied description.' }] } }, '/plugins', true);
+    const card = await screen.findByRole('article', { name: '对话工作流 Package' });
+    expect(card).toHaveTextContent('管理当前对话的目标、计划、任务清单和工作流程');
+    expect(card).toHaveTextContent('由运行环境管理');
+    expect(card).toHaveTextContent('在受控环境中执行');
+    expect(card).toHaveTextContent('vendor.custom');
+    expect(card).toHaveTextContent('扩展 1 · 技能 1');
+    expect(card).not.toHaveTextContent('@paw/pi-session-workflow');
+    expect(card).not.toHaveTextContent('Session-local');
+    await user.click(within(card).getByText('包标识与原始信息'));
+    expect(card).toHaveTextContent('@paw/pi-session-workflow');
+    expect(card).toHaveTextContent('Session-local');
+    expect(card).toHaveTextContent('sandbox.run');
+    expect(card).not.toHaveTextContent('/private/should-not-be-disclosed');
+    expect(screen.getByRole('article', { name: 'Third Party Package' })).toHaveTextContent('Author supplied description.');
+  });
+
   it('searches displayed capability names and ranks them ahead of description matches', async () => {
     const user = userEvent.setup();
     renderPlugins({ 'agent.tools.list': capabilityCatalog([

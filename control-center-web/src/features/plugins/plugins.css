@@ -579,6 +579,37 @@
   content: '·';
 }
 
+.installed-plugin__description {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.installed-plugin__details {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+.installed-plugin__details > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.installed-plugin__details > summary svg { flex: 0 0 auto; }
+.installed-plugin__details[data-expanded] > summary svg { transform: rotate(90deg); }
+
+.installed-plugin__details pre {
+  max-width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .installed-plugin__state {
   display: flex;
   flex-wrap: wrap;
