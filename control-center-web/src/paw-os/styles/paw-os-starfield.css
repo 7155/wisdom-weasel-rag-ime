@@ -228,6 +228,12 @@
   pointer-events: none;
 }
 
+/* The portalled sky covers PAW's menu bar, but macOS traffic lights remain
+   above web content. Reserve their strip until the sky takes system fullscreen. */
+html[data-paw-native-host='macos'] .paw-sf[data-immersive]:not(:fullscreen) .paw-sf__topbar {
+  padding-left: 96px;
+}
+
 .paw-sf__topbar-side {
   display: inline-flex;
   align-items: center;
