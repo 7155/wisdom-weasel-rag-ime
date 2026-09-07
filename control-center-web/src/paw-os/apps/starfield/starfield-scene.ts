@@ -102,7 +102,7 @@ const SKY_RADIUS = 170;
  * light stay the brightest things on screen. The PMREM environment is built
  * from the texture itself, so surface lighting keeps its full range.
  */
-const SKY_DOME_TINT = 0x8b93ac;
+const SKY_DOME_TINT = 0xb9c9e8;
 /** Meteor shell: behind every orbit and star shell, in front of the dome. */
 const METEOR_SHELL_RADIUS = 84;
 
@@ -338,11 +338,14 @@ export class StarfieldStage {
     this.controls.autoRotateSpeed = 0.22;
     this.controls.addEventListener('change', this.markDirty);
 
-    this.scene.add(new THREE.AmbientLight(0x2c3a5c, 0.55));
-    this.scene.add(new THREE.HemisphereLight(0x9db8e8, 0x141020, 0.5));
-    const key = new THREE.DirectionalLight(0xdfe8ff, 1.7);
-    key.position.set(7, 11, 5);
+    this.scene.add(new THREE.AmbientLight(0x2c3a5c, 0.22));
+    this.scene.add(new THREE.HemisphereLight(0x9db8e8, 0x141020, 0.24));
+    const key = new THREE.DirectionalLight(0xffead4, 2.7);
+    key.position.set(-8, 6, 4);
     this.scene.add(key);
+    const rim = new THREE.DirectionalLight(0x5a91e8, 0.55);
+    rim.position.set(8, -2, -7);
+    this.scene.add(rim);
     this.scene.add(this.backdropRoot);
     this.scene.add(this.modelRoot);
 
@@ -514,9 +517,9 @@ export class StarfieldStage {
     // far layers cannot read as two different skies.
     const pickSpectral = () => spectralStarColor(random());
     const shells: Array<{ count: number; radius: [number, number]; size: number; opacity: number }> = [
-      { count: 1100, radius: [64, 96], size: 0.5, opacity: 0.44 },
-      { count: 520, radius: [44, 64], size: 0.78, opacity: 0.56 },
-      { count: 240, radius: [28, 44], size: 1.12, opacity: 0.7 },
+      { count: 2800, radius: [72, 114], size: 0.3, opacity: 0.9 },
+      { count: 850, radius: [44, 72], size: 0.48, opacity: 0.72 },
+      { count: 100, radius: [26, 44], size: 0.72, opacity: 0.62 },
     ];
     for (const shell of shells) {
       const positions = new Float32Array(shell.count * 3);
@@ -546,6 +549,7 @@ export class StarfieldStage {
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         sizeAttenuation: true,
+        fog: false,
       });
       this.backdropRoot.add(new THREE.Points(geometry, material));
       // Gentle whole-shell shimmer; each shell breathes on its own phase.
@@ -568,19 +572,19 @@ export class StarfieldStage {
         map: this.glowTexture,
         color: tint,
         transparent: true,
-        opacity: 0.15,
+        opacity: 0.13,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
       const sprite = new THREE.Sprite(material);
       const angle = random() * Math.PI * 2;
-      const distance = 30 + random() * 26;
+      const distance = 58 + random() * 26;
       sprite.position.set(
         Math.cos(angle) * distance,
         -6 + random() * 16,
         Math.sin(angle) * distance - 8,
       );
-      const scale = 46 + random() * 30 + index * 6;
+      const scale = 42 + random() * 28 + index * 6;
       sprite.scale.set(scale, scale * (0.6 + random() * 0.3), 1);
       this.backdropRoot.add(sprite);
       this.nebulaBreaths.push({
@@ -773,7 +777,7 @@ export class StarfieldStage {
     this.applySelectionHighlight();
   }
 
-  /** Fresnel rim shell shared per tone color — light, never a work signal. */
+  /** Thin, sunlit atmosphere. The dark limb stays dark; light is decorative. */
   private atmosphereMaterial(color: number, intensity: number): THREE.ShaderMaterial {
     const key = `${color}:${intensity}`;
     const cached = this.atmosphereMaterials.get(key);
@@ -786,22 +790,29 @@ export class StarfieldStage {
       uniforms: {
         uColor: { value: new THREE.Color(color) },
         uIntensity: { value: intensity },
+        uLightDirection: { value: new THREE.Vector3(-8, 6, 4).normalize() },
       },
       vertexShader: `
-        varying float vRim;
+        varying vec3 vNormal;
+        varying vec3 vViewDirection;
         void main() {
-          vec3 n = normalize(normalMatrix * normal);
+          vec4 world = modelMatrix * vec4(position, 1.0);
+          vNormal = normalize(mat3(modelMatrix) * normal);
+          vViewDirection = cameraPosition - world.xyz;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          vec3 viewDir = normalize(-mv.xyz);
-          vRim = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 2.6);
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
         uniform vec3 uColor;
         uniform float uIntensity;
-        varying float vRim;
+        uniform vec3 uLightDirection;
+        varying vec3 vNormal;
+        varying vec3 vViewDirection;
         void main() {
-          gl_FragColor = vec4(uColor, vRim * uIntensity);
+          vec3 n = normalize(vNormal);
+          float rim = pow(1.0 - clamp(dot(n, normalize(vViewDirection)), 0.0, 1.0), 3.2);
+          float daylight = smoothstep(-0.28, 0.65, dot(n, uLightDirection));
+          gl_FragColor = vec4(uColor, rim * uIntensity * mix(0.08, 1.0, daylight));
         }`,
     });
     this.atmosphereMaterials.set(key, material);
@@ -943,7 +954,7 @@ export class StarfieldStage {
       outerCorona.scale.setScalar(center.size * 9.2);
       group.add(outerCorona);
     } else {
-      const archetype = archetypeForSeed(model.seed);
+      const archetype = surfaceKey === 'earth' ? 'terra' : archetypeForSeed(model.seed);
       const { width } = surfaceKey
         ? fallbackSurfaceTextureSize(center.size)
         : surfaceTextureSize(center.size);
@@ -958,33 +969,41 @@ export class StarfieldStage {
         normalMap: maps.normalMap,
         roughness: ARCHETYPE_ROUGHNESS[archetype],
         metalness: 0.04,
+        envMapIntensity: 0.32,
       });
       if (surfaceKey) this.applySurfaceMap(surfaceKey, centerMaterial);
       mesh = new THREE.Mesh(this.sphereGeometries.high, centerMaterial);
       mesh.scale.setScalar(center.size);
+      mesh.rotation.y = seededRandom(`${model.seed}:surface`)() * Math.PI * 2;
       const atmosphere = new THREE.Mesh(
         this.sphereGeometries.medium,
-        this.atmosphereMaterial(toneColor, 0.55),
+        this.atmosphereMaterial(0x6baeff, center.motion.working ? 0.64 : 0.46),
       );
-      atmosphere.scale.setScalar(center.size * 1.18);
+      atmosphere.scale.setScalar(center.size * 1.075);
       group.add(atmosphere);
       if (archetype === 'terra' || archetype === 'ocean') {
         cloudSpin = this.buildCloudShell(model.seed, center.size, width);
+        cloudSpin.rotation.y = mesh.rotation.y + 0.2;
         group.add(cloudSpin);
       }
-      const ringGeo = this.buildRadialRingGeometry(center.size * 1.5, center.size * 2.25, 96);
+      const ringGeo = this.buildRadialRingGeometry(center.size * 1.36, center.size * 2.35, 128);
       const saturnRing = new THREE.Mesh(
         ringGeo,
-        new THREE.MeshBasicMaterial({
+        new THREE.MeshStandardMaterial({
           map: this.textures.ring(model.seed),
+          roughness: 0.92,
+          metalness: 0.02,
+          envMapIntensity: 0.22,
           transparent: true,
           side: THREE.DoubleSide,
           depthWrite: false,
         }),
       );
-      saturnRing.rotation.x = -Math.PI / 2 + 0.34;
-      saturnRing.rotation.z = 0.22;
+      const ringSeed = seededRandom(`${model.seed}:ring`);
+      saturnRing.rotation.x = -Math.PI / 2 + 0.25 + ringSeed() * 0.24;
+      saturnRing.rotation.z = -0.28 + ringSeed() * 0.56;
       group.add(saturnRing);
+      this.addRingDust(group, center.size, ringSeed, saturnRing.rotation);
     }
     mesh.userData.sfBodyId = 'center';
     group.add(mesh);
@@ -993,7 +1012,7 @@ export class StarfieldStage {
       map: this.glowTexture,
       color: toneColor,
       transparent: true,
-      opacity: center.kind === 'sun' ? 0.55 : 0.42,
+      opacity: center.kind === 'sun' ? 0.55 : center.motion.working ? 0.24 : 0.12,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }));
@@ -1016,19 +1035,43 @@ export class StarfieldStage {
     };
   }
 
-  /** Cloud shell slightly larger than the body — drifts ahead of ground spin. */
+  /** Fine, lit weather above the ground; it follows only real body spin. */
   private buildCloudShell(seed: string, size: number, width: number): THREE.Mesh {
-    const material = new THREE.MeshBasicMaterial({
+    const material = new THREE.MeshStandardMaterial({
       map: this.textures.cloud(seed, Math.max(64, width)),
       transparent: true,
       depthWrite: false,
-      opacity: 0.85,
+      opacity: 0.38,
+      roughness: 1,
+      envMapIntensity: 0.15,
       blending: THREE.NormalBlending,
     });
     const mesh = new THREE.Mesh(this.sphereGeometries.medium, material);
     mesh.scale.setScalar(size * 1.035);
     mesh.renderOrder = 2;
     return mesh;
+  }
+
+  /** Static ring grains add parallax on camera drag, never implied work. */
+  private addRingDust(parent: THREE.Object3D, size: number, random: () => number, tilt: THREE.Euler): void {
+    const count = 180;
+    const positions = new Float32Array(count * 3);
+    for (let index = 0; index < count; index += 1) {
+      const radius = size * (2.38 + random() * 0.48);
+      const angle = random() * Math.PI * 2;
+      positions[index * 3] = Math.cos(angle) * radius;
+      positions[index * 3 + 1] = Math.sin(angle) * radius;
+      positions[index * 3 + 2] = (random() - 0.5) * size * 0.1;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const dust = new THREE.Points(geometry, new THREE.PointsMaterial({
+      map: this.dotTexture, color: 0xb7c9dd, size: size * 0.026,
+      transparent: true, opacity: 0.52, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }));
+    dust.rotation.copy(tilt);
+    parent.add(dust);
   }
 
   /**
@@ -1099,6 +1142,7 @@ export class StarfieldStage {
         normalMap: maps.normalMap,
         roughness: ARCHETYPE_ROUGHNESS[archetype!],
         metalness: 0.04,
+        envMapIntensity: 0.32,
       });
       if (surfaceKey) this.applySurfaceMap(surfaceKey, bodyMaterial);
       material = bodyMaterial;
@@ -1136,7 +1180,7 @@ export class StarfieldStage {
         this.sphereGeometries.medium,
         this.atmosphereMaterial(toneColor, body.idle ? 0.2 : 0.5),
       );
-      shell.scale.setScalar(body.size * 1.22);
+      shell.scale.setScalar(body.size * 1.1);
       anchor.add(shell);
     }
 

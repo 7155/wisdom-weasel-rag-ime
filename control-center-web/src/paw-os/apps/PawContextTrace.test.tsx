@@ -5,7 +5,8 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
-import { PawContextTrace, projectionTraceTurns } from './PawContextTrace';
+import { PawContextTrace, projectionTraceTurns, reconcileTraceTurnSummaries } from './PawContextTrace';
+import type { DebugTurnSummary } from '@/features/context-debug/model';
 
 beforeEach(() => {
   // This file verifies the animated exit contract explicitly. A prior test
@@ -21,6 +22,43 @@ afterEach(() => {
 });
 
 describe('PawContextTrace evidence access', () => {
+  it('places unsequenced prompts between event receipts without mixing timestamps and sequence IDs', () => {
+    const message = (id: string, role: string, createdAtMs: number, timelineSequence?: number) => ({
+      id, role, createdAtMs, timelineSequence, status: 'completed', blocks: [], attachments: [],
+    });
+    const activity = (id: string, createdAtMs: number, timelineSequence: number) => ({
+      id, createdAtMs, timelineSequence, kind: 'tool_execution', status: 'completed', summary: id, payload: {},
+    });
+    const turns = projectionTraceTurns({
+      turnOrder: ['turn-a'],
+      turnsById: { 'turn-a': { id: 'turn-a', status: 'completed', messageIds: ['prompt', 'steer', 'reply'], activityIds: ['later', 'earlier'], createdAtMs: 100, updatedAtMs: 150 } },
+      messagesById: { prompt: message('prompt', 'user', 100), steer: message('steer', 'user', 135), reply: message('reply', 'assistant', 150, 3) },
+      activitiesById: { later: activity('later', 140, 2), earlier: activity('earlier', 130, 1) },
+    } as never);
+    expect(turns[0].events.map((event) => event.id)).toEqual([
+      'message:prompt', 'activity:earlier', 'message:steer', 'activity:later', 'message:reply',
+    ]);
+  });
+
+  it('keeps retained captures and chronological events on the same turn numbers', () => {
+    const first: DebugTurnSummary = {
+      turnId: 'first', clientMessageId: '', capturedAtMs: 100, updatedAtMs: 120,
+      modelCallCount: 3, providerRequestCount: 3, toolCallCount: 2, runningToolCount: 0,
+    };
+    const latest = { ...first, turnId: 'latest', capturedAtMs: 200, modelCallCount: 1 };
+    const captures = [latest, first];
+    const projected = [
+      { ...first, turnOrdinal: 6, summary: '用户输入 · 20 字' },
+      { ...latest, turnOrdinal: 7, summary: '用户输入 · 35 字' },
+    ];
+    const reconciled = reconcileTraceTurnSummaries(captures, projected);
+    expect(reconciled.map((turn) => turn.turnOrdinal)).toEqual([7, 6]);
+    expect(reconciled[0]).toMatchObject({ modelCallCount: 1, summary: '用户输入 · 35 字' });
+    expect(captures[0].turnOrdinal).toBeUndefined();
+    expect(reconcileTraceTurnSummaries([{ ...latest, turnOrdinal: 42 }], projected)[0].turnOrdinal).toBe(42);
+    expect(reconcileTraceTurnSummaries(captures, []).map((turn) => turn.turnOrdinal)).toEqual([2, 1]);
+  });
+
   it('opens a trace node without captured body to its real capture record with a safe copy', async () => {
     const transport = new MockControlTransport({
       routes: {
@@ -114,10 +152,12 @@ describe('PawContextTrace evidence access', () => {
     await user.click(await screen.findByRole('tab', { name: '上下文装配' }));
 
     const memoryNode = (await screen.findByText('记忆注入', { selector: '.n-label' })).closest('details')!;
+    await user.click(memoryNode.querySelector('summary')!);
+    expect(within(memoryNode).getByRole('group', { name: '关联来源' })).toBeInTheDocument();
     await user.click(within(memoryNode).getByRole('button', { name: '在 记忆 打开 atom-context-order' }));
     expect(openRoute).toHaveBeenCalledWith('/memory?layer=atoms&id=atom-context-order');
     // Opening the evidence is its own action; it must not also toggle the row.
-    expect(memoryNode).not.toHaveAttribute('open');
+    expect(memoryNode).toHaveAttribute('open');
 
     const inputNode = screen.getByText('当前输入', { selector: '.n-label' }).closest('details')!;
     expect(within(inputNode).queryByRole('button', { name: /打开/ })).not.toBeInTheDocument();
@@ -587,6 +627,45 @@ describe('PawContextTrace', () => {
     await user.click(screen.getByRole('button', { name: '重新读取' }));
     expect(await screen.findByRole('heading', { name: 'T1 · Agent 轨迹' })).toBeInTheDocument();
     expect(attempts).toBe(2);
+  });
+
+  it('keeps event rows and counts on the round selected in the rail', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.debugContext.get': (request: ControlRequest) =>
+          debugContextResponseForTurn(request.query?.turnId === 'turn-b' ? 'turn-b' : 'turn-a'),
+        'agent.session.contextTraces.list': { ok: true, items: [] },
+      },
+    });
+    const ids = ['turn-a', 'turn-b'];
+    const projection = {
+      turnOrder: ids,
+      turnsById: Object.fromEntries(ids.map((id, index) => [id, {
+        id, status: 'completed', messageIds: [`message-${id}`], activityIds: [],
+        createdAtMs: 100 + index * 200, updatedAtMs: 200 + index * 200,
+      }])),
+      messageOrder: ids.map((id) => `message-${id}`),
+      messagesById: Object.fromEntries(ids.map((id, index) => [`message-${id}`, {
+        id: `message-${id}`, sessionId: 'session-a', turnId: id, role: 'assistant',
+        status: 'completed', createdAtMs: 120 + index * 200, completedAtMs: 180 + index * 200,
+        blocks: [{ type: 'text', data: { text: `result ${id}` } }], attachments: [],
+      }])),
+      activitiesById: {},
+    };
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}>
+      <PawContextTrace active projection={projection as never} sessionId="session-a" />
+    </ControlTransportProvider>);
+
+    expect(await screen.findByRole('heading', { name: 'T1 · Agent 轨迹' })).toBeInTheDocument();
+    expect(screen.getByText('TURN #1')).toBeInTheDocument();
+    expect(screen.queryByText('TURN #2')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '全部1' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /T2.*轮次 B/ }));
+    expect(await screen.findByRole('heading', { name: 'T2 · Agent 轨迹' })).toBeInTheDocument();
+    expect(screen.getByText('TURN #2')).toBeInTheDocument();
+    expect(screen.queryByText('TURN #1')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '全部1' })).toBeInTheDocument();
   });
 
   it('does not let a late turn request replace the newer selected turn', async () => {

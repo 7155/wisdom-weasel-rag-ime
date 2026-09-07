@@ -575,14 +575,16 @@ export function generateSkyMap(seed: string, width = 768, height?: number): Gene
       data[offset + 1] = data[offset + 1]! + (tint[1] / 255) * energy;
       data[offset + 2] = data[offset + 2]! + (tint[2] / 255) * energy;
     };
-    deposit(px, py, large ? brightness * 1.6 : brightness);
-    const halo = brightness * (large ? 0.5 : 0.35);
+    // The dome supplies distant dust. Crisp stars live in parallax Points
+    // shells; bright texel halos here magnify into blurry foreground blobs.
+    deposit(px, py, large ? brightness * 1.3 : brightness * 0.34);
+    const halo = brightness * (large ? 0.18 : 0.035);
     deposit(px - 1, py, halo);
     deposit(px + 1, py, halo);
     deposit(px, py - 1, halo);
     deposit(px, py + 1, halo);
     if (large) {
-      const faint = brightness * 0.2;
+      const faint = brightness * 0.06;
       deposit(px - 1, py - 1, faint);
       deposit(px + 1, py - 1, faint);
       deposit(px - 1, py + 1, faint);
@@ -597,29 +599,23 @@ export function generateSkyMap(seed: string, width = 768, height?: number): Gene
 /* Ring and glow sprites                                               */
 /* ------------------------------------------------------------------ */
 
-/** Banded ring alpha map for a planar-UV RingGeometry (r ≈ 0.66..1 used). */
+/** Radial strip: u crosses the ring, v runs around it. Matches radial UVs. */
 export function generateRingMap(seed: string, size = 128): GeneratedTextureData {
   const s = textureSeed(`ring|${seed}`);
   const data = new Uint8ClampedArray(size * size * 4);
   for (let py = 0; py < size; py += 1) {
-    const y = ((py + 0.5) / size) * 2 - 1;
     for (let px = 0; px < size; px += 1) {
-      const x = ((px + 0.5) / size) * 2 - 1;
-      const r = Math.sqrt(x * x + y * y);
+      const r = (px + 0.5) / size;
       const offset = (py * size + px) * 4;
-      if (r < 0.62 || r > 1) {
-        data[offset + 3] = 0;
-        continue;
-      }
-      const bands = valueNoise1(r * 30, s + 7) * 0.6 + valueNoise1(r * 90, s + 13) * 0.4;
-      let alpha = smoothstep(0.32, 0.58, bands) * 200;
-      alpha *= smoothstep(0.62, 0.68, r) * (1 - smoothstep(0.94, 1, r));
-      const gap = (r - 0.85) * 34;
-      alpha *= 1 - 0.85 * Math.exp(-gap * gap);
-      const tone = 0.75 + bands * 0.35;
-      data[offset] = 214 * tone;
-      data[offset + 1] = 206 * tone;
-      data[offset + 2] = 186 * tone;
+      const bands = valueNoise1(r * 26, s + 7) * 0.62 + valueNoise1(r * 96, s + 13) * 0.38;
+      let alpha = (0.24 + smoothstep(0.2, 0.72, bands) * 0.76) * 215;
+      alpha *= smoothstep(0.02, 0.1, r) * (1 - smoothstep(0.9, 0.98, r));
+      const gap = (r - 0.64) * 44;
+      alpha *= 1 - 0.98 * Math.exp(-gap * gap);
+      const tone = 0.64 + bands * 0.44;
+      data[offset] = 228 * tone;
+      data[offset + 1] = (198 + r * 18) * tone;
+      data[offset + 2] = (157 + r * 40) * tone;
       data[offset + 3] = alpha;
     }
   }
@@ -691,7 +687,7 @@ export class StarfieldTextureFactory {
 
   dot(): THREE.DataTexture {
     return this.acquire('shared:dot', { srgb: true, wrapX: false }, () =>
-      generateRadialGlow({ size: 32, exponent: 3.4, core: 0.85 }));
+      generateRadialGlow({ size: 32, exponent: 5.4, core: 1.5 }));
   }
 
   sun(seed: string): THREE.DataTexture {

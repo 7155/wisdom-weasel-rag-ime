@@ -1,0 +1,20 @@
+.paw-window-arrival-dust {
+  position: absolute;
+  z-index: 12;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 8% 12%, rgb(126 193 235 / .85) 0 1px, transparent 3px),
+    radial-gradient(circle at 28% 6%, rgb(198 173 120 / .7) 0 1px, transparent 2px),
+    radial-gradient(circle at 91% 15%, rgb(141 180 231 / .85) 0 1px, transparent 3px),
+    radial-gradient(circle at 96% 52%, rgb(166 146 221 / .75) 0 1px, transparent 2px),
+    radial-gradient(circle at 84% 92%, rgb(126 193 235 / .8) 0 1px, transparent 3px),
+    radial-gradient(circle at 11% 84%, rgb(198 173 120 / .6) 0 1px, transparent 2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-window-arrival-dust { display: none; }
+}
+:root[data-reduce-motion='true'] .paw-window-arrival-dust { display: none; }

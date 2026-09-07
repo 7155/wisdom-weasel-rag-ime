@@ -26,6 +26,7 @@ import { pulsePawComposition } from '../runtime/composition-pulse';
 import { useRoomProjectionBridge } from '@/features/rooms/state/projection-bridge';
 import { roomActivityFlowKind, roomWorkReviewFlow } from '@/features/rooms/room-flow-projection';
 import type { RoomProjectionState } from '@/contracts/room-reducer';
+import { animateWindowArrival } from './window-arrival';
 
 const PawRoomProjectionKeeper = lazy(() => import('./PawRoomProjectionKeeper'));
 const PawRoomFocusParticipants = lazy(() => import('../apps/PawRoomFocusParticipants'));
@@ -1005,12 +1006,9 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   }, [active, collaborationRole, overview]);
   useEffect(() => {
     if (authoredArrival) return;
-    const surface = shellRef.current?.querySelector<HTMLElement>('.paw-window');
+    const surface = shellRef.current?.querySelector<HTMLElement>('.paw-window, .paw-planet-surface');
     if (!surface || typeof surface.animate !== 'function' || pawWindowReducedMotion()) return;
-    surface.animate([
-      { opacity: .6, transform: 'translate3d(0, 6px, 0) scale(.98)' },
-      { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' },
-    ], { duration: 150, easing: 'cubic-bezier(.2, .85, .25, 1)' });
+    return animateWindowArrival(surface);
     // Mount-only by design: re-running on prop drift would re-arrive a window
     // that is already on stage.
     // eslint-disable-next-line react-hooks/exhaustive-deps

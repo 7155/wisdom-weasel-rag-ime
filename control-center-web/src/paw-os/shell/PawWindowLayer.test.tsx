@@ -479,8 +479,8 @@ describe('PAWOS compositor window frame', () => {
       render(<FrameHarness initial={{ x: 0, y: 0, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>);
 
       const arrival = calls.find((call) => call.target.classList.contains('paw-window'));
-      expect(arrival?.frames[0]).toMatchObject({ opacity: 0.6, transform: 'translate3d(0, 6px, 0) scale(.98)' });
-      expect(arrival?.options).toMatchObject({ duration: 150 });
+      expect(arrival?.frames[0]).toMatchObject({ opacity: 0.72, transform: 'perspective(1100px) translate3d(0, 12px, -24px) rotateX(2deg) scale(.97)' });
+      expect(arrival?.options).toMatchObject({ duration: 240 });
     } finally {
       if (descriptor) Object.defineProperty(HTMLElement.prototype, 'animate', descriptor);
       else delete (HTMLElement.prototype as Partial<HTMLElement>).animate;

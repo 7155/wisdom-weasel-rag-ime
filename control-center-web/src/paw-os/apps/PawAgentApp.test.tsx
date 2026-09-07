@@ -316,10 +316,26 @@ describe('PAWOS Agent App', () => {
 
     await user.click(toggle);
     expect(screen.getByRole('button', { name: '收起工作记录' })).toHaveAttribute('aria-expanded', 'true');
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '搜索 Session 与 Room' })).toHaveFocus());
+    expect(document.querySelector('.paw-agent-stage')).toHaveAttribute('inert');
+    expect(rail).not.toHaveAttribute('inert');
     await user.keyboard('{Escape}');
 
     expect(screen.getByRole('button', { name: '打开工作记录' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByRole('button', { name: '打开工作记录' })).toHaveFocus();
+    expect(document.querySelector('.paw-agent-stage')).not.toHaveAttribute('inert');
+    expect(rail).toHaveAttribute('inert');
+  });
+
+  it('restores focus and the work surface when starting from the history drawer', async () => {
+    const user = userEvent.setup();
+    renderAgent();
+    await user.click(await screen.findByRole('button', { name: '打开工作记录' }));
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    await user.click(within(rail).getByRole('button', { name: '新建工作' }));
+    expect(screen.getByRole('button', { name: '打开工作记录' })).toHaveFocus();
+    expect(document.querySelector('.paw-agent-stage')).not.toHaveAttribute('inert');
+    expect(screen.getByRole('heading', { name: '今天想完成什么？' })).toBeInTheDocument();
   });
 
   it('returns focus to the owning chip when Escape closes an anchored composer menu', async () => {

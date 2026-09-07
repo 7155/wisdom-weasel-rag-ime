@@ -50,9 +50,9 @@ describe('ContextUsagePopover', () => {
 
     expect(screen.getByRole('button', { name: '上下文已用 6%' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '上下文已用 6%' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Context Usage' });
-    expect(within(dialog).getByText('Context Usage')).toBeInTheDocument();
-    await waitFor(() => expect(within(dialog).getByText(/Full/)).toBeInTheDocument());
+    const dialog = await screen.findByRole('dialog', { name: '上下文用量' });
+    expect(within(dialog).getByText('上下文用量')).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByText(/已用 \d+%/)).toBeInTheDocument());
     expect(within(dialog).getByLabelText('上下文分层占用')).toBeInTheDocument();
     expect(within(dialog).getByText('系统提示词')).toBeInTheDocument();
     expect(within(dialog).getAllByText('Token 未单独统计').length).toBeGreaterThan(0);
@@ -85,7 +85,9 @@ describe('ContextUsagePopover', () => {
   it('sizes the portalled panel from Radix collision space and compacts its trigger in narrow composer containers', () => {
     expect(contextUsageCss).toContain('--radix-popover-content-available-width');
     expect(contextUsageCss).toMatch(/\.agent-context-usage__popover\s*\{[^}]*max-height:\s*min\(560px/s);
-    expect(contextUsageCss).toMatch(/\.agent-context-usage__popover\s*\{[^}]*overflow-y:\s*auto/s);
+    expect(contextUsageCss).toContain('--radix-popover-content-available-height');
+    expect(contextUsageCss).toMatch(/\.agent-context-usage__popover\s*\{[^}]*overflow:\s*hidden/s);
+    expect(contextUsageCss).toMatch(/\.agent-context-usage__list\s*\{[^}]*overflow-y:\s*auto/s);
     expect(contextUsageCss).toMatch(/@container paw-composer-toolbar \(max-width: 360px\)/);
     expect(contextUsageCss).toMatch(/\.agent-context-usage__label\s*\{[^}]*clip-path:\s*inset\(50%\)/s);
     expect(contextUsageCss).not.toContain('repeating-linear-gradient');

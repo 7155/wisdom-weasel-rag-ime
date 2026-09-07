@@ -151,9 +151,9 @@ function starLayers(seed: string): Record<'far' | 'mid' | 'near', BackdropStar[]
       tint: starTint(next()),
     }));
   return {
-    far: layer(90, 0.5, 1.1, 0.18, 0.5),
-    mid: layer(48, 0.8, 1.7, 0.28, 0.68),
-    near: layer(20, 1.3, 2.4, 0.5, 0.95),
+    far: layer(170, 0.4, 0.85, 0.16, 0.46),
+    mid: layer(58, 0.85, 1.5, 0.28, 0.68),
+    near: layer(16, 1.7, 2.6, 0.5, 0.92),
   };
 }
 
@@ -317,7 +317,16 @@ function Starfield2D({
           const point = pointById.get(body.id)!;
           const label = (
             <>
-              <i aria-hidden="true" className="paw-sf2__body" data-kind={body.kind} />
+              <i
+                aria-hidden="true"
+                className="paw-sf2__body"
+                data-kind={body.kind}
+                data-surface={body.paletteIndex % 6}
+                style={{
+                  '--sf-body-size': `${Math.round(Math.min(34, Math.max(15, body.size * 21 + 10)))}px`,
+                  '--sf-axial-tilt': `${body.axialTiltRad}rad`,
+                } as CSSProperties}
+              />
               <span className="paw-sf2__body-label">
                 <strong>{body.title}</strong>
                 <small>{body.subtitle}</small>
@@ -383,7 +392,14 @@ function Starfield2D({
             type="button"
           >
             <i aria-hidden="true" className="paw-sf2__center-glow" />
-            <i aria-hidden="true" className="paw-sf2__center-body" />
+            <i
+              aria-hidden="true"
+              className="paw-sf2__center-body"
+              style={model.center.kind === 'planet' ? {
+                '--sf-surface-map': `url("${import.meta.env.BASE_URL}paw-media/starfield/earth-1k.jpg")`,
+                '--sf-surface-position': `${starfieldHash(model.seed) % 100}%`,
+              } as CSSProperties : undefined}
+            />
             {model.center.kind === 'planet' ? <i aria-hidden="true" className="paw-sf2__center-ring" /> : null}
             <span className="paw-sf2__body-label paw-sf2__body-label--center">
               <strong>{model.center.title}</strong>

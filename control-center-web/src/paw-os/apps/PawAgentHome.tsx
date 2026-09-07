@@ -794,12 +794,12 @@ export function PawAgentHome({
           ) : null}
           {preferenceRead.readError ? (
             <p className="an-home-error" role="alert">
-              <CircleAlert size={14} />{preferenceRead.readError}
+              <CircleAlert size={14} /><span>{preferenceRead.readError}</span>
               <button onClick={preferenceRead.reload} type="button">重新读取</button>
             </p>
           ) : null}
           {error ? (
-            <p className="an-home-error" role="alert"><CircleAlert size={14} />{error}</p>
+            <p className="an-home-error" role="alert"><CircleAlert size={14} /><span>{error}</span></p>
           ) : null}
 
           {recents.length ? (

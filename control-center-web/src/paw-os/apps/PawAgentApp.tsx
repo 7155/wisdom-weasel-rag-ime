@@ -87,6 +87,11 @@ export function PawAgentApp({
   const [deleting, setDeleting] = useState(false);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const railToggleRef = useRef<HTMLButtonElement>(null);
+  const railSearchRef = useRef<HTMLInputElement>(null);
+  const closeRail = useCallback(() => {
+    setRailOpen(false);
+    railToggleRef.current?.focus();
+  }, []);
   const optimisticSessionsRef = useRef<Record<string, SessionSummary>>({});
   const optimisticRoomsRef = useRef<Record<string, RoomSummary>>({});
   /* Catalog hydration is deliberately cancellable. Opening Agent first commits
@@ -243,15 +248,18 @@ export function PawAgentApp({
 
   useEffect(() => {
     if (!railOpen) return;
+    const frame = window.requestAnimationFrame(() => railSearchRef.current?.focus());
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
       event.preventDefault();
-      setRailOpen(false);
-      railToggleRef.current?.focus();
+      closeRail();
     };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [railOpen]);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [closeRail, railOpen]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleSessions = sessions.filter((item) => (
@@ -351,11 +359,11 @@ export function PawAgentApp({
   return (
     <section aria-label="Agent 工作台" className="paw-agent-app" data-rail-open={railOpen || undefined} data-selection={selection.kind} role="region">
       {windowChromeTarget ? <PawWindowLeadingPortal>{railToggle}</PawWindowLeadingPortal> : null}
-      <aside aria-label="Agent 工作记录" className="paw-agent-rail" id="paw-agent-work-records">
+      <aside aria-label="Agent 工作记录" className="paw-agent-rail" id="paw-agent-work-records" inert={!railOpen}>
         <header>
           <span><strong>工作记录</strong></span>
           <div className="paw-agent-rail__actions">
-            <button aria-label="新建工作" onClick={() => { setSelection({ kind: 'new' }); setRailOpen(false); }} type="button"><Plus size={17} /></button>
+            <button aria-label="新建工作" onClick={() => { setSelection({ kind: 'new' }); closeRail(); }} type="button"><Plus size={17} /></button>
             <Menu>
               <MenuTrigger asChild><button aria-label="工作记录选项" type="button"><MoreHorizontal size={17} /></button></MenuTrigger>
               <MenuContent align="end">
@@ -366,7 +374,7 @@ export function PawAgentApp({
         </header>
         <label className="paw-agent-search">
           <Search size={14} />
-          <input aria-label="搜索 Session 与 Room" onChange={(event) => setQuery(event.target.value)} placeholder="搜索" value={query} />
+          <input aria-label="搜索 Session 与 Room" onChange={(event) => setQuery(event.target.value)} placeholder="搜索" ref={railSearchRef} value={query} />
         </label>
         <div className="paw-agent-recents" aria-busy={loading || undefined}>
           {loading && !sessions.length && !rooms.length ? <RailNotice icon={<LoaderCircle className="ui-spin" size={15} />} text="正在读取工作记录" /> : null}
@@ -396,8 +404,8 @@ export function PawAgentApp({
             <ProjectFolder
               group={group}
               key={group.key}
-              onOpenRoom={(id) => { setSelection({ kind: 'room', id }); setRailOpen(false); }}
-              onOpenSession={(id) => { setSelection({ kind: 'session', id }); setRailOpen(false); }}
+              onOpenRoom={(id) => { setSelection({ kind: 'room', id }); closeRail(); }}
+              onOpenSession={(id) => { setSelection({ kind: 'session', id }); closeRail(); }}
               onArchiveSession={(session) => void archiveSession(session)}
               onDeleteSession={(session) => { setActionError(''); setActionTrace(undefined); setDeleteTarget(session); }}
               selection={selection}
@@ -407,8 +415,8 @@ export function PawAgentApp({
         </div>
       </aside>
       {windowChromeTarget ? null : railToggle}
-      {railOpen ? <button aria-label="关闭工作记录" className="paw-agent-rail-backdrop" onClick={() => { setRailOpen(false); railToggleRef.current?.focus(); }} type="button" /> : null}
-      <section className="paw-agent-stage">
+      {railOpen ? <button aria-label="关闭工作记录" className="paw-agent-rail-backdrop" onClick={closeRail} type="button" /> : null}
+      <section className="paw-agent-stage" inert={railOpen}>
         {selection.kind === 'new' ? (
           <PawAgentHome
             catalogError={loadError}

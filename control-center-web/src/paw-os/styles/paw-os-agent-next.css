@@ -51,9 +51,8 @@
 .paw-agent-next .ui-spin { animation: an-spin .8s linear infinite; }
 
 /* New work — 固定桌面表面（首屏合同）：新建 Composer 与「继续工作」在同一屏内
-   完成。页面本身绝不滚动；只有继续工作列表在自身内部滚动。窗口矮于 520px 时，
-   an-home 的 min-height 生效，整块表面作为兜底通过 an-home-root 整体滚动。 */
-.an-home-root { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: auto; background: var(--an-paper); }
+   完成。页面本身绝不滚动；只有继续工作列表在自身内部滚动。高度不足时收紧留白，低于紧凑档的 420px 时才通过 an-home-root 整体滚动。 */
+.an-home-root { container: an-home-surface / size; width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: auto; background: var(--an-paper); }
 .an-home { position: relative; width: 100%; height: 100%; min-height: 520px; flex: 1; overflow: hidden; }
 .an-home-wrap { position: relative; display: flex; width: min(780px, 100%); height: 100%; min-height: 0; margin: 0 auto; flex-direction: column; padding: 26px 32px 14px; }
 .an-home-title { margin: 8px 0 18px; flex: none; font-size: clamp(24px, 3.4cqw, 30px); font-weight: 720; letter-spacing: -.03em; line-height: 1.16; animation: an-rise 440ms var(--an-ease-out) 45ms both; }
@@ -157,7 +156,9 @@
 .an-room-plan__chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px; border: 1px solid var(--an-hairline); border-radius: 999px; background: var(--an-paper-bright); color: var(--an-ink-2); font-size: 12px; font-weight: 620; }
 .an-room-plan__chip i { color: var(--an-violet); font-size: 12px; font-style: normal; font-weight: 650; }
 .an-room-plan__constraint { flex-basis: 100%; color: var(--an-red, #b94646); font-size: 12px; line-height: 1.45; }
-.an-home-error { display: flex; flex: none; align-items: center; gap: 7px; margin: 9px 2px 0; color: var(--an-red); font-size: 12.5px; }
+.an-home-error { display: flex; flex-wrap: wrap; flex: none; align-items: center; gap: 7px; margin: 9px 2px 0; color: var(--an-red); font-size: 12.5px; }
+.an-home-error > span { min-width: 0; flex: 1 1 160px; overflow-wrap: anywhere; }
+.an-home-error > svg { flex: none; }
 .an-home-error button { flex: none; padding: 2px 8px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; font-size: 12px; font-weight: 650; }
 .an-home-section { margin-top: 22px; animation: an-rise 460ms var(--an-ease-out) 210ms both; }
 .an-home-section h2 { display: flex; flex: none; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--an-ink-3); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
@@ -247,7 +248,7 @@
    paw-os-agent-migrated-v1.css. */
 
 /* True Agent trace */
-.an-trace { display: flex; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--an-paper); }
+.an-trace { container: paw-agent-trace / size; display: flex; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--an-paper); }
 .an-trace-rail { display: flex; width: 244px; min-height: 0; flex: none; flex-direction: column; border-right: 1px solid var(--an-hairline); background: var(--an-paper-bright); }
 .an-trace-rail > header { padding: 14px 14px 11px; flex: none; border-bottom: 1px solid var(--an-hairline); }
 .an-trace-rail > header strong { display: block; font-size: 13px; }
@@ -276,8 +277,9 @@
 .an-crumb h1 { margin: 0; overflow: hidden; font-size: 14px; font-weight: 680; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
 .an-crumb-sub { display: flex; align-items: center; gap: 6px; overflow: hidden; color: var(--an-ink-3); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .an-topbar .an-seg { margin-left: auto; }
-.an-trace-notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--an-red) 28%, transparent); background: color-mix(in srgb, var(--an-red) 6%, transparent); color: var(--an-red); font-size: 12.5px; }
-.an-trace-notice button { padding: 4px 9px; border: 1px solid currentColor; border-radius: 6px; background: transparent; font-weight: 650; }
+.an-trace-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--an-red) 28%, transparent); background: color-mix(in srgb, var(--an-red) 6%, transparent); color: var(--an-red); font-size: 12.5px; }
+.an-trace-notice > span { min-width: 0; flex: 1 1 180px; overflow-wrap: anywhere; }
+.an-trace-notice button { flex: none; padding: 4px 9px; border: 1px solid currentColor; border-radius: 6px; background: transparent; font-weight: 650; }
 .an-trace-body { display: flex; min-height: 0; flex: 1; }
 .an-trace-center { min-width: 0; flex: 1; padding: 17px 20px 24px; overflow: auto; }
 .an-trace-side { width: 326px; padding: 17px 16px 24px; flex: none; overflow: auto; border-left: 1px solid var(--an-hairline); background: var(--an-paper-bright); }
@@ -311,6 +313,8 @@
    和 51px 的行高，把通道让给了 chrome，也让二十个节点读成二十个各自独立的
    对象。行现在挂在同一条分隔线上，只有展开的那一行浮起自己的表面。 */
 .an-node { margin: 0; overflow: hidden; border: 0; border-bottom: 1px solid var(--an-hairline); border-radius: 0; background: transparent; }
+.an-node-sources { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; margin-bottom: 10px; }
+.an-node-sources .evidence-echo-open { max-width: 100%; }
 .an-node:last-of-type { border-bottom: 0; }
 .an-node[data-disp="omitted"] { opacity: .64; background: transparent; }
 .an-node > summary { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 3px 6px; border-radius: 6px; cursor: pointer; list-style: none; transition: background 140ms ease; }
@@ -395,7 +399,9 @@
 
 /* Trace layout follows the resizable Session window, not the browser viewport. */
 @container paw-session-workspace (max-width: 960px) {
-  .an-trace-side { display: none; }
+  .an-trace-body { flex-direction: column; overflow: auto; }
+  .an-trace-center { flex: none; overflow: visible; }
+  .an-trace-side { width: auto; overflow: visible; border-left: 0; border-top: 1px solid var(--an-hairline); }
   .an-trace-rail { width: 216px; }
 }
 
@@ -428,6 +434,11 @@
   .an-turn-item { width: 164px; min-width: 164px; padding: 8px; }
   .an-topbar { min-height: 50px; padding-inline: 10px; }
   .an-crumb-sub { display: none; }
+}
+
+/* Height belongs to the Agent App, not the desktop viewport. */
+@container an-home-surface (max-height: 600px) {
+  .an-home { min-height: 420px; }
 }
 
 @container paw-agent-shell (max-width: 860px) {

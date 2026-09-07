@@ -94,12 +94,14 @@ function catalog(): CapabilityCatalog {
 function renderPicker({
   adjustmentDisabled = false,
   onCapabilityPreferenceChange,
+  onSelect = () => {},
 }: {
   adjustmentDisabled?: boolean;
   onCapabilityPreferenceChange?: (
     canonicalId: string,
     preference: CapabilityPreference,
   ) => void;
+  onSelect?: (tool: ToolManifest) => void;
 } = {}) {
   const handlePreferenceChange = onCapabilityPreferenceChange ?? vi.fn();
   render(
@@ -109,7 +111,7 @@ function renderPicker({
       capabilityPolicyPending={false}
       disabled={false}
       onCapabilityPreferenceChange={handlePreferenceChange}
-      onSelect={() => {}}
+      onSelect={onSelect}
       requestOpen={0}
       session={previewSessions[0]}
       status="ready"
@@ -160,5 +162,36 @@ describe('ToolPicker conversation capability presentation', () => {
     expect(within(dialog).getByRole('combobox', { name: '知识库 / Agent RAG的当前对话使用' }))
       .toBeDisabled();
     expect(onPreferenceChange).not.toHaveBeenCalled();
+  });
+
+  it('finds a tool by its role or original name, and recovers from an empty search', async () => {
+    renderPicker();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：2 个' }));
+    const search = screen.getByRole('textbox', { name: '搜索工具' });
+    expect(search).toHaveFocus();
+    await user.type(search, '自举');
+    expect(screen.getByRole('button', { name: '记忆召回' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '知识库 / Agent RAG' })).not.toBeInTheDocument();
+    await user.clear(search);
+    await user.type(search, '记忆与工具书');
+    expect(screen.getByRole('button', { name: '记忆召回' })).toBeInTheDocument();
+    await user.clear(search);
+    await user.type(search, '没有这个工具');
+    expect(screen.getByRole('status')).toHaveTextContent('没有找到工具');
+    await user.click(screen.getByRole('button', { name: '清空工具搜索' }));
+    expect(search).toHaveFocus();
+    expect(screen.getByRole('button', { name: '知识库 / Agent RAG' })).toBeInTheDocument();
+  });
+
+  it('keeps selecting an available tool separate from changing its preference', async () => {
+    const onSelect = vi.fn();
+    const onPreferenceChange = renderPicker({ onSelect });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：2 个' }));
+    await user.click(screen.getByRole('button', { name: '记忆召回' }));
+    expect(onSelect).toHaveBeenCalledWith(tools[0]);
+    expect(onPreferenceChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: '当前对话工具' })).not.toBeInTheDocument();
   });
 });

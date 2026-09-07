@@ -85,7 +85,7 @@ type TraceUnavailable = {
 type ProjectedTraceEvent = {
   id: string;
   atMs: number;
-  sequence: number;
+  sequence?: number;
   category: Exclude<TraceFilter, 'all'>;
   type: string;
   title: string;
@@ -171,7 +171,10 @@ export function PawContextTrace({
     () => projectionDebugTurnSummaries(traceTurns),
     [traceTurns],
   );
-  const visibleTurns = turns.length ? turns : projectedTurnSummaries;
+  const visibleTurns = useMemo(
+    () => reconcileTraceTurnSummaries(turns, projectedTurnSummaries),
+    [turns, projectedTurnSummaries],
+  );
   const projectionOnly = turns.length === 0 && projectedTurnSummaries.length > 0;
 
   const fetchTraceForTurn = useCallback(async (turnId: string): Promise<AgentContextTraceV1 | undefined> => {
@@ -290,7 +293,11 @@ export function PawContextTrace({
   const stageSegments = useMemo(() => buildStageSegments(assemblyNodes, context), [assemblyNodes, context]);
   const totalTokens = stageSegments.reduce((sum, segment) => sum + segment.tokens, 0);
   const cacheSummary = useMemo(() => summarizeCache(context), [context]);
-  const traceCounts = useMemo(() => countTraceEvents(traceTurns), [traceTurns]);
+  const selectedTraceTurns = useMemo(
+    () => selectedTurnId ? traceTurns.filter((turn) => turn.id === selectedTurnId) : traceTurns,
+    [selectedTurnId, traceTurns],
+  );
+  const traceCounts = useMemo(() => countTraceEvents(selectedTraceTurns), [selectedTraceTurns]);
   const traceRootRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -334,7 +341,7 @@ export function PawContextTrace({
                   <span className="ti-no">T{turn.turnOrdinal ?? index + 1}</span>
                   <span className="ti-time">{formatTime(turn.capturedAtMs)}</span>
                 </span>
-                <span className="ti-sum">{turn.summary || '（摘要待生成）'}</span>
+                <span className="ti-sum">{turn.summary || '本轮未记录摘要'}</span>
                 <span className="ti-meta">
                   <span>{turn.modelCallCount} 调用</span>
                   <span>{turn.toolCallCount} 工具</span>
@@ -430,7 +437,7 @@ export function PawContextTrace({
             onShowAssembly={() => setMode('assembly')}
             panelId={`${traceModeId}-panel`}
             panelLabelledBy={`${traceModeId}-events-tab`}
-            turns={traceTurns}
+            turns={selectedTraceTurns}
           />
         ) : context ? (
           <div
@@ -446,13 +453,13 @@ export function PawContextTrace({
                   <span className={`an-phase ${description?.phase === 'compaction_recovery' ? 'is-alt' : ''}`}>
                     {description?.label ?? '上下文装配'}{description?.ordinal ? ` · 第 ${description.ordinal} 轮` : ''}
                   </span>
-                  {totalTokens ? <span className="an-ah-stat">上下文 <b>{formatNumber(totalTokens)}</b> tok</span> : null}
+                  {totalTokens ? <span className="an-ah-stat">装配估算 <b>{formatNumber(totalTokens)}</b> tok</span> : null}
                   {cacheSummary ? <span className="an-ah-stat">缓存读取 <b>{cacheSummary.read}</b> tok（{cacheSummary.ratio}%）</span> : null}
                   {description ? <span className="an-ah-stat">{description.description}</span> : null}
                 </div>
                 {totalTokens ? (
                   <>
-                    <div className="an-tokenbar" role="img" aria-label="上下文 token 构成">
+                    <div className="an-tokenbar" role="img" aria-label="装配节点 Token 估算构成">
                       {stageSegments.map((segment, index) => (
                         <span
                           key={segment.stage}
@@ -500,19 +507,19 @@ export function PawContextTrace({
                           <span className="n-label">{node.label || node.stage}</span>
                           <span className="n-sub">{node.sourceKind}{node.summary ? ` · ${node.summary}` : ''}</span>
                         </span>
-                        {entities.map((entity) => (
-                          <EvidenceEchoOpen
-                            desktop={desktop}
-                            entity={entity}
-                            key={`${entity.appId}:${entity.entityId}`}
-                          />
-                        ))}
                         <span className="n-bar"><i style={{ width: `${barWidth(node.tokenEstimate, maxToken(assemblyNodes))}%` }} /></span>
                         <span className="n-tok">{formatNumber(node.tokenEstimate)} <small>tok</small></span>
                         <span aria-hidden="true" className="an-disclosure-caret">›</span>
                         </>
                       )}
                     >
+                        {entities.length ? (
+                          <div aria-label="关联来源" className="an-node-sources" role="group">
+                            {entities.map((entity) => (
+                              <EvidenceEchoOpen desktop={desktop} entity={entity} key={`${entity.appId}:${entity.entityId}`} />
+                            ))}
+                          </div>
+                        ) : null}
                         <div className="nb-row">
                           <span>字符 <b>{formatNumber(node.charCount)}</b></span>
                           <span>耗时 <b>{node.durationMs} ms</b></span>
@@ -543,7 +550,7 @@ export function PawContextTrace({
                 : <FallbackNodes context={context} />}
             </div>
 
-            <div className="an-trace-side">
+            <section aria-label="模型调用与装配元数据" className="an-trace-side">
               <div className="an-side-h">模型调用 · {context.modelCalls.length}</div>
               {context.modelCalls.map((call) => (
                 <ModelCallCard
@@ -561,7 +568,7 @@ export function PawContextTrace({
                 <dt>工具执行</dt><dd>{context.toolExecutions.length} 次</dd>
                 <dt>记录时间</dt><dd>{formatTime(context.capturedAtMs)} – {formatTime(context.updatedAtMs)}</dd>
               </dl>
-            </div>
+            </section>
           </div>
         ) : (
           <div
@@ -1117,6 +1124,23 @@ function sessionTraceTail(turns: ProjectedTraceTurn[]): { label: string; status:
   };
 }
 
+function orderTraceEvents(events: ProjectedTraceEvent[]): ProjectedTraceEvent[] {
+  const byTime = (left: ProjectedTraceEvent, right: ProjectedTraceEvent) => left.atMs - right.atMs || left.id.localeCompare(right.id);
+  const sequenced = events.filter((event) => Number.isFinite(event.sequence))
+    .sort((left, right) => left.sequence! - right.sequence! || byTime(left, right));
+  const captured = events.filter((event) => !Number.isFinite(event.sequence)).sort(byTime);
+  const ordered: ProjectedTraceEvent[] = [];
+  let index = 0;
+  // Persisted user messages may lack event sequence numbers. Place those by
+  // capture time between ordered events; never compare epoch milliseconds
+  // with sequence IDs or disturb the order of authoritative event receipts.
+  for (const event of sequenced) {
+    while (index < captured.length && captured[index].atMs <= event.atMs) ordered.push(captured[index++]);
+    ordered.push(event);
+  }
+  return [...ordered, ...captured.slice(index)];
+}
+
 export function projectionTraceTurns(projection: AgentProjectionState | undefined): ProjectedTraceTurn[] {
   if (!projection) return [];
   return (projection.turnOrder ?? []).map((turnId, index) => {
@@ -1128,10 +1152,10 @@ export function projectionTraceTurns(projection: AgentProjectionState | undefine
     const activities = turn.activityIds
       .map((activityId) => projection.activitiesById[activityId])
       .filter((activity): activity is AgentActivityProjection => Boolean(activity));
-    const events = [
+    const events = orderTraceEvents([
       ...messages.map(projectMessageTraceEvent),
       ...activities.map(projectActivityTraceEvent),
-    ].sort((left, right) => left.sequence - right.sequence || left.atMs - right.atMs || left.id.localeCompare(right.id));
+    ]);
     const prompt = messages.find((message) => message.role === 'user');
     return {
       id: turn.id,
@@ -1178,7 +1202,7 @@ function projectMessageTraceEvent(message: AgentMessageProjection): ProjectedTra
   return {
     id: `message:${message.id}`,
     atMs: message.createdAtMs,
-    sequence: message.timelineSequence ?? message.createdAtMs,
+    sequence: message.timelineSequence,
     category,
     type: message.role === 'user' ? 'user.prompt' : message.role === 'tool' ? 'tool.result' : 'assistant.msg',
     title,
@@ -1199,7 +1223,7 @@ function projectActivityTraceEvent(activity: AgentActivityProjection): Projected
   return {
     id: `activity:${activity.id}`,
     atMs: activity.createdAtMs,
-    sequence: activity.timelineSequence ?? activity.createdAtMs,
+    sequence: activity.timelineSequence,
     category,
     type: category === 'sub'
       ? activity.status === 'completed' ? 'sub.end' : 'sub.spawn'
@@ -1324,6 +1348,27 @@ function turnOrdinalOf(turns: DebugTurnSummary[], turnId: string): number {
   const index = turns.findIndex((turn) => turn.turnId === turnId);
   const found = turns[index];
   return found?.turnOrdinal ?? (index >= 0 ? index + 1 : 0);
+}
+
+/** Debug captures may arrive newest-first. Share transcript ordinals with the
+ * event view; only fall back to chronological order within retained captures. */
+export function reconcileTraceTurnSummaries(
+  captures: DebugTurnSummary[],
+  projected: DebugTurnSummary[],
+): DebugTurnSummary[] {
+  if (!captures.length) return projected;
+  const projectedById = new Map(projected.map((turn) => [turn.turnId, turn]));
+  const retainedOrdinals = new Map([...captures]
+    .sort((left, right) => left.capturedAtMs - right.capturedAtMs)
+    .map((turn, index) => [turn.turnId, index + 1]));
+  return captures.map((turn) => {
+    const transcript = projectedById.get(turn.turnId);
+    return {
+      ...turn,
+      turnOrdinal: turn.turnOrdinal ?? transcript?.turnOrdinal ?? retainedOrdinals.get(turn.turnId),
+      summary: turn.summary || transcript?.summary,
+    };
+  });
 }
 function phaseLabel(phase: DebugTurnSummary['assemblyPhase']): string {
   if (phase === 'initial') return '首轮装配';

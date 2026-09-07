@@ -1,8 +1,9 @@
-import { X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Search, X } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import {
   Button,
+  Input,
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -21,6 +22,7 @@ import {
   riskLabel,
   toolAvailableForConversation,
 } from './tool-policy';
+import './tool-picker.css';
 
 export function ToolPicker({
   adjustmentDisabled,
@@ -46,16 +48,24 @@ export function ToolPicker({
   onSelect: (tool: ToolManifest) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const titleId = useId();
   useEffect(() => {
     if (requestOpen > 0 && status === 'ready' && !disabled) setOpen(true);
   }, [disabled, requestOpen, status]);
 
   const availableCount = countAvailableTools(tools, session, capabilityCatalog);
   const registeredCount = countRegisteredTools(tools);
-  const capabilityCount = capabilityCatalog?.items.length ?? registeredCount;
   const auxiliaryCapabilityCount = capabilityCatalog
     ? capabilityCatalog.items.filter((item) => item.kind !== 'tool').length
     : 0;
+  const search = query.trim().toLocaleLowerCase();
+  const visibleTools = tools.filter((tool) => {
+    const presentation = toolPresentation(tool);
+    return !search || [tool.id, tool.displayName, tool.description, presentation.name, presentation.description]
+      .some((value) => value.toLocaleLowerCase().includes(search));
+  });
   const label = status === 'loading'
     ? '能力列表正在读取'
     : status === 'failed'
@@ -68,7 +78,10 @@ export function ToolPicker({
       : ` · ${availableCount}/${registeredCount}`;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(nextOpen) => {
+      setOpen(nextOpen);
+      if (nextOpen) setQuery('');
+    }}>
       <PopoverTrigger asChild>
         <Button
           aria-label={label}
@@ -88,18 +101,18 @@ export function ToolPicker({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        aria-labelledby="agent-tool-picker-title"
+        aria-labelledby={titleId}
         className="agent-tool-picker"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          searchRef.current?.focus();
+        }}
       >
-        <header>
-          <span>
-            <strong id="agent-tool-picker-title">当前对话工具</strong>
-            <small>
-              可执行工具 {availableCount} 项 · 已登记工具 {registeredCount} 项
-              {auxiliaryCapabilityCount ? ` · 技能/扩展 ${auxiliaryCapabilityCount} 项` : ''}
-              {capabilityCount === registeredCount ? '' : ` · 能力目录 ${capabilityCount} 项`}
-            </small>
-          </span>
+        <header className="agent-tool-picker__header">
+          <div>
+            <strong id={titleId}>当前对话工具</strong>
+            <p>{availableCount} / {registeredCount} 项可用{auxiliaryCapabilityCount ? ` · 另有 ${auxiliaryCapabilityCount} 项技能与扩展` : ''}</p>
+          </div>
           <button
             aria-label="关闭当前对话工具"
             className="agent-tool-picker__close"
@@ -109,13 +122,30 @@ export function ToolPicker({
             <X aria-hidden="true" size={18} />
           </button>
         </header>
+        <div className="agent-tool-picker__search">
+          <Search aria-hidden="true" size={16} />
+          <Input
+            aria-label="搜索工具"
+            autoComplete="off"
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            placeholder="搜索工具，例如记忆、文件…"
+            ref={searchRef}
+            value={query}
+          />
+          {query ? (
+            <button aria-label="清空工具搜索" className="agent-tool-picker__clear" onClick={() => {
+              setQuery('');
+              searchRef.current?.focus();
+            }} type="button"><X aria-hidden="true" size={14} /></button>
+          ) : null}
+        </div>
         {adjustmentDisabled ? (
-          <p className="agent-picker-popover__note" data-tone="warning">
+          <p className="agent-tool-picker__notice" data-tone="warning">
             当前任务正在运行；可以查看工具，但要等本轮结束后再调整。
           </p>
         ) : null}
-        <div>
-          {tools.map((tool) => {
+        <div className="agent-tool-picker__list">
+          {visibleTools.map((tool) => {
             const available = toolAvailableForConversation(tool, session, capabilityCatalog);
             const presentation = toolPresentation(tool);
             const capability = capabilityCatalog?.items.find(
@@ -123,28 +153,33 @@ export function ToolPicker({
             );
             return (
               <article className="agent-tool-picker__row" key={tool.id}>
-                <button
-                  type="button"
-                  disabled={!available || adjustmentDisabled}
-                  onClick={() => {
-                    setOpen(false);
-                    onSelect(tool);
-                  }}
-                >
-                  <span><strong>{presentation.name}</strong><small>{presentation.description}</small></span>
-                  <i data-risk={tool.riskLevel}>
-                    {available ? riskLabel(tool.riskLevel) : '当前对话不可用'}
-                  </i>
-                </button>
-                {capability ? (
-                  <div className="agent-tool-picker__preference">
+                <div className="agent-tool-picker__heading">
+                  <button
+                    className="agent-tool-picker__name"
+                    type="button"
+                    disabled={!available || adjustmentDisabled}
+                    title={`将${presentation.name}加入消息`}
+                    onClick={() => {
+                      setOpen(false);
+                      onSelect(tool);
+                    }}
+                  >{presentation.name}</button>
+                  {capability ? (
                     <span
                       className="agent-tool-picker__effective"
                       data-effective={capability.disclosure.effective}
                     >
-                      <strong>{capability.disclosure.effective === 'enabled' ? '已启用' : '已关闭'}</strong>
-                      <small>作用域：{capabilityScopeLabel(capability.effectiveScope)}</small>
+                      {capability.disclosure.effective === 'disabled' ? '已关闭' : available ? '已启用' : '暂不可用'}
                     </span>
+                  ) : null}
+                </div>
+                <p className="agent-tool-picker__description">{presentation.description}</p>
+                <div className="agent-tool-picker__preference">
+                  <div className="agent-tool-picker__metadata">
+                    <span data-risk={tool.riskLevel}>{available ? riskLabel(tool.riskLevel) : '当前对话不可用'}</span>
+                    {capability ? <span>{capabilityScopeLabel(capability.effectiveScope)}</span> : null}
+                  </div>
+                  {capability ? (
                     <Select
                       aria-label={`${presentation.name}的当前对话使用`}
                       disabled={adjustmentDisabled || capabilityPolicyPending}
@@ -152,14 +187,20 @@ export function ToolPicker({
                       options={capabilityUsagePreferenceOptions}
                       value={capabilityCatalog?.sessionPolicy?.disclosurePreferences.session[capability.canonicalId] ?? 'inherit'}
                     />
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
               </article>
             );
           })}
+          {!visibleTools.length ? (
+            <div className="agent-tool-picker__empty" role="status">
+              <strong>没有找到工具</strong>
+              <p>换个名称或用途试试，也可以清空搜索查看全部。</p>
+            </div>
+          ) : null}
         </div>
-        <p className="agent-picker-popover__note">
-          这里显示当前对话真正会发给 Runtime 的工具。已登记但不可执行的工具仍保留在列表中，方便解释原因；更改从下一轮开始生效，也不会停止正在运行的后台任务。
+        <p className="agent-tool-picker__note">
+          更改从下一轮生效，后台任务继续运行。
         </p>
       </PopoverContent>
     </Popover>

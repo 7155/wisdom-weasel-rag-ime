@@ -90,13 +90,13 @@ export function ContextUsagePopover({
               <i style={{ width: `${filled}%` }} />
             </span>
             <span className="agent-context-usage__label">
-              {view.percent === null ? 'Context' : `${Math.round(view.percent)}%`}
+              {view.percent === null ? '上下文' : `${Math.round(view.percent)}%`}
             </span>
           </button>
         </PopoverTrigger>
         <PopoverContent
           align="end"
-          aria-label="Context Usage"
+          aria-label="上下文用量"
           className="agent-context-usage__popover"
           collisionBoundary={rootRef.current?.closest<HTMLElement>('.paw-window-body') ?? undefined}
           onCloseAutoFocus={(event) => {
@@ -111,7 +111,7 @@ export function ContextUsagePopover({
           sideOffset={10}
         >
           <header className="agent-context-usage__header">
-            <strong>Context Usage</strong>
+            <strong>上下文用量</strong>
             <PopoverClose asChild>
               <button aria-label="关闭上下文用量" ref={closeRef} type="button">
                 <X size={15} />
@@ -160,7 +160,7 @@ function ContextUsageBody({
   return (
     <>
       <div className="agent-context-usage__summary">
-        <b>{view.percent === null ? '占用未知' : `${Math.round(view.percent)}% Full`}</b>
+        <b>{view.percent === null ? '占用未知' : `已用 ${Math.round(view.percent)}%`}</b>
         <span>
           {view.tokens === null ? '未知' : `约 ${formatContextTokenCount(view.tokens)}`}
           {' / '}
@@ -208,7 +208,7 @@ function ContextUsageBody({
 
 function ContextUsageLayerList({ layers }: { layers: ContextUsageView['layers'] }) {
   return (
-    <ul className="agent-context-usage__list" aria-label="上下文分层占用">
+    <ul className="agent-context-usage__list" aria-label="上下文分层占用" tabIndex={0}>
       {layers.map((layer) => (
         <li data-state={layer.state} key={layer.id} title={layer.source}>
           <span aria-hidden="true" className="agent-context-usage__swatch" style={{ background: layerColor(layer.id) }} />

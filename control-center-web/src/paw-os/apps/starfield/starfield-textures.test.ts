@@ -135,6 +135,20 @@ describe('starfield procedural textures', () => {
     expect(solid).toBeGreaterThan(0);
   });
 
+  it('keeps ring bands continuous around radial UVs instead of sampling a planar diameter', () => {
+    const ring = generateRingMap('session-ring', 128);
+    const rowBytes = ring.width * 4;
+    const row = (y: number) => ring.data.slice(y * rowBytes, (y + 1) * rowBytes);
+    expect(row(0)).toEqual(row(64));
+    expect(row(64)).toEqual(row(127));
+    // There is material across the full radial band, with a narrow division.
+    const alpha = (u: number) => ring.data[(64 * 128 + Math.floor(u * 128)) * 4 + 3]!;
+    expect(alpha(0.3)).toBeGreaterThan(30);
+    expect(alpha(0.8)).toBeGreaterThan(30);
+    expect(alpha(0.64)).toBeLessThan(15);
+    expect(digest(ring)).not.toBe(digest(generateRingMap('another-ring', 128)));
+  });
+
   it('shapes radial glows with an opaque core and transparent edge', () => {
     const glow = generateRadialGlow({ size: 32 });
     const center = ((16 * 32) + 16) * 4 + 3;

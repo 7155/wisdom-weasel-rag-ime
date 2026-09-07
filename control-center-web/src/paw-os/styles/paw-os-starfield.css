@@ -684,9 +684,9 @@
   inset: -12%;
   pointer-events: none;
   background:
-    radial-gradient(34% 30% at 26% 68%, rgb(47 107 255 / .07), transparent 70%),
-    radial-gradient(30% 26% at 74% 26%, rgb(154 122 224 / .07), transparent 72%),
-    radial-gradient(20% 18% at 58% 76%, rgb(85 195 221 / .05), transparent 74%);
+    radial-gradient(34% 24% at 26% 68%, rgb(47 107 255 / .13), transparent 70%),
+    radial-gradient(28% 38% at 78% 24%, rgb(154 122 224 / .12), transparent 72%),
+    radial-gradient(20% 18% at 58% 76%, rgb(85 195 221 / .08), transparent 74%);
   animation: paw-sf-nebula-drift 60s ease-in-out infinite alternate;
 }
 
@@ -845,15 +845,34 @@
 
 .paw-sf2__body {
   --sf-body-color: var(--sf-muted);
-  width: 18px;
-  height: 18px;
+  position: relative;
+  width: var(--sf-body-size, 18px);
+  height: var(--sf-body-size, 18px);
   border-radius: 50%;
   background: radial-gradient(circle at 34% 30%, #f2f6ff, var(--sf-body-color) 52%, color-mix(in srgb, var(--sf-body-color) 40%, #000) 88%);
   box-shadow: 0 0 12px color-mix(in srgb, var(--sf-body-color) 55%, transparent);
 }
 
-.paw-sf2__body[data-kind='planet'] { width: 26px; height: 26px; }
-.paw-sf2__body[data-kind='star'] { width: 24px; height: 24px; }
+.paw-sf2__body:not([data-kind='star'])::before,
+.paw-sf2__body:not([data-kind='star'])::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.paw-sf2__body:not([data-kind='star'])::before {
+  background: repeating-linear-gradient(12deg, transparent 0 7%, rgb(226 234 242 / .24) 9% 11%, transparent 14% 20%);
+  transform: rotate(var(--sf-axial-tilt, 0rad));
+}
+.paw-sf2__body[data-surface='1']::before,
+.paw-sf2__body[data-surface='5']::before {
+  background: radial-gradient(ellipse at 32% 35%, rgb(143 173 139 / .8) 0 18%, transparent 22%), radial-gradient(ellipse at 68% 65%, rgb(177 158 120 / .65) 0 20%, transparent 25%);
+}
+.paw-sf2__body:not([data-kind='star'])::after {
+  background: radial-gradient(circle at 24% 25%, rgb(232 246 255 / .18), transparent 45%);
+  box-shadow: inset -6px -3px 7px rgb(0 4 17 / .8), inset 1px 1px 1px rgb(206 232 255 / .7);
+}
 
 .paw-sf2__body-button[data-tone='working'] .paw-sf2__body { --sf-body-color: var(--sf-working); }
 .paw-sf2__body-button[data-tone='queued'] .paw-sf2__body { --sf-body-color: var(--sf-queued); }
@@ -978,13 +997,26 @@
 .paw-sf2__center-body {
   position: relative;
   z-index: 2;
-  width: 58px;
-  height: 58px;
+  width: 84px;
+  height: 84px;
   border-radius: 50%;
-  background: radial-gradient(circle at 32% 28%, #cfe4ff, #5b9bf0 44%, #23408f 78%, #101a3d);
+  background-color: #173c79;
+  background-image: var(--sf-surface-map, radial-gradient(circle at 32% 28%, #cfe4ff, #5b9bf0 44%, #23408f 78%, #101a3d));
+  background-size: auto 100%;
+  background-position: var(--sf-surface-position, 50%) center;
   box-shadow:
-    inset -8px -10px 22px rgb(4 6 15 / .55),
-    0 0 26px rgb(91 155 240 / .45);
+    inset -26px -8px 24px rgb(1 4 16 / .92),
+    inset 2px 1px 3px rgb(161 221 255 / .9),
+    0 0 3px rgb(131 209 255 / .65),
+    0 0 24px rgb(91 155 240 / .2);
+}
+
+.paw-sf2__center[data-kind='planet'] .paw-sf2__center-body::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(ellipse at 25% 28%, rgb(233 249 255 / .18), transparent 50%);
 }
 
 .paw-sf2__center[data-kind='sun'] .paw-sf2__center-body {
@@ -998,17 +1030,18 @@
 
 .paw-sf2__center-glow {
   position: absolute;
-  top: 35px;
+  top: 48px;
   left: 50%;
   z-index: 1;
-  width: 118px;
-  height: 118px;
+  width: 150px;
+  height: 150px;
   border-radius: 50%;
   background: radial-gradient(circle, rgb(91 155 240 / .3), transparent 66%);
   transform: translate(-50%, -50%);
 }
 
 .paw-sf2__center[data-kind='sun'] .paw-sf2__center-glow {
+  top: 39px;
   background: radial-gradient(circle, rgb(245 166 35 / .32), transparent 62%);
 }
 
@@ -1027,15 +1060,16 @@
 
 .paw-sf2__center-ring {
   position: absolute;
-  top: 35px;
+  top: 48px;
   left: 50%;
   z-index: 3;
-  width: 96px;
-  height: 30px;
-  border: 1.5px solid rgb(148 176 226 / .4);
+  width: 142px;
+  height: 48px;
+  border: 6px double rgb(202 189 160 / .68);
   border-radius: 50%;
   transform: translate(-50%, -50%) rotate(-24deg);
   mask-image: linear-gradient(160deg, #000 55%, transparent 56%);
+  box-shadow: 0 0 0 2px rgb(192 180 158 / .14), inset 0 0 0 2px rgb(144 170 200 / .22);
 }
 
 /* ------------------------------------------------ 2D beams ---------- */
