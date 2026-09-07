@@ -48,3 +48,61 @@
   letter-spacing: .28em;
   text-indent: .28em;
 }
+
+.paw-app-failure {
+  display: flex;
+  min-height: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
+  color: var(--paw-ink);
+  background: var(--paw-panel-strong);
+  text-align: center;
+}
+
+.paw-app-failure h2 {
+  margin: 16px 0 8px;
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+.paw-app-failure p {
+  max-width: 34em;
+  margin: 2px 0;
+  color: var(--paw-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.paw-app-failure__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.paw-app-failure__actions .ui-button {
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid var(--paw-line);
+  border-radius: 8px;
+  color: var(--paw-ink);
+  background: var(--paw-panel-strong);
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.paw-app-failure__actions .ui-button[data-variant='primary'] {
+  border-color: transparent;
+  color: #fff;
+  background: var(--paw-accent);
+}
+
+.paw-app-failure__actions .ui-button:focus-visible {
+  outline: 2px solid var(--paw-accent);
+  outline-offset: 3px;
+}

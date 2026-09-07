@@ -3,6 +3,7 @@ import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 import type { PawAppId } from '../runtime/app-registry';
 import { pawApp } from '../runtime/app-registry';
 import { PawAppIcon } from '../shell/PawAppIcon';
+import { PawAppErrorBoundary } from './PawAppErrorBoundary';
 // Eager: the boot state below is what the window shows while the App chunk —
 // and everything it imports, including paw-apps.css — is still loading.
 import './paw-app-boot.css';
@@ -22,10 +23,13 @@ export function warmPawAppProcess(appId: PawAppId): void {
 }
 
 export const PawAppProcess = memo(function PawAppProcess({ appId, entityId, initialRoute, target }: { appId: PawAppId; entityId?: string; initialRoute?: string; target?: PawOsWindowTarget }) {
+  const resetKey = JSON.stringify([appId, entityId, initialRoute, target?.kind, target?.id, target && 'panel' in target ? target.panel : undefined]);
   return (
-    <Suspense fallback={<PawAppBoot appId={appId} />}>
-      <PawAppBody appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />
-    </Suspense>
+    <PawAppErrorBoundary appId={appId} resetKey={resetKey}>
+      <Suspense fallback={<PawAppBoot appId={appId} />}>
+        <PawAppBody appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />
+      </Suspense>
+    </PawAppErrorBoundary>
   );
 });
 
