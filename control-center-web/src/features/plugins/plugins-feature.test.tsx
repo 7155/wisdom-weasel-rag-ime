@@ -19,6 +19,70 @@ afterEach(() => {
 });
 
 describe('PluginsFeature', () => {
+  it('searches displayed capability names and ranks them ahead of description matches', async () => {
+    const user = userEvent.setup();
+    renderPlugins({ 'agent.tools.list': capabilityCatalog([
+      tool({ id: 'overview', displayName: '控制中心概览', description: '查看模型和记忆状态' }),
+      tool({ id: 'memory', displayName: '个人上下文记忆', description: '查询记忆' }),
+      tool({ id: 'ask', displayName: 'Ask', description: '向用户提出选择' }),
+    ]) });
+    const list = await screen.findByRole('group', { name: '能力列表' });
+    const search = screen.getByRole('textbox', { name: '搜索' });
+    await user.type(search, '记忆');
+    expect(within(list).getAllByRole('button')[0]).toHaveTextContent('个人上下文记忆');
+    await user.clear(search);
+    await user.type(search, '向你提问');
+    expect(within(list).getAllByRole('button')).toHaveLength(1);
+    expect(within(list).getByRole('button', { name: /向你提问/ })).toBeVisible();
+    await user.clear(search);
+    await user.type(search, 'tool:ask');
+    expect(within(list).getByRole('button', { name: /向你提问/ })).toBeVisible();
+  });
+
+  it('explains capability use and permissions while preserving the original contract on demand', async () => {
+    const user = userEvent.setup();
+    renderPlugins({ 'agent.tools.list': capabilityCatalog([
+      tool({ id: 'room_partner', displayName: 'Room 伙伴协作', description: '在 Room 中分派 WorkItem；恢复时携带 expectedRevision 和 retry。', riskLevel: 'R1' }),
+    ]) });
+    const row = await screen.findByRole('button', { name: /Room 伙伴协作/ });
+    expect(row).not.toHaveTextContent('WorkItem');
+    expect(row).toHaveTextContent('分派工作');
+    await user.click(row);
+    const detail = screen.getByRole('complementary', { name: '能力详情' });
+    expect(detail).toHaveTextContent('遵循对话的执行权限');
+    expect(detail).toHaveTextContent('由具体对话的权限决定');
+    expect(detail).not.toHaveTextContent('native_approval');
+    expect(detail).not.toHaveTextContent('expectedRevision');
+    await user.click(within(detail).getByText('查看技术参数'));
+    expect(detail).toHaveTextContent('tool:room_partner');
+    expect(detail).toHaveTextContent('expectedRevision');
+    expect(detail).toHaveTextContent('native_approval');
+  });
+
+  it('distinguishes a missing Room context from a disabled or offline feature', async () => {
+    const user = userEvent.setup();
+    const room = tool({ id: 'room_partner', displayName: 'Room 伙伴协作', description: 'Room 工作协作' });
+    renderPlugins({ 'agent.tools.list': capabilityCatalog([{
+      ...room,
+      alwaysAvailable: true,
+      status: 'offline',
+      disclosure: { ...room.disclosure, effective: 'disabled' as const, state: 'hidden' as const, reason: 'room_context_required' },
+      reasons: ['room_context_required'],
+    }]) });
+    const row = await screen.findByRole('button', { name: /Room 伙伴协作/ });
+    expect(row).toHaveTextContent('进入 Room 后可用');
+    expect(row).not.toHaveTextContent('暂时离线');
+    expect(row).not.toHaveTextContent('已关闭');
+    expect(screen.getByText(/1 项功能/)).toHaveTextContent('0 项已关闭');
+    await user.click(row);
+    const detail = screen.getByRole('complementary', { name: '能力详情' });
+    expect(within(detail).getByRole('region', { name: '固定能力策略' })).toHaveTextContent('进入 Room 后可用');
+    expect(within(detail).queryByRole('combobox')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: '状态' }));
+    await user.click(screen.getByRole('option', { name: '已关闭' }));
+    expect(screen.queryByRole('button', { name: /Room 伙伴协作/ })).not.toBeInTheDocument();
+  });
+
   it('gives native function switches their own page without package installation controls', async () => {
     renderPlugins({}, '/plugins?view=capabilities&capability=tool%3Amemory', true);
     const capabilities = await screen.findByRole('region', { name: '功能开关' });
@@ -307,7 +371,8 @@ describe('PluginsFeature', () => {
     const detail = screen.getByRole('complementary', { name: '能力详情' });
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'true');
     expect(detail).toHaveTextContent('受禁区保护');
-    expect(detail).toHaveTextContent('native_approval');
+    expect(detail).toHaveTextContent('遵循对话的执行权限');
+    expect(detail).not.toHaveTextContent('native_approval');
     expect(detail).toHaveTextContent('恢复备份');
     expect(detail).toHaveTextContent('执行授权');
     expect(detail).toHaveTextContent('伙伴可见范围');
@@ -508,7 +573,10 @@ describe('PluginsFeature', () => {
       && !Array.isArray(call.request.body)
       && JSON.stringify(call.request.body).includes('"tool:memory":"disabled"')
     ))).toBe(true));
-    expect(screen.getByRole('complementary', { name: '能力详情' })).toHaveTextContent('不适用');
+    const detail = screen.getByRole('complementary', { name: '能力详情' });
+    expect(detail).toHaveTextContent('由具体对话的权限决定');
+    await user.click(within(detail).getByText('查看技术参数'));
+    expect(detail).toHaveTextContent('"state": "not_applicable"');
     expect(await screen.findByText('默认设置已保存')).toBeVisible();
     expect(screen.getByText(/所有对话默认已保存/)).toBeVisible();
   });

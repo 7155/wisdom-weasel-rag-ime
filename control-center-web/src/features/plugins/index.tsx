@@ -172,21 +172,26 @@ export function PluginsFeature() {
     return items.filter((item) => {
       const state = item.status.toLowerCase();
       const haystack = [
+        publicCapabilityDisplayName(item),
         item.displayName,
+        item.canonicalId,
+        publicCapabilityDescription(item),
         item.description,
+        publicCapabilitySourceLabel(item.source.label),
         item.source.label,
         capabilityKindLabel(item.kind),
+        ...item.requiredPermissions.map(publicCapabilityPermissionLabel),
         ...item.requiredPermissions,
       ].join(' ').toLocaleLowerCase('zh-CN');
       const matchesAvailability = availability === 'all'
         || (availability === 'enabled' || availability === 'disabled'
-          ? item.disclosure.effective === availability
+          ? item.disclosure.effective === availability && !capabilityNeedsRoomContext(item)
           : availability === 'online' ? ['online', 'ready', 'installed'].includes(state)
             : !['online', 'ready', 'installed'].includes(state));
       return (!needle || haystack.includes(needle))
         && (kind === 'all' || item.kind === kind)
         && matchesAvailability;
-    });
+    }).sort((left, right) => capabilityNameRank(left, needle) - capabilityNameRank(right, needle));
   }, [availability, items, kind, query]);
   const selected = filtered.find((item) => itemKey(item) === selectedId);
   useEffect(() => {
@@ -208,7 +213,8 @@ export function PluginsFeature() {
   const lifecycleEvents = arrayRecords(asRecord(lifecycle.data).recentEvents);
   const availableCount = items.filter((item) => ['online', 'ready', 'installed'].includes(item.status.toLowerCase())).length;
   const disclosedCount = items.filter((item) => item.disclosure.state === 'disclosed').length;
-  const hiddenCount = items.filter((item) => item.disclosure.state === 'hidden').length;
+  const hiddenCount = items.filter((item) => item.disclosure.state === 'hidden' && !capabilityNeedsRoomContext(item)).length;
+  const roomContextCount = items.filter(capabilityNeedsRoomContext).length;
   const pendingSummary = asRecord(pendingChange.summary);
   const pendingResources = asRecord(pendingSummary.resources);
   const pendingResourceCount = packageResourceCount(pendingResources);
@@ -256,7 +262,7 @@ export function PluginsFeature() {
       preference,
       scope: 'global',
       status: 'pending',
-      message: `正在保存 ${item.displayName} 的所有对话默认。`,
+      message: `正在保存 ${publicCapabilityDisplayName(item)} 的所有对话默认。`,
     });
     try {
       await updateDefaults.mutateAsync({
@@ -295,7 +301,7 @@ export function PluginsFeature() {
       preference,
       scope: 'project',
       status: 'pending',
-      message: `正在保存 ${item.displayName} 的当前项目默认。`,
+      message: `正在保存 ${publicCapabilityDisplayName(item)} 的当前项目默认。`,
     });
     try {
       await updateProjectDefaults.mutateAsync({
@@ -504,7 +510,7 @@ export function PluginsFeature() {
 
   const capabilityOverviewBlock = (
     <>
-      <p className="plugins-capability-counts">{items.length} 项功能 · {disclosedCount} 项已启用 · {hiddenCount} 项已关闭 · {availableCount} 项连接正常</p>
+      <p className="plugins-capability-counts">{items.length} 项功能 · {disclosedCount} 项已启用 · {hiddenCount} 项已关闭 · {availableCount} 项连接正常{roomContextCount ? ` · ${roomContextCount} 项需进入 Room` : ''}</p>
       <div className="plugins-settings-scope">
         <div><strong>{sessionContextId ? '正在查看当前对话的功能设置' : '正在设置所有对话的默认功能'}</strong>
           <p>对话单独设置优先，其次是项目设置，最后是所有对话默认。更改从下一轮生效。</p>
@@ -570,7 +576,14 @@ export function PluginsFeature() {
                     <strong>{publicCapabilityDisplayName(item)}</strong>
                     <span>{publicCapabilityDescription(item)}</span>
                   </span>
-                  <span className="plugins-list__aside"><StatusBadge {...availabilityBadge(item)} /><StatusBadge label={capabilityEffectiveLabel(item.disclosure.effective)} tone={item.disclosure.effective === 'enabled' ? 'success' : 'neutral'} /><small>{capabilityScopeLabel(item.effectiveScope)}</small><ChevronRight aria-hidden="true" size={15} /></span>
+                  <span className="plugins-list__aside">
+                    <StatusBadge {...availabilityBadge(item)} />
+                    {!capabilityNeedsRoomContext(item) ? <>
+                      <StatusBadge label={capabilityEffectiveLabel(item.disclosure.effective)} tone={item.disclosure.effective === 'enabled' ? 'success' : 'neutral'} />
+                      <small>{capabilityScopeLabel(item.effectiveScope)}</small>
+                    </> : null}
+                    <ChevronRight aria-hidden="true" size={15} />
+                  </span>
                 </button>
               );
             })}
@@ -1484,6 +1497,7 @@ function ToolDetail({
   const schema = asRecord(item.schema ?? item.inputSchema ?? item.parameters);
   const DetailIcon = item.kind === 'skill' ? Sparkles : item.kind === 'extension' ? Boxes : Wrench;
   const fixed = item.alwaysAvailable === true;
+  const requiresRoom = capabilityNeedsRoomContext(item);
 
   return (
     <aside aria-label="能力详情" className="plugins-detail">
@@ -1514,12 +1528,12 @@ function ToolDetail({
           <header>
             <span>
               <small>可用范围</small>
-              <strong>默认可用</strong>
+              <strong>{requiresRoom ? '进入 Room 后可用' : '默认可用'}</strong>
             </span>
             <StatusBadge label="基础能力" tone="success" />
           </header>
           <p>
-            这项基础能力始终可用；实际执行前仍会检查当前权限。
+            {requiresRoom ? '这项功能供 Room 中的伙伴分派、收集和验收工作；当前不在 Room 中，因此暂不提供给 Agent。' : '这项基础能力始终可用；实际执行前仍会检查当前权限。'}
           </p>
         </section>
       ) : (
@@ -1542,7 +1556,7 @@ function ToolDetail({
             label="所有对话默认"
           >
             <Select
-              aria-label={`${item.displayName}的所有对话默认`}
+              aria-label={`${publicCapabilityDisplayName(item)}的所有对话默认`}
               disabled={!defaultsAvailable || defaultPending}
               id={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
               onValueChange={onDefaultPreferenceChange}
@@ -1558,7 +1572,7 @@ function ToolDetail({
               label="当前项目默认"
             >
               <Select
-                aria-label={`${item.displayName}的当前项目默认`}
+                aria-label={`${publicCapabilityDisplayName(item)}的当前项目默认`}
                 disabled={projectPending}
                 id={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
                 onValueChange={onProjectPreferenceChange}
@@ -1600,7 +1614,7 @@ function ToolDetail({
       <dl className="plugins-detail__facts">
         <div>
           <dt><CheckCircle2 aria-hidden="true" size={15} />安装与在线状态</dt>
-          <dd>{capabilityStatusLabel(item.status)}</dd>
+          <dd>{requiresRoom ? '需要 Room 上下文' : capabilityStatusLabel(item.status)}</dd>
         </div>
         <div>
           <dt><ShieldAlert aria-hidden="true" size={15} />风险</dt>
@@ -1608,13 +1622,14 @@ function ToolDetail({
         </div>
         <div>
           <dt><ShieldCheck aria-hidden="true" size={15} />所需权限</dt>
-          <dd>{item.requiredPermissions.length ? item.requiredPermissions.join('、') : '不需要额外权限'}</dd>
+          <dd>{item.requiredPermissions.length ? item.requiredPermissions.map(publicCapabilityPermissionLabel).join('、') : '不需要额外权限'}</dd>
         </div>
         <div>
           <dt><ShieldCheck aria-hidden="true" size={15} />执行授权</dt>
           <dd>
             {item.authorization.state === 'authorized' ? '已授权'
-              : item.authorization.state === 'denied' ? '未授权' : '不适用'}
+              : item.authorization.state === 'denied' ? '未授权'
+                : item.authorization.reason === 'session_context_required' ? '由具体对话的权限决定' : '不适用'}
           </dd>
         </div>
         <div>
@@ -1641,17 +1656,24 @@ function ToolDetail({
 
 
 
-      {Object.keys(schema).length ? (
-        <section className="capability-disclosure">
+      <section className="capability-disclosure">
           <Disclosure
             className="capability-disclosure__technical"
             contentClassName="capability-disclosure__technical-content"
             summary="查看技术参数"
           >
-            <pre>{JSON.stringify(schema, null, 2)}</pre>
+            <pre>{JSON.stringify({
+              canonicalId: item.canonicalId,
+              displayName: item.displayName,
+              description: item.description,
+              source: item.source,
+              requiredPermissions: item.requiredPermissions,
+              authorization: item.authorization,
+              operations: stringArray(item.operations),
+              ...(Object.keys(schema).length ? { schema } : {}),
+            }, null, 2)}</pre>
           </Disclosure>
-        </section>
-      ) : null}
+      </section>
     </aside>
   );
 }
@@ -1659,22 +1681,66 @@ function ToolDetail({
 
 function itemKey(item: ToolRecord): string { return item.canonicalId; }
 function publicCapabilityDisplayName(item: ToolRecord): string {
-  return ({ Ask: '向你提问', Todo: '任务清单' } as Record<string, string>)[item.displayName] ?? item.displayName;
+  const label = ({ Ask: '向你提问', Todo: '任务清单' } as Record<string, string>)[item.displayName] ?? item.displayName;
+  return publicPluginDisplayName(label);
 }
 function publicCapabilityDescription(item: ToolRecord): string {
-  if (item.canonicalId === 'tool:memory') return '把相关记忆加入对话，并允许 Agent 查询记忆；关闭后不再使用，已保存的记忆仍保留。';
-  const exact = ({
-    '维护当前 Session 的分阶段执行清单': '维护当前对话的分阶段任务清单',
-    '查看语音状态，并在批准后切换已配置的语音 Provider': '查看语音状态，并在你同意后切换已配置的语音服务',
-    '通过工作区语言服务器读取语义信息，并在审批后执行重命名或代码动作': '读取代码定义与引用，并在你同意后执行重命名等代码操作',
-  } as Record<string, string>)[item.description];
-  return exact ?? item.description
-    .replaceAll('Session', '对话')
-    .replaceAll('Provider', '服务')
-    .replaceAll('Agent', '伙伴');
+  // These are user-facing summaries of the built-in contracts. The complete
+  // original description remains available in the technical disclosure.
+  const summary: Record<string, string> = {
+    'tool:overview': '查看 Agent、模型、记忆和输入服务的整体状态。',
+    'tool:input': '查看输入方案和候选解释，按当前权限调整设置或词表。',
+    'tool:voice': '查看语音服务状态，切换已配置的语音服务。',
+    'tool:planning': '查看每日计划，更新任务进度。',
+    'tool:agent_schedule': '预约 Agent 在指定时间继续任务，或查看已有预约。',
+    'tool:memory': '把相关记忆加入对话，并允许 Agent 查询记忆；关闭后不再使用，已保存的记忆仍保留。',
+    'tool:agent_role_book': '查看 Agent 角色说明，并为可复用的经验提出待审更新。',
+    'tool:knowledge': '检索已授权文档，管理知识库内容。',
+    'tool:models': '查看可用模型与服务，调整不含密钥的配置。',
+    'tool:runtime': '查看运行服务的状态，执行暂停、重连或重启。',
+    'tool:configuration': '查看历史与配置，导出或恢复不含密钥的备份。',
+    'tool:agents': '委派子 Agent 处理独立任务，查看进展与结果。',
+    'tool:session_search': '搜索以往对话的摘要，跳转到相关记录。',
+    'tool:trace_diagnostics': '汇总对话、Room 和运行记录，定位异常并查看证据。',
+    'tool:room_partner': '在 Room 中分派工作、查看伙伴进展、收集和验收结果。',
+    'tool:browser': '让 Agent 查看网页并执行浏览器操作，保留操作记录。',
+    'tool:plugins': '查找、制作、安装和管理插件。',
+    'tool:lab_project': '查看 Lab 项目，创建和更新项目成果与视图。',
+    'tool:desktop_semantic': '读取桌面窗口中的控件，操作已授权的应用。',
+    'tool:workspace_lsp': '查找代码定义和引用，在授权工作区执行重命名等修改。',
+    'tool:workspace_job': '在授权工作区启动后台任务、查看日志或停止运行。',
+    'tool:ask': '在需要你做决定时，向你提出问题和选项。',
+    'extension:session-review': '整理已有对话的成果和依据，供你复盘查看。',
+    'extension:vertical-agent-sandbox': '在受控环境中运行和评测垂直场景示例。',
+    'extension:community-catalog-preview': '预览社区插件目录；当前只供查看，尚不可安装。',
+  };
+  if (summary[item.canonicalId]) return summary[item.canonicalId]!;
+  if (item.displayName === 'Session Workflow' && item.source.label === 'Bundled with the active Pi Runtime') {
+    return '在当前对话中管理目标、计划、任务清单和工作流程。';
+  }
+  return item.description;
 }
 function publicCapabilitySourceLabel(label: string): string {
-  return label === 'Personal Agent Workbench' ? '系统内置' : label;
+  if (label === 'Bundled with the active Pi Runtime') return '随运行环境提供';
+  if (label === 'Not distributed') return '尚未发布';
+  return publicPluginSourceLabel(label);
+}
+function publicCapabilityPermissionLabel(permission: string): string {
+  return ({
+    native_approval: '遵循对话的执行权限',
+    workspace_scope: '仅限授权工作区',
+    'session.read': '读取对话内容',
+    'sandbox.run': '在受控环境中执行',
+    'memory.review': '提交记忆复盘建议',
+  } as Record<string, string>)[permission] ?? permission;
+}
+function capabilityNameRank(item: ToolRecord, needle: string): number {
+  if (!needle) return 0;
+  const names = [publicCapabilityDisplayName(item), item.displayName].map((name) => name.toLocaleLowerCase('zh-CN'));
+  if (names.some((name) => name === needle)) return 0;
+  if (names.some((name) => name.startsWith(needle))) return 1;
+  if (names.some((name) => name.includes(needle))) return 2;
+  return 3;
 }
 function publicPluginDisplayName(label: string): string {
   return ({
@@ -1760,7 +1826,12 @@ function publicPluginResourceKindLabel(kind: string): string {
   return ({ extension: 'Extension', tool: 'Tool', command: 'Command', skill: 'Skill', prompt: 'Prompt', theme: 'Theme' } as Record<string, string>)[kind] ?? kind;
 }
 function operationLabelsFor(item: ToolRecord): string[] { return stringArray(item.operations).map((operation) => operationLabels[operation]).filter((operation): operation is string => Boolean(operation)); }
+function capabilityNeedsRoomContext(item: ToolRecord): boolean {
+  return item.disclosure.effective === 'disabled'
+    && (item.disclosure.reason === 'room_context_required' || item.reasons.includes('room_context_required'));
+}
 function availabilityBadge(item: ToolRecord): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } {
+  if (capabilityNeedsRoomContext(item)) return { label: '进入 Room 后可用', tone: 'neutral' };
   const status = item.status.toLowerCase();
   if (status === 'online' || status === 'ready' || status === 'installed') return { label: '连接正常', tone: 'success' };
   if (status === 'offline') return { label: capabilityStatusLabel(status), tone: 'danger' };
