@@ -190,6 +190,11 @@ function generatedValidators(rows) {
     allErrors: true,
     allowUnionTypes: true,
     strict: false,
+    // Share referenced schema functions instead of copying them into each caller.
+    inlineRefs: false,
+    // Larger required lists otherwise repeat a full error object per property.
+    // Looping preserves allErrors and property order while bounding that code.
+    loopRequired: 8,
     code: { source: true, esm: true },
   });
   const exportsByName = {};

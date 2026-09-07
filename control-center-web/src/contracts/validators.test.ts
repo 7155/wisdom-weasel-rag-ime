@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import Ajv2020 from 'ajv/dist/2020';
 
 import approvalFixture from '../../../tests/fixtures/agent/agent-approval.json';
 import eventFixture from '../../../tests/fixtures/agent/agent-event.json';
@@ -17,6 +18,46 @@ import {
 } from './validators';
 
 describe('generated JSON contracts', () => {
+  it('preserves reference validation and ordered public issues across all contracts', () => {
+    // Keep Ajv's default code generation as an independent reference for the
+    // smaller standalone output. schemaPath is internal; the UI exposes these
+    // four fields, including their order in the bounded boundary error.
+    const reference = new Ajv2020({
+      allErrors: true,
+      allowUnionTypes: true,
+      strict: false,
+    });
+    for (const schema of Object.values(contractSchemas)) reference.addSchema(schema);
+    const fixtures = [
+      approvalFixture, eventFixture, mediaFixture, maintenanceFixture,
+      messageFixture, sessionFixture,
+    ];
+    const samples: unknown[] = [null, false, 0, '', [], {}, ...fixtures];
+    for (const fixture of fixtures) {
+      for (const key of Object.keys(fixture)) {
+        const missing: Record<string, unknown> = { ...fixture };
+        delete missing[key];
+        samples.push(missing, { ...fixture, [key]: null });
+      }
+    }
+    for (const [name, schema] of Object.entries(contractSchemas)) {
+      const validate = reference.getSchema(schema.$id)!;
+      for (const sample of samples) {
+        const expected = validate(sample);
+        const actual = validateContract(name as keyof typeof contractSchemas, sample);
+        expect(actual.ok, `${name}: ${JSON.stringify(sample)}`).toBe(expected);
+        if (!actual.ok) {
+          expect(actual.issues, name).toEqual((validate.errors ?? []).map((issue) => ({
+            instancePath: issue.instancePath,
+            keyword: issue.keyword,
+            message: issue.message ?? '',
+            params: issue.params,
+          })));
+        }
+      }
+    }
+  });
+
   it('validates the same fixtures as the Python contract suite', () => {
     expect(parseContract('agent-approval.v1', approvalFixture).approvalId).toBe(
       'approval-fixture-1',
