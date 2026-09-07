@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rag_ime.agent_lab_candidate_evidence import PUBLIC_EVIDENCE_REF, build_candidate_evidence
+from rag_ime.agent_lab.candidate_evidence import PUBLIC_EVIDENCE_REF, build_candidate_evidence
 from rag_ime.contracts.json_schema import load_contract, validate_contract
 from scripts.import_agent_lab_experiments import read_public_experiments
 

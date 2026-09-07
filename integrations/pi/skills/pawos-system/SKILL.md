@@ -22,9 +22,8 @@ transports, reducers, App registry, settings, Runtime projections, installed
 receipts, and foreground behavior remain authoritative.
 
 This Skill is the product-level router. It does not own feature state or execute
-an alternative Session loop. It follows Tutti's useful pattern of combining
-host context, dynamic capability discovery, and specialized workflows while
-keeping PAW's existing owners.
+an alternative Session loop. React OS combines host context, dynamic
+capability discovery, and specialized workflows through PAW’s existing owners.
 
 ## Route First
 

@@ -12,8 +12,8 @@ from pathlib import Path
 import sqlite3
 import time
 
-from .agent_lab_micro import canonical, decode, digest, turn_usage, write_private
-from .agent_lab_room_comparison import CASES, score
+from .micro import canonical, decode, digest, turn_usage, write_private
+from .room_comparison import CASES, score
 
 SCHEMAS = {
     "room-identity":{"caseId":"string","turnField":"string","clientField":"string"},

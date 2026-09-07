@@ -21,7 +21,7 @@ def asset_root(db_path: Path, key: str) -> Path:
 
 
 def freeze_assets(db_path: Path, version: dict, exporter) -> None:
-    from .agent_lab_app_knowledge_runtime import materialize
+    from .app_knowledge_runtime import materialize
     identity = {key: version[key] for key in ('appId', 'version', 'contentHash')}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     root = asset_root(db_path, key)

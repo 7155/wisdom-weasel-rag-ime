@@ -13,11 +13,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .agent_lab_app_runtime import AppInputError, advance_progress, build_prompt, provided_context, validate_action, validate_model, agent_ui_html
-from .agent_lab_app_sources import export_zip, freeze_source
-from .agent_lab_projects import (AgentLabProjectConflict, AgentLabProjectNotFound,
+from .app_runtime import AppInputError, advance_progress, build_prompt, provided_context, validate_action, validate_model, agent_ui_html
+from .app_sources import export_zip, freeze_source
+from .projects import (AgentLabProjectConflict, AgentLabProjectNotFound,
                                  AgentLabProjectValidationError, _integer, _json, _now, _object, _text)
-from .db import apply_database_migrations, sqlite_connection
+from ..db import apply_database_migrations, sqlite_connection
 
 
 class AgentLabAppStore:
@@ -87,7 +87,7 @@ class AgentLabAppStore:
         # or README changes cannot silently rewrite an accepted App version.
         version['exports'] = {}
         if version.get('resourceFiles'):
-            from .agent_lab_app_assets import freeze_assets
+            from .app_assets import freeze_assets
             freeze_assets(self.db_path, version, export_zip)
         else:
             for target in ('paw','standalone'):
@@ -164,7 +164,7 @@ class AgentLabAppStore:
         if target not in {'paw','standalone'}: raise AgentLabProjectValidationError('不支持此导出目标。')
         exported = version['exports'][target]
         if version.get('assetKey'):
-            from .agent_lab_app_assets import download_asset
+            from .app_assets import download_asset
             try: exported = download_asset(self.db_path, version, target)
             except (OSError, ValueError) as exc: raise AgentLabProjectValidationError(str(exc)) from exc
         return {'ok':True,**exported,'contentHash':version['contentHash'],
@@ -355,11 +355,11 @@ class AgentLabAppApplication:
             with self._lock: self._active.discard(call_id)
 
     def _knowledge_runtime(self, version: dict) -> tuple[Path, Any]:
-        from .agent_lab_app_knowledge_runtime import materialize
+        from .app_knowledge_runtime import materialize
         with self._lock:
             if version['contentHash'] not in self._knowledge_runtimes:
                 if version.get('assetKey'):
-                    from .agent_lab_app_assets import asset_root
+                    from .app_assets import asset_root
                     root = asset_root(self.store.db_path, version['assetKey'])
                     runtime_record = next(row for row in version['resourceManifest'] if row['path'] == 'knowledge_runtime.py')
                     if hashlib.sha256((root / 'knowledge_runtime.py').read_bytes()).hexdigest() != runtime_record['sha256']:

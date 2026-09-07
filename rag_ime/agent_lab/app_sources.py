@@ -10,8 +10,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
-from .agent_lab_project_artifacts import _text
-from .agent_lab_projects import AgentLabProjectValidationError
+from .project_artifacts import _text
+from .projects import AgentLabProjectValidationError
 
 
 SOURCE_SCHEMA = 'paw.lab-app-source.v1'
@@ -135,7 +135,7 @@ def freeze_source(workspace: Path, directory: str, default_model: dict[str,str],
             raise AgentLabProjectValidationError('应用配色模式无效。')
         spec['appearance'] = copy.deepcopy(appearance)
     if 'externalWorkspace' in value:
-        from .agent_lab_app_runtime import validate_external_workspace
+        from .app_runtime import validate_external_workspace
         try: spec['externalWorkspace'] = validate_external_workspace(value['externalWorkspace'])
         except ValueError as exc: raise AgentLabProjectValidationError(str(exc)) from exc
     resource_files = {}
@@ -149,10 +149,10 @@ def freeze_source(workspace: Path, directory: str, default_model: dict[str,str],
         if any(action['inputSchema']['properties'].get(field,{}).get('type') != 'string'
                or field not in action['inputSchema']['required'] for action in normalized):
             raise AgentLabProjectValidationError('每个知识库操作都需要声明必填的问题文本字段。')
-    runtime = Path(__file__).with_name('agent_lab_app_runtime.py').read_text(encoding='utf-8')
+    runtime = Path(__file__).with_name('app_runtime.py').read_text(encoding='utf-8')
     ui_files = {}
     if 'pawAgentUI.mount' in files[spec['html']]:
-        built = Path(__file__).resolve().parents[1]/'control-center-web/.generated/portable-agent-ui'
+        built = Path(__file__).resolve().parents[2]/'control-center-web/.generated/portable-agent-ui'
         try: ui_files = {name:(built/name).read_text() for name in ('agent-ui.js','agent-ui.css')}
         except OSError as exc: raise AgentLabProjectValidationError('请先运行前端 build:app-ui，准备共享 Agent 控件。') from exc
     digest = hashlib.sha256(json.dumps({'spec':spec,'files':files,'uiFiles':ui_files,'resourceFiles':resource_files,'runtimeSource':runtime,'exportRecipeVersion':EXPORT_RECIPE_VERSION},ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()

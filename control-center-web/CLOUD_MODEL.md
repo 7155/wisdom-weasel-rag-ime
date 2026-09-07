@@ -1,7 +1,11 @@
-# Cloud Model 起点（本地归档合并后的只读入口）
+# React OS — Cloud Model 起点
+
+React OS 是当前 PAWOS 的 React 前端，源码位于本目录；从
+[源码归属](../ARCHITECTURE.md#source-layout)定位模块。PAW 产品名、Pi Runtime
+以及 `paw-os` 兼容标识保持稳定。历史原话和外部来源保留原名。
 
 You only have this GitHub repository. That is enough. Do **not** clone, fetch,
-or request Tutti, CodingTo, local Downloads HTML, or ignored `/docs/` paths.
+or request external reference repositories, local Downloads HTML, or ignored `/docs/` paths.
 
 **交接状态：** 本地 Session 会在整理相关文件、跑新鲜检查、创建提交并把最终
 结果合并到 `main` 后，把这一版作为外部前端模型的只读起点。此文件本身不是
@@ -39,7 +43,7 @@ Repo-root `PROJECT.md`, `OUTCOMES.md`, `CONTEXT.md`, `DECISIONS.md`, `ARCHITECTU
 
 ## Do not use
 
-- Tutti, CodingTo, or any other local frontend repo. They are **not** in this repository and must not be downloaded.
+- External frontend reference repositories. The required React OS implementation is already in this repository.
 - Any machine-local `file://` copy of `pawos-conversation-baseline.html` — the tracked copy is `docs/references/pawos-conversation-baseline.html`.
 - Repo-root `/docs/` — gitignored; not on GitHub.
 - `integrations/ego-browser/` and Browser-owned surfaces — they are outside this handoff; do not edit them unless the user explicitly opens that scope.

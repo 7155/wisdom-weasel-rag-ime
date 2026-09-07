@@ -1,8 +1,8 @@
 # Conversation UI — vendored clean-room package
 
 The modules in this directory are vendored from the clean-room conversation
-package delivered as `conversation_ui_standalone.zip` at the repository root
-(added on `main` in commit `5241e914`; the archive expands to
+package delivered as [conversation_ui_standalone.zip](../../../docs/references/packages/conversation_ui_standalone.zip)
+(originally added at the repository root in commit `5241e914`; the archive expands to
 `claude_conversation_ui_standalone/`).
 
 That package is an independent React + TypeScript reimplementation of the

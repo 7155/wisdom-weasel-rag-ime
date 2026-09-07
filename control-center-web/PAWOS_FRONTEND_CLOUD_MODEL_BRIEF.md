@@ -1,7 +1,7 @@
 # PAWOS Frontend Cloud Model Brief
 
 > Start at `control-center-web/CLOUD_MODEL.md`. Load in-repo requirement files
-> only. Do not clone Tutti or CodingTo. Do not depend on ignored `/docs/` or
+> only. Use the in-repo React OS sources. Do not depend on ignored `/docs/` or
 > local `git show` objects.
 
 ## Requirement Sources — Mandatory Before Lane Work

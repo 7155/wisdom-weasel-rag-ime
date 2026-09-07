@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
-from .agent_lab_trial_execution import TrialObserver
+from .trial_execution import TrialObserver
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ class CloudOpsTrialAssets:
 def _runtime_environment(assets, run_root, spec, suite, gateway, *, service_factory):
     # This is the same isolated benchmark service used by the CLI. Its Tool
     # manifest provider must not replace the ordinary Session service's one.
-    from .rag_benchmark_agent import RagBenchmarkAgentSpoolGateway
+    from ..rag_benchmark_agent import RagBenchmarkAgentSpoolGateway
     from scripts.run_cloudops_agent_eval import ROOT, _candidate_runtime_config
 
     spool = run_root / "agent" / "tool-spool"
@@ -141,7 +141,7 @@ class CloudOpsTrialAdapter:
         }
 
     def prepare(self, spec: Mapping, job_id: str) -> dict:
-        from .cloudops_benchmark_agent import CloudOpsBlindSuite
+        from ..cloudops_benchmark_agent import CloudOpsBlindSuite
         from scripts.agent_eval_candidate_prompt import CandidatePrompt, candidate_prompt_identity
         settings = self._settings(spec)
         suite = CloudOpsBlindSuite(self.assets.blind_root)
@@ -157,8 +157,8 @@ class CloudOpsTrialAdapter:
         }}
 
     def execute(self, private_input: Mapping, observer: TrialObserver, cancelled: Callable[[], bool]) -> dict:
-        from .agent_artifacts import AgentArtifactStore
-        from .cloudops_benchmark_agent import CloudOpsBenchmarkGateway, CloudOpsBlindSuite
+        from ..agent_artifacts import AgentArtifactStore
+        from ..cloudops_benchmark_agent import CloudOpsBenchmarkGateway, CloudOpsBlindSuite
         from scripts import run_cloudops_agent_eval as runner
 
         assets = self.assets

@@ -7,7 +7,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_lab_golden_pi import AgentLabGoldenPiExecutor, GoldenPiCallError
+from rag_ime.agent_lab.golden_pi import AgentLabGoldenPiExecutor, GoldenPiCallError
 from rag_ime.agent_sessions import AgentSessionStore
 from tests.test_agent_lab_golden_pi import Runtime
 
@@ -23,7 +23,7 @@ class MemoryRuntime(Runtime):
 
 class MemoryPiTests(unittest.TestCase):
     def setUp(self):
-        from rag_ime.agent_lab_memory_pi import AgentLabMemoryPiExecutor
+        from rag_ime.agent_lab.memory_pi import AgentLabMemoryPiExecutor
         self.adapter = AgentLabMemoryPiExecutor
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -130,7 +130,7 @@ class MemoryPiTests(unittest.TestCase):
         self.assertEqual('concise-json-v1', received['prompt_contract'])
 
     def test_usage_mapping_requires_actual_cache_counts_and_does_not_invent_money(self):
-        from rag_ime.agent_lab_memory_pi import _memory_usage
+        from rag_ime.agent_lab.memory_pi import _memory_usage
         complete = _memory_usage({'inputTokens': 10, 'cacheReadTokens': 20, 'cacheWriteTokens': 0, 'outputTokens': 5})
         self.assertEqual(30, complete['inputTokens'])
         self.assertEqual(10, complete['uncachedInputTokens'])

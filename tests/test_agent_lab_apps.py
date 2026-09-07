@@ -11,10 +11,10 @@ from itertools import count
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime.agent_lab_app_runtime import build_prompt, validate_input, AppInputError
-from rag_ime.agent_lab_app_sources import freeze_source
-from rag_ime.agent_lab_apps import AgentLabAppApplication, AgentLabAppStore
-from rag_ime.agent_lab_projects import AgentLabProjectStore, AgentLabProjectValidationError, AgentLabProjectConflict, AgentLabProjectNotFound
+from rag_ime.agent_lab.app_runtime import build_prompt, validate_input, AppInputError
+from rag_ime.agent_lab.app_sources import freeze_source
+from rag_ime.agent_lab.apps import AgentLabAppApplication, AgentLabAppStore
+from rag_ime.agent_lab.projects import AgentLabProjectStore, AgentLabProjectValidationError, AgentLabProjectConflict, AgentLabProjectNotFound
 
 
 MODEL = {'provider':'configured','model':'test-model','thinkingLevel':'medium'}
@@ -143,18 +143,18 @@ class LabAppTests(unittest.TestCase):
         first = self.apps.download({'appId':app['appId'],'version':1,'target':'standalone'})
         original_read = Path.read_text
         def changed_runtime(path, *args, **kwargs):
-            if path.name == 'agent_lab_app_runtime.py': return '# a later incompatible runner\n'
+            if path.name == 'app_runtime.py': return '# a later incompatible runner\n'
             return original_read(path,*args,**kwargs)
         with patch.object(Path,'read_text',changed_runtime):
             later = self.apps.download({'appId':app['appId'],'version':1,'target':'standalone'})
         self.assertEqual(first,later)
-        with patch('rag_ime.agent_lab_apps.export_zip',side_effect=AssertionError('A saved package must not be rebuilt')):
+        with patch('rag_ime.agent_lab.apps.export_zip',side_effect=AssertionError('A saved package must not be rebuilt')):
             self.assertEqual(first,self.apps.download({'appId':app['appId'],'version':1,'target':'standalone'}))
 
     def test_new_export_recipe_creates_a_version_without_mutating_old_downloads(self):
         app = self.prepare()
         original = self.apps.download({'appId':app['appId'],'version':1,'target':'standalone'})
-        with patch('rag_ime.agent_lab_app_sources.EXPORT_RECIPE_VERSION','a-later-export-recipe'):
+        with patch('rag_ime.agent_lab.app_sources.EXPORT_RECIPE_VERSION','a-later-export-recipe'):
             updated = self.prepare('new-export-recipe',app['appId'])
         self.assertEqual(updated['latestVersion'],2)
         self.assertEqual(original,self.apps.download({'appId':app['appId'],'version':1,'target':'standalone'}))
@@ -180,7 +180,7 @@ class LabAppTests(unittest.TestCase):
     def test_recent_history_does_not_hide_an_older_active_call(self):
         app = self.prepare()
         request = {'version':1,'actionId':'answer','values':{'question':'待处理的问题'}}
-        with patch('rag_ime.agent_lab_apps._now',side_effect=count(100).__next__):
+        with patch('rag_ime.agent_lab.apps._now',side_effect=count(100).__next__):
             active = self.command(app,'invoke',request,'long-running')['call']
             for index in range(31):
                 call = self.command(app,'invoke',request,f'newer-{index}')['call']

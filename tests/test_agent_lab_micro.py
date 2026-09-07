@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_lab_micro import MicroAdapter, BudgetExceeded, verify_policy, verify_export, turn_usage
+from rag_ime.agent_lab.micro import MicroAdapter, BudgetExceeded, verify_policy, verify_export, turn_usage
 
 
 class MicroTests(unittest.TestCase):

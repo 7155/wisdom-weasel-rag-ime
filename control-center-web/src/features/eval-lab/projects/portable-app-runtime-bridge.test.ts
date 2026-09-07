@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 // @ts-expect-error Existing jsdom dependency has no declarations.
 import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-const bridge = execFileSync('python3', ['-c', 'from rag_ime.agent_lab_app_runtime import browser_bridge; print(browser_bridge("standalone"))'], { cwd: '..', encoding: 'utf8' });
+const bridge = execFileSync('python3', ['-c', 'from rag_ime.agent_lab.app_runtime import browser_bridge; print(browser_bridge("standalone"))'], { cwd: '..', encoding: 'utf8' });
 const model = { provider: 'openai-codex', model: 'gpt-5.6-luna', thinkingLevel: 'max' };
 
 describe('portable App invocation transport', () => {

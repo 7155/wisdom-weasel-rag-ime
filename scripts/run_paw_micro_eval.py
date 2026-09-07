@@ -20,9 +20,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from rag_ime.agent_lab_micro import MicroAdapter, SUITE, canonical, digest, write_private, turn_usage
-from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
-from rag_ime.agent_lab_trials import AgentLabTrialStore
+from rag_ime.agent_lab.micro import MicroAdapter, SUITE, canonical, digest, write_private, turn_usage
+from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
+from rag_ime.agent_lab.trials import AgentLabTrialStore
 
 FAULT_TESTS = {
     "concurrent-click": "tests.test_agent_lab_trial_execution.AgentLabTrialExecutionTests.test_double_click_and_concurrent_run_execute_once_without_implicit_quality_pass",
@@ -90,7 +90,7 @@ def live_trials(root, tasks, baseline_run=None):
     from rag_ime.managed_pi_runtime import snapshot_managed_pi_runtime
     from rag_ime.pi_runtime import PiRuntimeConfig
     from rag_ime.agent_service import AgentService
-    from rag_ime.agent_lab_golden_pi import AgentLabGoldenPiExecutor, _settled_output
+    from rag_ime.agent_lab.golden_pi import AgentLabGoldenPiExecutor, _settled_output
     plist=Path.home()/"Library/LaunchAgents/com.rag-ime.agent-gateway.plist"
     source=installed_agent_config_dir(plist)
     for key,value in launch_environment(plist).items():
@@ -155,7 +155,7 @@ def live_trials(root, tasks, baseline_run=None):
             if release_after:service.runtime.close_session(sid)
             return accounted
         adapter=MicroAdapter(root/"trials",complete=complete,room_complete=room_complete,abort_session=service.runtime.abort)
-        from rag_ime.agent_lab_room_comparison import RoomComparisonAdapter
+        from rag_ime.agent_lab.room_comparison import RoomComparisonAdapter
         comparison=RoomComparisonAdapter(root/"comparison",complete=complete,room_complete=room_complete,abort_session=service.runtime.abort)
         class ContextContinuationAdapter:
             def prepare(self,spec,job_id):
@@ -196,7 +196,7 @@ def live_trials(root, tasks, baseline_run=None):
                 report.update(status="completed",qualityVerdict="keep" if passed==4 and measured["withinBudget"] else "reject")
                 write_private(root/"context-continuation-report.json",report)
                 return report
-        from rag_ime.agent_lab_room_merge import RoomMergeTrialAdapter, RoomMergeConfirmationAdapter
+        from rag_ime.agent_lab.room_merge import RoomMergeTrialAdapter, RoomMergeConfirmationAdapter
         room_merge=RoomMergeTrialAdapter(root/"room-merge",complete=complete,room_complete=room_complete,abort_session=service.runtime.abort)
         room_merge_confirm=RoomMergeConfirmationAdapter(root/"room-merge-confirm",baseline_root=baseline_run,room_complete=room_complete,abort_session=service.runtime.abort)
         scene_adapters={"micro-selfboot":adapter,"room-comparison":comparison,"context-continuation":ContextContinuationAdapter(),"room-merge":room_merge,"room-merge-confirm":room_merge_confirm}
@@ -237,7 +237,7 @@ def main():
         parser.error("duplicate tasks are not allowed")
     root.mkdir(parents=True,mode=0o700)
     frozen={"suite":json.loads(SUITE.read_text()),"sourceHashes":{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()
-         for p in [Path(__file__),ROOT/"scripts/eval_paw_context_continuation.py",ROOT/"rag_ime/agent_lab_micro.py",ROOT/"rag_ime/agent_lab_room_comparison.py",ROOT/"rag_ime/agent_lab_room_merge.py",ROOT/"rag_ime/agent_lab_trial_execution.py",ROOT/"rag_ime/agent_lab_golden_pi.py"]}}
+         for p in [Path(__file__),ROOT/"scripts/eval_paw_context_continuation.py",ROOT/"rag_ime/agent_lab/micro.py",ROOT/"rag_ime/agent_lab/room_comparison.py",ROOT/"rag_ime/agent_lab/room_merge.py",ROOT/"rag_ime/agent_lab/trial_execution.py",ROOT/"rag_ime/agent_lab/golden_pi.py"]}}
     write_private(root/"frozen.json",frozen)
     write_private(root/"skill-inventory.json",skill_inventory())
     result={"schemaVersion":"paw.micro-selfboot-run.v1","artifactRoot":str(root),"suiteSha256":digest(frozen["suite"])}

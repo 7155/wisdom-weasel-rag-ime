@@ -17,7 +17,7 @@ from rag_ime.control_api import ControlAccessContext, ControlRequest, default_ro
 from rag_ime.debug_server import DebugRequestHandler
 from rag_ime.pi_runtime import PiRuntimeConfig
 from tests.test_agent_lab_apps import write_app
-from rag_ime.agent_lab_apps import AgentLabAppStore
+from rag_ime.agent_lab.apps import AgentLabAppStore
 
 
 def handler(agent):

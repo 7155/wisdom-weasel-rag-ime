@@ -328,7 +328,7 @@ flowchart TD
 - 通用项目材料当前支持本执行主机可读的有界 UTF-8 文本；仓库/云连接、更广的文档格式与真实业务动作需要各自适配器。独立运行器首版支持声明的文本生成操作，不能代表任意 Tool 或部署环境。
 - 现有预算字段仍不能宣称实际账单费用硬限。多租户云部署、任意外部平台转换、原生一键导入及已安装 PAW 的完整验收仍是后续边界。
 
-源码入口：[通用前端](../../src/features/eval-lab/projects/)、[项目服务](../../../rag_ime/agent_lab_projects.py)、[项目应用层](../../../rag_ime/agent_lab_project_application.py)、[应用版本与调用](../../../rag_ime/agent_lab_apps.py)、[独立运行器](../../../rag_ime/agent_lab_app_runtime.py)、[Lab Skill](../../../integrations/pi/skills/agent-lab-project/SKILL.md)。旧 [场景应用](../../src/features/eval-lab/ExperimentApplication.tsx) 和原生 [Extension App 合同](../../../integrations/pi/skills/pawos-app-builder/references/extension-app-contract.md) 保留各自范围。
+源码入口：[通用前端](../../src/features/eval-lab/projects/)、[项目服务](../../../rag_ime/agent_lab/projects.py)、[项目应用层](../../../rag_ime/agent_lab/project_application.py)、[应用版本与调用](../../../rag_ime/agent_lab/apps.py)、[独立运行器](../../../rag_ime/agent_lab/app_runtime.py)、[Lab Skill](../../../integrations/pi/skills/agent-lab-project/SKILL.md)。旧 [场景应用](../../src/features/eval-lab/ExperimentApplication.tsx) 和原生 [Extension App 合同](../../../integrations/pi/skills/pawos-app-builder/references/extension-app-contract.md) 保留各自范围。
 
 ## 14. 参考取舍与设计完成边界
 

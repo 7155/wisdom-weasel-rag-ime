@@ -14,8 +14,8 @@ from unittest.mock import patch
 from urllib.parse import urlsplit, parse_qs
 from urllib.request import Request, urlopen
 
-from rag_ime.agent_lab_app_runtime import AppInputError, create_server
-from rag_ime.agent_lab_app_sources import export_zip, freeze_source
+from rag_ime.agent_lab.app_runtime import AppInputError, create_server
+from rag_ime.agent_lab.app_sources import export_zip, freeze_source
 from tests.test_agent_lab_apps import write_app
 
 

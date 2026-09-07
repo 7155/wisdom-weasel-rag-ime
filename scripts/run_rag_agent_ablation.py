@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rag_ime.agent_configuration import default_agent_configuration  # noqa: E402
-from rag_ime.agent_lab_scene_recipes import validate_scene_recipe_binding  # noqa: E402
+from rag_ime.agent_lab.scene_recipes import validate_scene_recipe_binding  # noqa: E402
 from rag_ime.agent_service import AgentService  # noqa: E402
 from rag_ime.agent_sessions import AgentSessionStore  # noqa: E402
 from rag_ime.agent_tools import ControlToolGateway  # noqa: E402

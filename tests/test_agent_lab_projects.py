@@ -8,13 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 
-from rag_ime.agent_lab_projects import (
+from rag_ime.agent_lab.projects import (
     AgentLabProjectConflict,
     AgentLabProjectNotFound,
     AgentLabProjectStore,
     AgentLabProjectValidationError,
 )
-from rag_ime.agent_lab_golden import AgentLabGoldenStore
+from rag_ime.agent_lab.golden import AgentLabGoldenStore
 
 
 class LabProjectTests(unittest.TestCase):

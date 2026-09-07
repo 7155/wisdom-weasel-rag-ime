@@ -4,7 +4,7 @@ import hashlib
 import json
 import unittest
 
-from rag_ime.agent_lab_optimal_path import evaluate_path_search
+from rag_ime.agent_lab.optimal_path import evaluate_path_search
 
 
 def _controls() -> list[dict[str, str]]:

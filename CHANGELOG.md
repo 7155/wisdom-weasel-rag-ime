@@ -5,6 +5,13 @@ source checkpoint is not a signed and notarized macOS binary release.
 
 ## Unreleased
 
+- Name the current PAWOS React frontend React OS; keep existing product,
+  Runtime and persisted layout identifiers compatible.
+- Group Agent Lab backend modules under `rag_ime/agent_lab/` and place portable
+  Agent controls with their shared Agent owner; update imports and export paths.
+- Move supplied frontend reference archives and dated acceptance records into
+  their owning directories, retaining original contents and attribution.
+
 ## 0.1.0-alpha.1 — 2026-09-07
 
 First tagged PAW source preview. This release does not ship a signed or

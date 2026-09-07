@@ -7,7 +7,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from rag_ime.agent_lab_experiments import (
+from rag_ime.agent_lab.experiments import (
     AgentLabExperimentConflict,
     AgentLabExperimentStore,
 )

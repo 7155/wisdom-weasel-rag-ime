@@ -8,7 +8,7 @@ import sqlite3
 import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from rag_ime.agent_lab_micro import turn_usage, canonical
+from rag_ime.agent_lab.micro import turn_usage, canonical
 
 
 def reconcile(root):

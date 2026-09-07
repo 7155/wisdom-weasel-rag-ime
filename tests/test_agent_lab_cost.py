@@ -6,7 +6,7 @@ import re
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_lab_cost import AgentLabCostError, build_agent_lab_cost_receipt
+from rag_ime.agent_lab.cost import AgentLabCostError, build_agent_lab_cost_receipt
 from rag_ime.contracts.json_schema import ContractValidationError, validate_contract
 
 
@@ -146,7 +146,7 @@ class AgentLabCostTests(unittest.TestCase):
         with self.assertRaises(ContractValidationError):
             validate_contract(invalid, "agent-lab-cost-receipt.v1.json")
 
-        source = (ROOT / "rag_ime" / "agent_lab_cost.py").read_text(encoding="utf-8")
+        source = (ROOT / "rag_ime" / "agent_lab" / "cost.py").read_text(encoding="utf-8")
         self.assertIsNone(re.search(r"gpt-5\.6-(?:sol|luna)", source))
 
     def test_receipt_identity_is_deterministic(self) -> None:

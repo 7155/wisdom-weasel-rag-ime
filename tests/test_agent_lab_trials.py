@@ -10,7 +10,7 @@ from pathlib import Path
 
 class AgentLabTrialStoreTests(unittest.TestCase):
     def setUp(self):
-        from rag_ime.agent_lab_trials import AgentLabTrialStore
+        from rag_ime.agent_lab.trials import AgentLabTrialStore
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "trials.sqlite"
@@ -25,7 +25,7 @@ class AgentLabTrialStoreTests(unittest.TestCase):
         return self.store.admit(request, "scene-one", spec or {"model": "test"}, self.prepare)
 
     def test_concurrent_replay_is_durable_and_prepares_only_once(self):
-        from rag_ime.agent_lab_trials import AgentLabTrialStore
+        from rag_ime.agent_lab.trials import AgentLabTrialStore
         other = AgentLabTrialStore(self.path)
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = list(pool.map(lambda i: (self.store if i % 2 else other).admit("same", "scene-one", {"model": "test"}, self.prepare), range(8)))
@@ -35,7 +35,7 @@ class AgentLabTrialStoreTests(unittest.TestCase):
         self.assertEqual(AgentLabTrialStore(self.path).read()["jobs"][0]["state"], "queued")
 
     def test_changed_request_conflicts_without_repreparing(self):
-        from rag_ime.agent_lab_trials import AgentLabTrialConflict
+        from rag_ime.agent_lab.trials import AgentLabTrialConflict
         self.admit()
         with self.assertRaises(AgentLabTrialConflict) as conflict:
             self.admit(spec={"model": "different"})

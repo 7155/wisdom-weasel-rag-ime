@@ -8,11 +8,11 @@ import time
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_lab_golden_execution import (
+from rag_ime.agent_lab.golden_execution import (
     AgentLabGoldenApplication,
     AgentLabGoldenExecutionInterrupted,
 )
-from rag_ime.agent_lab_golden import GOLDEN_JUDGE_PROTOCOL_VERSION
+from rag_ime.agent_lab.golden import GOLDEN_JUDGE_PROTOCOL_VERSION
 
 
 MODEL = {"provider": "test", "model": "baseline", "thinkingLevel": "low", "prompt": "baseline prompt"}
@@ -620,7 +620,7 @@ class GoldenExecutionTests(unittest.TestCase):
         self.assertEqual(store.finishes, 0)
 
     def test_real_sqlite_store_draft_review_calibrate_freeze_and_experiment_seam(self) -> None:
-        from rag_ime.agent_lab_golden import AgentLabGoldenStore
+        from rag_ime.agent_lab.golden import AgentLabGoldenStore
 
         with tempfile.TemporaryDirectory(prefix="paw-golden-execution-") as directory:
             store = AgentLabGoldenStore(Path(directory) / "test.sqlite", default_model=JUDGE)

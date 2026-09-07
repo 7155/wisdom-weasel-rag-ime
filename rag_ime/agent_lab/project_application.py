@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .agent_lab_golden import AgentLabGoldenStore
-from .agent_lab_projects import AgentLabProjectStore, AgentLabProjectValidationError
-from .agent_lab_apps import AgentLabAppStore
+from .golden import AgentLabGoldenStore
+from .projects import AgentLabProjectStore, AgentLabProjectValidationError
+from .apps import AgentLabAppStore
 
 
 class AgentLabProjectApplication:
@@ -45,7 +45,7 @@ class AgentLabProjectApplication:
         result = self.store.read(payload.get("projectId", ""), material_set_id=payload.get("materialSetId", ""),
                                  artifact_id=payload.get("artifactId", ""), artifact_revision=revision)
         if not payload.get("projectId") and self.read_experiments is not None:
-            from .agent_lab_history import public_history_collections
+            from .history import public_history_collections
             try:
                 result["historyCollections"] = public_history_collections(self.read_experiments())
             except (OSError, ValueError, sqlite3.Error):
@@ -87,7 +87,7 @@ class AgentLabProjectApplication:
         if isinstance(payload, Mapping) and payload.get("action") == "knowledge":
             return self._knowledge_command(payload)
         if isinstance(payload, Mapping) and payload.get("action") == "import_history":
-            from .agent_lab_history import prepare_history_import
+            from .history import prepare_history_import
             # Snapshot before entering the project transaction. The callback is
             # evaluated only after checking the durable original receipt.
             try:
@@ -98,9 +98,9 @@ class AgentLabProjectApplication:
         return self.store.command(payload)
 
     def _knowledge_command(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        from .agent_lab_knowledge_data import KnowledgeIntakeError
-        from .agent_lab_trials import AgentLabTrialConflict, AgentLabTrialServiceUnavailable
-        from .agent_lab_projects import AgentLabProjectConflict, AgentLabProjectUnavailable
+        from .knowledge_data import KnowledgeIntakeError
+        from .trials import AgentLabTrialConflict, AgentLabTrialServiceUnavailable
+        from .projects import AgentLabProjectConflict, AgentLabProjectUnavailable
         if (self.knowledge is None or self.start_knowledge is None or self.cancel_knowledge is None
                 or set(payload) != {"action", "projectId", "expectedRevision", "clientRequestId", "input"}
                 or type(payload["expectedRevision"]) is not int or payload["expectedRevision"] < 1
@@ -133,14 +133,14 @@ class AgentLabProjectApplication:
 
     def _bind(self, conn: sqlite3.Connection, project: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
         if request["adapterId"] == "scene.trial":
-            from .agent_lab_history import SCENES
+            from .history import SCENES
             value = request["input"]
             if set(value) != {"sceneId"} or value["sceneId"] not in {row[0] for row in SCENES}:
                 raise AgentLabProjectValidationError("请选择已登记的场景。")
             return {"ownerRef": {"kind": "scene_trial", "id": value["sceneId"]},
                     "summary": "历史证据已经保留；执行是否可用以 Trial 服务当前登记的环境为准。新运行单独记录。"}
         if request["adapterId"] == "golden.knowledge_qa" and self.knowledge is not None:
-            from .agent_lab_knowledge_data import KnowledgeIntakeError
+            from .knowledge_data import KnowledgeIntakeError
             try:
                 value = self.knowledge.golden_inputs(project, request["input"])
             except KnowledgeIntakeError as exc:

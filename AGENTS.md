@@ -20,8 +20,8 @@ bootstrap and route to the smallest additional context needed for the task.
 
 `docs/` at the repository root is ignored local history. For **PAWOS frontend**
 work that a GitHub-only model must continue, start at
-[control-center-web/CLOUD_MODEL.md](control-center-web/CLOUD_MODEL.md). Do not
-clone Tutti or CodingTo.
+[control-center-web/CLOUD_MODEL.md](control-center-web/CLOUD_MODEL.md). React OS
+is the current frontend; use the sources here without cloning external reference repositories.
 
 ## Skill Routing
 

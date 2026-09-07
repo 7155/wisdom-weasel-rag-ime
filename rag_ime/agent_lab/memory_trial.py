@@ -17,12 +17,12 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from .agent_lab_golden_pi import AgentLabGoldenPiExecutor
-from .agent_lab_memory_pi import AgentLabMemoryPiExecutor
-from .agent_lab_trial_execution import AgentLabTrialExecutionInterrupted, TrialObserver
-from .personal_memory_luna_evaluation import SYNTHETIC_PERSONAL_MEMORY_RAG_CASES, verify_recovered_memory_shadow
+from .golden_pi import AgentLabGoldenPiExecutor
+from .memory_pi import AgentLabMemoryPiExecutor
+from .trial_execution import AgentLabTrialExecutionInterrupted, TrialObserver
+from ..personal_memory_luna_evaluation import SYNTHETIC_PERSONAL_MEMORY_RAG_CASES, verify_recovered_memory_shadow
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]
 _PREPARED_SCHEMA = "rag-ime.agent-lab-memory-trial-input.v1"
 _MODELS = {"gpt-5.6-luna", "gpt-5.6-sol"}
 _CONTEXTS = {"full-json-v1", "compact-json-v1"}

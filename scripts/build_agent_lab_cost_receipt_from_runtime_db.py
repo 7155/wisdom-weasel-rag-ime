@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rag_ime.agent_lab_cost import (
+from rag_ime.agent_lab.cost import (
     build_agent_lab_cost_receipt,
     content_addressed_pricing_id,
 )

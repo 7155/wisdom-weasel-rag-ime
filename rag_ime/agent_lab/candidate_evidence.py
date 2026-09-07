@@ -51,7 +51,7 @@ def project_candidate_evidence(
         if any(receipt.get(key) != value for key, value in expected.items()):
             raise ValueError("public evidence belongs to a different experiment revision")
         evidence = _mapping(receipt.get("evidence"))
-        from .contracts.json_schema import load_contract, validate_contract
+        from ..contracts.json_schema import load_contract, validate_contract
         validate_contract(evidence, {"$ref": "#/$defs/optimizationEvidence", "$defs": load_contract("agent-lab-experiment.v1.json")["$defs"]})
         return evidence
     except (OSError, ValueError, TypeError, KeyError):

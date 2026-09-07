@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from rag_ime.agent_lab_medium import create_workspace,verify_workspace,verify_delivery
+from rag_ime.agent_lab.medium import create_workspace,verify_workspace,verify_delivery
 
 
 class MediumTaskVerifierTests(unittest.TestCase):
@@ -16,7 +16,7 @@ class MediumTaskVerifierTests(unittest.TestCase):
             self.assertEqual((root/'checkpoint.jsonl').read_text(),original)
 
     def test_jsonl_task_has_separate_storage_contract_and_preserves_acceptance_scope(self):
-        from rag_ime.agent_lab_medium import task_seed,task_update
+        from rag_ime.agent_lab.medium import task_seed,task_update
         seed=task_seed('jsonl')
         self.assertIn('atomic replacement',seed['SPEC.md'])
         self.assertIn('No SQLite',seed['SPEC.md'])

@@ -1,5 +1,8 @@
 # PAWOS Product Requirements
 
+当前前端名称为 **React OS**（2026-09-08 用户确认）。以下历史需求与逐字
+引文保留原始名称；当前源码归属见[架构目录](../../../ARCHITECTURE.md#source-layout)。
+
 ## 用户需求账本总索引
 
 这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成四十六卷，

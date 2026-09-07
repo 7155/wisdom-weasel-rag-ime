@@ -92,7 +92,7 @@ def source_hashes():
         "rag_ime/agent_background_launch.py",
         "rag_ime/agent_background_ownership.py",
         "rag_ime/agent_tools.py", "rag_ime/agent_execution_policy.py",
-        "rag_ime/agent_lab_trials.py", "rag_ime/agent_lab_trial_execution.py",
+        "rag_ime/agent_lab/trials.py", "rag_ime/agent_lab/trial_execution.py",
         "rag_ime/agent_delegation.py", "rag_ime/agent_context_runtime.py",
         "tests/test_agent_delegation.py",
         "rag_ime/agent_room_turn_registry.py",

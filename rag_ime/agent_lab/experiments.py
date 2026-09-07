@@ -6,8 +6,8 @@ import sqlite3
 from pathlib import Path
 from typing import Mapping
 
-from .contracts.json_schema import validate_contract
-from .db import apply_database_migrations, sqlite_connection
+from ..contracts.json_schema import validate_contract
+from ..db import apply_database_migrations, sqlite_connection
 
 
 class AgentLabExperimentConflict(RuntimeError):

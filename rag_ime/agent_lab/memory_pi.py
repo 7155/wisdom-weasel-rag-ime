@@ -17,9 +17,9 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing
 from pathlib import Path
 
-from .agent_lab_golden_pi import AgentLabGoldenPiExecutor, GoldenPiCallError
-from .contracts.json_schema import validate_contract
-from .personal_memory_luna_evaluation import _evaluation_prompt, _phase, personal_memory_phase_schema
+from .golden_pi import AgentLabGoldenPiExecutor, GoldenPiCallError
+from ..contracts.json_schema import validate_contract
+from ..personal_memory_luna_evaluation import _evaluation_prompt, _phase, personal_memory_phase_schema
 
 
 def _canonical(value: object) -> str:

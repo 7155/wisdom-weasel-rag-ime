@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from rag_ime.agent_lab_scene_recipes import (
+from rag_ime.agent_lab.scene_recipes import (
     AgentLabSceneRecipeConflict,
     AgentLabSceneRecipeStore,
     AgentLabSceneRecipeUnavailable,
@@ -161,7 +161,7 @@ class AgentLabSceneRecipeStoreTests(unittest.TestCase):
             self.apply,
             lambda: self.store.rollback(SCENE, expected_revision=0, client_request_id="rollback-fault"),
         )
-        with patch("rag_ime.agent_lab_scene_recipes.sqlite_connection", side_effect=sqlite3.OperationalError(
+        with patch("rag_ime.agent_lab.scene_recipes.sqlite_connection", side_effect=sqlite3.OperationalError(
             "unable to open /private/fixture.sqlite secret-token",
         )):
             for operation in operations:
@@ -180,7 +180,7 @@ class AgentLabSceneRecipeStoreTests(unittest.TestCase):
             if options.get("foreign_keys"):
                 raise sqlite3.OperationalError("connection failed after commit /private/fixture.sqlite")
 
-        with patch("rag_ime.agent_lab_scene_recipes.sqlite_connection", fail_after_commit):
+        with patch("rag_ime.agent_lab.scene_recipes.sqlite_connection", fail_after_commit):
             with self.assertRaises(Exception) as caught:
                 self.apply()
             self.assert_service_unavailable(caught.exception, "storage_unavailable")

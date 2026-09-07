@@ -139,8 +139,8 @@ def content_identities(documents: list[dict]) -> tuple[list[dict], dict[str, str
 
 
 def collect_folder(path: Path, *, progress: Callable[[str], None], cancelled: Callable[[], bool]) -> tuple[list[dict], dict]:
-    from .knowledge_library import KnowledgeLibraryConfig
-    from .knowledge_library.parsers import ParserRouter
+    from ..knowledge_library import KnowledgeLibraryConfig
+    from ..knowledge_library.parsers import ParserRouter
 
     root = path.resolve(strict=True)
     if not root.is_dir():

@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
-from .db import apply_database_migrations, sqlite_connection
+from ..db import apply_database_migrations, sqlite_connection
 
 __all__ = [
     "AgentLabSceneRecipeConflict",
@@ -304,9 +304,9 @@ class AgentLabSceneRecipeStore:
             return result
 
     def _public_experiments(self) -> Sequence[Mapping[str, object]]:
-        from .eval_lab import EvalLabProjection
+        from ..eval_lab import EvalLabProjection
 
-        ledger = Path(__file__).resolve().parents[1] / "eval/interview-metrics/agent-experiments.v1.json"
+        ledger = Path(__file__).resolve().parents[2] / "eval/interview-metrics/agent-experiments.v1.json"
         # Use the same public owner as the Lab page, including its fresh ledger
         # overlay. A stale imported DB alone must not hide the current candidate.
         return EvalLabProjection(self.db_path, source_ledger_path=ledger).list_runs()["experiments"]

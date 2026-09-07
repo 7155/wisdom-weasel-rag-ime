@@ -20,8 +20,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
-from rag_ime.agent_lab_trials import AgentLabTrialStore
+from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
+from rag_ime.agent_lab.trials import AgentLabTrialStore
 
 
 class EffectAdapter:
@@ -177,7 +177,7 @@ def evaluate(root, repeats=20):
             "rows":rows,"providerCalls":0,"syntheticBusinessEffect":True,
             "boundary":"real Lab owner + SQLite; in-process restart and caller ACK loss, no network packet loss or native UI claim",
             "sourceHashes":{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in
-                (Path(__file__),ROOT/"rag_ime/agent_lab_trials.py",ROOT/"rag_ime/agent_lab_trial_execution.py")}}
+                (Path(__file__),ROOT/"rag_ime/agent_lab/trials.py",ROOT/"rag_ime/agent_lab/trial_execution.py")}}
     (root/"report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
     return report
 

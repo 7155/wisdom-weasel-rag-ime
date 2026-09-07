@@ -73,7 +73,7 @@
       {
         "file": "control-center-web/package.json",
         "contains": [
-          "\"build\": \"tsc -b && vite build\"",
+          "\"build\": \"node scripts/build-portable-agent-ui.mjs && tsc -b && vite build\"",
           "\"desktop\": \"electron .\""
         ]
       },

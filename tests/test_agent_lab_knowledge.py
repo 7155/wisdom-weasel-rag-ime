@@ -7,11 +7,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_lab_golden import AgentLabGoldenStore
-from rag_ime.agent_lab_knowledge import AgentLabKnowledgeResource, SCENE_ID
-from rag_ime.agent_lab_knowledge_data import KnowledgeIntakeError, normalize_cases, normalize_documents
-from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
-from rag_ime.agent_lab_trials import AgentLabTrialConflict, AgentLabTrialStore
+from rag_ime.agent_lab.golden import AgentLabGoldenStore
+from rag_ime.agent_lab.knowledge import AgentLabKnowledgeResource, SCENE_ID
+from rag_ime.agent_lab.knowledge_data import KnowledgeIntakeError, normalize_cases, normalize_documents
+from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
+from rag_ime.agent_lab.trials import AgentLabTrialConflict, AgentLabTrialStore
 
 
 class KnowledgeDataTests(unittest.TestCase):
@@ -199,7 +199,7 @@ class KnowledgeResourceTests(unittest.TestCase):
         self.assertLess(len(sources), index["documentCount"])
 
     def test_portable_search_uses_frozen_knowledge_owner_with_equal_ranking_and_no_labels(self):
-        from rag_ime.agent_lab_app_knowledge_runtime import materialize, retrieve
+        from rag_ime.agent_lab.app_knowledge_runtime import materialize, retrieve
         _, dataset, index = self.prepare_resources()
         package = self.resource.app_resources(self.project["projectId"], {"indexId": index["jobId"], "profile": {"topK": 3}})
         root = self.root / 'portable'
@@ -238,10 +238,10 @@ class KnowledgeResourceTests(unittest.TestCase):
         import zipfile
         from urllib.request import Request, urlopen
         from unittest.mock import patch
-        from rag_ime.agent_lab_apps import AgentLabAppApplication, AgentLabAppStore
-        from rag_ime.agent_lab_projects import AgentLabProjectStore
-        from rag_ime.agent_lab_app_assets import asset_root
-        from rag_ime.agent_lab_app_runtime import create_server
+        from rag_ime.agent_lab.apps import AgentLabAppApplication, AgentLabAppStore
+        from rag_ime.agent_lab.projects import AgentLabProjectStore
+        from rag_ime.agent_lab.app_assets import asset_root
+        from rag_ime.agent_lab.app_runtime import create_server
         from tests.test_agent_lab_apps import write_app, MODEL
         workspace = self.root / 'workspace'; workspace.mkdir()
         apps = AgentLabAppStore(self.root / 'lab.sqlite', freeze_knowledge=self.resource.app_resources)

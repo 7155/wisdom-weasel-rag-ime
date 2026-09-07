@@ -1321,7 +1321,7 @@
   .paw-browser-settings button { transition-duration: 1ms; }
 }
 
-/* Tutti Agent GUI port: 248px conversation rail, raised detail surface,
+/* React OS Agent surface: 248px conversation rail, raised detail surface,
    56px dock composer and container-owned rail collapse. */
 .paw-agent-app {
   --paw-agent-rail-width: 248px;
@@ -1486,7 +1486,7 @@
   .paw-agent-rail { transition: none !important; }
 }
 
-/* Tutti rail behavior: the conversation list is an on-demand overlay at every
+/* React OS conversation rail: the conversation list is an on-demand overlay at every
    window size so a small Partner window always prioritizes the transcript. */
 .paw-agent-app { grid-template-columns: minmax(0, 1fr); }
 .paw-agent-stage { grid-column: 1; border-radius: 0; box-shadow: none; }

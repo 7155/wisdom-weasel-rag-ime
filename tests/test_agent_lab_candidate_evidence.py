@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from rag_ime.agent_lab_candidate_evidence import (
+from rag_ime.agent_lab.candidate_evidence import (
     _bound_json,
     _case_comparisons,
     _configuration_patch,
@@ -134,7 +134,7 @@ class AgentLabCandidateEvidenceTests(unittest.TestCase):
                 target = installed / copied.relative_to(ROOT)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(copied.read_bytes())
-            with patch("rag_ime.agent_lab_candidate_evidence.build_candidate_evidence", side_effect=AssertionError("live GET must not rescore")):
+            with patch("rag_ime.agent_lab.candidate_evidence.build_candidate_evidence", side_effect=AssertionError("live GET must not rescore")):
                 result = project_candidate_evidence(experiment, root=installed)
                 from rag_ime.eval_lab import EvalLabProjection
                 response = EvalLabProjection(installed / "paw.sqlite", source_ledger_path=installed / ledger.relative_to(ROOT)).list_runs()

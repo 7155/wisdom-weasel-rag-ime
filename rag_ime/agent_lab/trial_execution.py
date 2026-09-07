@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .agent_lab_trials import AgentLabTrialStore, TERMINAL_STATES
+from .trials import AgentLabTrialStore, TERMINAL_STATES
 
 
 class AgentLabTrialExecutionInterrupted(RuntimeError):

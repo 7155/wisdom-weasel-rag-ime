@@ -15,7 +15,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation, localcontext
 from urllib.parse import urlsplit
 
-from .contracts.json_schema import ContractValidationError, validate_contract
+from ..contracts.json_schema import ContractValidationError, validate_contract
 
 
 _REQUEST_CONTRACT = "agent-lab-cost-request.v1.json"

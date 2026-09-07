@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import quote
 from unittest.mock import patch
 
-from rag_ime.agent_lab_golden import (
+from rag_ime.agent_lab.golden import (
     AgentLabGoldenConflict,
     AgentLabGoldenServiceUnavailable,
     AgentLabGoldenStore,
@@ -238,7 +238,7 @@ class GoldenStoreTests(unittest.TestCase):
         self.assertEqual(self.store.begin_validation(actual['jobId'])['ordinal'], 1)
 
     def test_new_judge_protocol_requires_new_calibration_and_preserves_old_snapshot(self) -> None:
-        with patch('rag_ime.agent_lab_golden.GOLDEN_JUDGE_PROTOCOL_VERSION', 'older-judge-protocol'):
+        with patch('rag_ime.agent_lab.golden.GOLDEN_JUDGE_PROTOCOL_VERSION', 'older-judge-protocol'):
             self.reviewed(); self.calibration()
             old = self.command('freeze')['suite']['snapshot']
         self.refresh()

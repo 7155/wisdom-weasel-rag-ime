@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from .agent_lab_trial_execution import AgentLabTrialExecutionInterrupted, TrialObserver
+from .trial_execution import AgentLabTrialExecutionInterrupted, TrialObserver
 
 
 @dataclass(frozen=True)
@@ -153,7 +153,7 @@ class AgentLabRagTrialAdapter:
             raise ValueError("RAG host timeout is invalid")
         if assets.pricing_config is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", assets.pricing_published_date):
             raise ValueError("RAG host pricing requires an explicit publication date")
-        from .managed_pi_runtime import snapshot_managed_pi_runtime_payload
+        from ..managed_pi_runtime import snapshot_managed_pi_runtime_payload
         config = Path(assets.source_agent_config).expanduser()
         files = {"prepared": assets.prepared_path, "answers": assets.answer_cases_path, "qrels": assets.answer_evidence_qrels_path,
             "retrieval": assets.retrieval_report_path, "source_auth": config / "auth.json"}

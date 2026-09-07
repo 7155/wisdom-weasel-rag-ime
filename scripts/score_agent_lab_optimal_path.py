@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rag_ime.agent_lab_optimal_path import evaluate_path_search
+from rag_ime.agent_lab.optimal_path import evaluate_path_search
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()

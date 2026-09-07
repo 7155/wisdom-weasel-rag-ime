@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from rag_ime.agent_lab_room_comparison import RoomComparisonAdapter,EXPECTED,score
+from rag_ime.agent_lab.room_comparison import RoomComparisonAdapter,EXPECTED,score
 
 class RoomComparisonTests(unittest.TestCase):
     def test_score_rejects_duplicates_omissions_and_wrong_fields(self):

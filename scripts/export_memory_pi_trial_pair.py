@@ -25,8 +25,8 @@ SOURCE_FILES = (
     "reconciled-runtime-cost.json", "source-hashes.json", "model-catalog-pricing.json",
 )
 CODE_FILES = (
-    "rag_ime/agent_lab_memory_trial.py", "rag_ime/agent_lab_memory_pi.py",
-    "rag_ime/agent_lab_golden_pi.py", "scripts/eval_personal_memory_luna.py",
+    "rag_ime/agent_lab/memory_trial.py", "rag_ime/agent_lab/memory_pi.py",
+    "rag_ime/agent_lab/golden_pi.py", "scripts/eval_personal_memory_luna.py",
     "rag_ime/personal_memory_luna_evaluation.py",
 )
 CONTROLS = {

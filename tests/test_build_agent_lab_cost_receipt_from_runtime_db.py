@@ -8,7 +8,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from rag_ime.agent_lab_cost import (
+from rag_ime.agent_lab.cost import (
     AgentLabCostError,
     build_agent_lab_cost_receipt,
     content_addressed_pricing_id,

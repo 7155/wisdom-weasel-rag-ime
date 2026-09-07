@@ -26,12 +26,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from rag_ime.agent_lab_trial_execution import (
+from rag_ime.agent_lab.trial_execution import (
     AgentLabTrialExecutionInterrupted,
     AgentLabTrialApplication,
     TrialObserver,
 )
-from rag_ime.agent_lab_trials import (
+from rag_ime.agent_lab.trials import (
     AgentLabTrialConflict,
     AgentLabTrialStore,
 )

@@ -5,7 +5,7 @@ import { AgentRecoveryActions } from '@/features/agent/AgentRecoveryActions';
 import { publicAgentErrorText } from '@/features/agent/public-error';
 import { parsePiModelCatalogOptions, type PiModelOption } from '@/features/agent/model-catalog-options';
 import '@/components/primitives/primitives.css';
-import './portable-agent-ui.css';
+import './portable-agent.css';
 
 type Selection = { provider: string; model: string; thinkingLevel: string };
 type Failure = { state?: string; message?: string };

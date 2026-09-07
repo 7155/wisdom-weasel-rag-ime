@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_lab_experiments import AgentLabExperimentStore
+from rag_ime.agent_lab.experiments import AgentLabExperimentStore
 from scripts.import_agent_lab_experiments import (
     build_agent_experiment_ledger,
     import_experiments,

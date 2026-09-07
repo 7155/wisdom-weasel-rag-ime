@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from rag_ime.agent_lab_history import history_collections
-from rag_ime.agent_lab_project_application import AgentLabProjectApplication
-from rag_ime.agent_lab_projects import AgentLabProjectConflict, AgentLabProjectValidationError
+from rag_ime.agent_lab.history import history_collections
+from rag_ime.agent_lab.project_application import AgentLabProjectApplication
+from rag_ime.agent_lab.projects import AgentLabProjectConflict, AgentLabProjectValidationError
 from scripts.import_agent_lab_experiments import read_public_experiments
 
 

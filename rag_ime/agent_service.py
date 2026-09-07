@@ -177,9 +177,9 @@ from .trace_replay_verification import (
     TraceVerificationValidationError,
 )
 from .sandbox_run_store import SandboxRunStore
-from .agent_lab_scene_recipes import AgentLabSceneRecipeStore
-from .agent_lab_trial_execution import AgentLabTrialApplication, TrialAdapter
-from .agent_lab_trials import AgentLabTrialServiceUnavailable, AgentLabTrialStore
+from .agent_lab.scene_recipes import AgentLabSceneRecipeStore
+from .agent_lab.trial_execution import AgentLabTrialApplication, TrialAdapter
+from .agent_lab.trials import AgentLabTrialServiceUnavailable, AgentLabTrialStore
 from .eval_lab import EvalLabProjection
 from .eval_lab_evidence import EvalLabEvidenceProjection
 from .vertical_agent_suite import (
@@ -1571,10 +1571,10 @@ class AgentService:
             # A source-local database is not a private evaluation artifact
             # owner. Its host can inject an adapter with external storage.
             return {}
-        from .agent_lab_memory_trial import AgentLabMemoryTrialAdapter
+        from .agent_lab.memory_trial import AgentLabMemoryTrialAdapter
 
         def executor():
-            from .agent_lab_golden_pi import AgentLabGoldenPiExecutor
+            from .agent_lab.golden_pi import AgentLabGoldenPiExecutor
             return AgentLabGoldenPiExecutor(
                 self.sessions.db_path, sessions=self.sessions, runtime=lambda: self.runtime,
             )
@@ -1590,7 +1590,7 @@ class AgentService:
         self._lab_knowledge_settings = settings_provider
 
     def _knowledge_resource(self):
-        from .agent_lab_knowledge import AgentLabKnowledgeResource
+        from .agent_lab.knowledge import AgentLabKnowledgeResource
         if self._eval_lab_knowledge_resource is None:
             self._eval_lab_knowledge_resource = AgentLabKnowledgeResource(
                 self.sessions.db_path.expanduser().resolve().parent / "agent-lab-trials" / "knowledge",
@@ -1652,7 +1652,7 @@ class AgentService:
         return self._trial_application().cancel(payload["jobId"])
 
     def _lab_project_application(self):
-        from .agent_lab_project_application import AgentLabProjectApplication
+        from .agent_lab.project_application import AgentLabProjectApplication
         with self._eval_lab_project_lock:
             if self._eval_lab_project_application is None:
                 self._eval_lab_project_application = AgentLabProjectApplication(
@@ -1683,9 +1683,9 @@ class AgentService:
         return self._lab_project_application().apps.download(payload)
 
     def eval_lab_app_command(self, payload: Mapping[str, object]) -> dict[str, object]:
-        from .agent_lab_apps import AgentLabAppApplication
-        from .agent_lab_golden_pi import AgentLabGoldenPiExecutor
-        from .agent_lab_projects import AgentLabProjectUnavailable
+        from .agent_lab.apps import AgentLabAppApplication
+        from .agent_lab.golden_pi import AgentLabGoldenPiExecutor
+        from .agent_lab.projects import AgentLabProjectUnavailable
         if payload.get('action') in {'activate','deactivate'}:
             return self._lab_project_application().apps.command(payload)
         if not self._eval_lab_golden_execution_owner: raise AgentLabProjectUnavailable()
@@ -1699,7 +1699,7 @@ class AgentService:
         return application.command(payload)
 
     def _golden_store(self):
-        from .agent_lab_golden import AgentLabGoldenStore
+        from .agent_lab.golden import AgentLabGoldenStore
         with self._eval_lab_golden_lock:
             if self._eval_lab_golden_store is None:
                 self._eval_lab_golden_store = AgentLabGoldenStore(self.sessions.db_path)
@@ -1723,9 +1723,9 @@ class AgentService:
         return self._golden_store().read(str((payload or {}).get("suiteId") or ""))
 
     def eval_lab_golden_command(self, payload: Mapping[str, object]) -> dict[str, object]:
-        from .agent_lab_golden import AgentLabGoldenServiceUnavailable, AgentLabGoldenStore
-        from .agent_lab_golden_execution import AgentLabGoldenApplication
-        from .agent_lab_golden_pi import AgentLabGoldenPiExecutor
+        from .agent_lab.golden import AgentLabGoldenServiceUnavailable, AgentLabGoldenStore
+        from .agent_lab.golden_execution import AgentLabGoldenApplication
+        from .agent_lab.golden_pi import AgentLabGoldenPiExecutor
         if payload.get("action") == "create":
             # Capture current settings for this suite only. Existing standards
             # and replayed command receipts keep their original model binding.

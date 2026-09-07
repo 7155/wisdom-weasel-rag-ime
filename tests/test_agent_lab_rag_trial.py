@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 
 class AgentLabRagTrialTests(unittest.TestCase):
     def setUp(self):
-        from rag_ime.agent_lab_rag_trial import AgentLabRagTrialAdapter, AgentLabRagTrialAssets
+        from rag_ime.agent_lab.rag_trial import AgentLabRagTrialAdapter, AgentLabRagTrialAssets
         self.adapter_type, self.assets_type = AgentLabRagTrialAdapter, AgentLabRagTrialAssets
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -238,7 +238,7 @@ class AgentLabRagTrialTests(unittest.TestCase):
 
     def test_repeat_execute_does_not_admit_paid_retry(self):
         from scripts import run_rag_agent_ablation as runner
-        from rag_ime.agent_lab_trial_execution import AgentLabTrialExecutionInterrupted
+        from rag_ime.agent_lab.trial_execution import AgentLabTrialExecutionInterrupted
         frozen = self.prepared()
         with patch.object(runner, "_run", return_value=self.raw_report()) as run:
             self.adapter.execute(frozen["privateInput"], Mock(), lambda: False)
@@ -248,8 +248,8 @@ class AgentLabRagTrialTests(unittest.TestCase):
 
     def test_application_cancel_stays_pending_until_runner_cleanup_and_retains_partial_evidence(self):
         from scripts import run_rag_agent_ablation as runner
-        from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
-        from rag_ime.agent_lab_trials import AgentLabTrialStore
+        from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
+        from rag_ime.agent_lab.trials import AgentLabTrialStore
         entered, cleanup = threading.Event(), threading.Event()
         observed_cancel = threading.Event()
         app = AgentLabTrialApplication(AgentLabTrialStore(self.root / "trials.sqlite"), {self.adapter.scene_id: self.adapter}, start_workers=False)
@@ -290,7 +290,7 @@ class AgentLabRagTrialTests(unittest.TestCase):
 
     def test_uncertain_cleanup_is_interrupted_and_preserves_report_without_reading_live_cost(self):
         from scripts import run_rag_agent_ablation as runner
-        from rag_ime.agent_lab_trial_execution import AgentLabTrialExecutionInterrupted
+        from rag_ime.agent_lab.trial_execution import AgentLabTrialExecutionInterrupted
         frozen = self.prepared()
         raw = {**self.raw_report(), "status": "interrupted", "executionSettled": False}
         with patch.object(runner, "_run", return_value=raw), patch("scripts.build_agent_lab_cost_receipt_from_runtime_db.build_multi_model_cost_receipt") as costs:

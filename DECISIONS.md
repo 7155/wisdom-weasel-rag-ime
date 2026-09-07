@@ -134,11 +134,11 @@ implementation choices or live status.
 ## D-012 — PAW OS Frontend Stays In The PAW Product Repository
 
 - **Status:** accepted
-- **Decision:** this repository owns PAW Runtime and PAWOS; Tutti is
-  reference-only and `control-center-web` is the fallback.
+- **Decision:** React OS names PAWOS’s frontend in `control-center-web`;
+  legacy fallback and upstream attribution remain.
 - **Why:** contracts, adapters, installation, and acceptance need one revision.
 - **Consequence:** PAW owns App identity, presentation state, Browser control,
-  permissions, Trace, and Stop without a Tutti runtime dependency.
+  permissions, Trace, and Stop without external Runtime dependencies.
 
 ## D-013 — Extension App Conversations Are App-Owned Pi Sessions
 

@@ -9,7 +9,7 @@
 [架构](ARCHITECTURE.md) · [更新记录](CHANGELOG.md) ·
 [Releases](https://github.com/7155/personal-agent-workbench/releases)
 
-PAWOS 将对话、项目、协作、记忆、知识库和 Agent Lab 放在同一个桌面工作空间。
+PAWOS 的 React OS 前端将对话、项目、协作、记忆、知识库和 Agent Lab 放在同一个桌面工作空间。
 用户可以从一次普通对话开始，在需要时打开工具结果、执行记录或协作窗口，
 并在刷新或中断后继续原来的任务。
 
@@ -154,7 +154,8 @@ pnpm --dir control-center-web build
 | --- | --- |
 | [release](release/README.md) | 依赖、构建、安装、升级、回滚及发布 |
 | [本地运维](release/operations.md) | 对话导入、旧记忆迁移及多设备 Gateway |
-| [control-center-web/CLOUD_MODEL.md](control-center-web/CLOUD_MODEL.md) | 前端源码与继续开发入口 |
+| [源码目录](ARCHITECTURE.md#source-layout) | 后端模块、React OS 前端与工具的代码归属 |
+| [control-center-web/CLOUD_MODEL.md](control-center-web/CLOUD_MODEL.md) | React OS 前端与继续开发入口 |
 | [eval](eval/) | 测评案例、实验方法和结果记录 |
 | [tests](tests/) · [scripts](scripts/) | 回归检查、构建与维护工具 |
 | [SECURITY.md](SECURITY.md) | 漏洞报告与敏感数据处理 |
@@ -166,5 +167,6 @@ pnpm --dir control-center-web build
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 感谢 Pi、Electron、React、Squirrel/librime 及相关开源项目。
-Tutti、Wisdom-Weasel、Yuxi、VCPToolBox 等项目为界面或工作流研究提供了参考；
+Wisdom-Weasel、Yuxi、VCPToolBox 等项目为工作流研究提供了参考。
+React OS 的界面参考见[来源说明](control-center-web/docs/references/README.md)，
 具体来源与许可边界以第三方声明为准。

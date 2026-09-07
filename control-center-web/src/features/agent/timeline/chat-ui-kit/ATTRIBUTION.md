@@ -1,7 +1,7 @@
 # Chat UI Kit — Vendored Cores
 
 Modules here are vendored from `paw-agent-chat-ui-kit`
-(`paw-agent-chat-ui-kit-source.zip` at the repository root, MIT, see the
+([paw-agent-chat-ui-kit-source.zip](../../../../../docs/references/packages/paw-agent-chat-ui-kit-source.zip), MIT, see the
 `LICENSE` inside the archive). Ops judgment: borrow pure core only; never
 replace AgentTimeline, ConversationSurface, or PAWOS chrome with kit React/CSS.
 

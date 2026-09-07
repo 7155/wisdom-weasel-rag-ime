@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import quote
 
-from .agent_lab_golden import GOLDEN_JUDGE_PROTOCOL_VERSION
+from .golden import GOLDEN_JUDGE_PROTOCOL_VERSION
 
 __all__ = ["AgentLabGoldenApplication", "AgentLabGoldenExecutionInterrupted", "normalize_golden_draft_cases"]
 

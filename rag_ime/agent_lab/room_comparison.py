@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 import time
 
-from .agent_lab_micro import canonical, decode, digest, write_private
+from .micro import canonical, decode, digest, write_private
 
 CASES = [
     {"caseId":"room-identity", "source":"agent_room_session_dispatch.py public receipt",

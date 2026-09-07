@@ -14,7 +14,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from .contracts.json_schema import validate_contract
+from ..contracts.json_schema import validate_contract
 
 
 _QUALITY_CLASSES = {"quality", "reliability"}

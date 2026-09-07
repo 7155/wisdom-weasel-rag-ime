@@ -16,7 +16,7 @@ import tempfile
 import time
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SUITE = ROOT / "eval/micro-selfboot/tasks.v1.json"
 
 
@@ -34,7 +34,7 @@ def turn_usage(path, turn_id):
     Final-message usage omits tool-search/retry calls. Never substitute it for
     the total when this exact transcript evidence is unavailable.
     """
-    from .agent_lab_golden_pi import normalize_golden_usage
+    from .golden_pi import normalize_golden_usage
     raw = Path(path).read_bytes()
     active = False
     rows = []

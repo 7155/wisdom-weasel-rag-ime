@@ -21,7 +21,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from rag_ime.agent_lab_micro import POLICY_APP, canonical, decode, verify_policy
+from rag_ime.agent_lab.micro import POLICY_APP, canonical, decode, verify_policy
 
 
 SERVER = r'''import argparse, json, math, pathlib, runpy

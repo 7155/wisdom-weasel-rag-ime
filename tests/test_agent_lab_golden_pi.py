@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from rag_ime.agent_lab_golden_pi import AgentLabGoldenPiExecutor, GoldenPiCallError, normalize_golden_usage
+from rag_ime.agent_lab.golden_pi import AgentLabGoldenPiExecutor, GoldenPiCallError, normalize_golden_usage
 from rag_ime.agent_sessions import AgentSessionStore
 
 

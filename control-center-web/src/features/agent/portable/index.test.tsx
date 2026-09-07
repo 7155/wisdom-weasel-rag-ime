@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import './portable-agent-ui';
+import './index';
 
 describe('portable Agent controls', () => {
   let handle: ReturnType<typeof window.pawAgentUI.mount> | undefined;

@@ -54,7 +54,7 @@ Lab 主要承接第二个过程，并链接第一个过程留下的事实。诊�
 - 现有 r5 记录的组件命中为 12/12，联合根因为 11/12。末个 performance 案例的 FA、JRA 未通过。因此“组件全对”不能展示成“全部根因诊断正确”。[逐案记录](../../../eval/interview-metrics/runs/cloudops-luna-max-owner-mechanism-prompt-case-projection-20260904.r5.json)
 - 本地安装中的资料问答流程仅执行 `context_qa` 和 Prompt 对照。四题流程验收不会成为 CloudOps 生产效果证据。
 
-源码入口：[快照工具](../../../rag_ime/cloudops_benchmark_agent.py)、[场景适配器](../../../rag_ime/agent_lab_cloudops.py)、[登记入口](../../../rag_ime/agent_service.py)、[实际执行器](../../../scripts/run_cloudops_agent_eval.py)。
+源码入口：[快照工具](../../../rag_ime/cloudops_benchmark_agent.py)、[场景适配器](../../../rag_ime/agent_lab/cloudops.py)、[登记入口](../../../rag_ime/agent_service.py)、[实际执行器](../../../scripts/run_cloudops_agent_eval.py)。
 
 ## 展示与交互规则
 

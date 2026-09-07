@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from unittest.mock import patch
 
-from rag_ime.agent_lab_app_runtime import AppInputError, AppProviderUnconfirmed, AppRequestStore, create_server, _stream_completion
+from rag_ime.agent_lab.app_runtime import AppInputError, AppProviderUnconfirmed, AppRequestStore, create_server, _stream_completion
 from tests.test_agent_lab_apps import write_app
 
 
@@ -115,7 +115,7 @@ class StandaloneRequestTests(unittest.TestCase):
 
     def test_local_server_rejects_foreign_host_even_when_origin_matches_it(self):
         root = write_app(Path(self.temp.name))
-        with patch('rag_ime.agent_lab_app_runtime.provider_complete') as complete:
+        with patch('rag_ime.agent_lab.app_runtime.provider_complete') as complete:
             server = create_server(root,'127.0.0.1',0)
             worker = threading.Thread(target=server.serve_forever,daemon=True);worker.start()
             base = f'http://127.0.0.1:{server.server_port}'
@@ -141,7 +141,7 @@ class StandaloneRequestTests(unittest.TestCase):
         root = write_app(Path(self.temp.name)); spec_path = root/'app.json'
         spec = json.loads(spec_path.read_text()); spec['externalWorkspace'] = {'title':'空间工作台','url':'http://127.0.0.1:5173/'}
         spec_path.write_text(json.dumps(spec))
-        with patch('rag_ime.agent_lab_app_runtime.provider_complete') as complete:
+        with patch('rag_ime.agent_lab.app_runtime.provider_complete') as complete:
             server = create_server(root,'127.0.0.1',0)
             worker = threading.Thread(target=server.serve_forever,daemon=True); worker.start()
             base = f'http://127.0.0.1:{server.server_port}'
@@ -186,7 +186,7 @@ class StandaloneRequestTests(unittest.TestCase):
             on_progress({'stage':'thinking'})
             calls.append(prompt); entered.set(); release.wait(3)
             return {'text':'真实回执占位测试','usage':{'total_tokens':9}}
-        with patch('rag_ime.agent_lab_app_runtime.provider_complete', side_effect=complete):
+        with patch('rag_ime.agent_lab.app_runtime.provider_complete', side_effect=complete):
             server = create_server(root, '127.0.0.1', 0)
             worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
             base = f'http://127.0.0.1:{server.server_port}'
@@ -225,7 +225,7 @@ class StandaloneRequestTests(unittest.TestCase):
             on_progress({'stage':'answering','text':'已经收到的部分回答'})
             entered.set(); release.wait(3); ended.set()
             return {'text':'late final answer'}
-        with patch('rag_ime.agent_lab_app_runtime.provider_complete', side_effect=complete) as provider:
+        with patch('rag_ime.agent_lab.app_runtime.provider_complete', side_effect=complete) as provider:
             server = create_server(root, '127.0.0.1', 0)
             worker = threading.Thread(target=server.serve_forever,daemon=True);worker.start()
             base = f'http://127.0.0.1:{server.server_port}'

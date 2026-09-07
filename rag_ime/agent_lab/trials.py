@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from .db import apply_database_migrations, sqlite_connection
+from ..db import apply_database_migrations, sqlite_connection
 
 SCHEMA_VERSION = "rag-ime.agent-lab-trial.v1"
 TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "interrupted"})

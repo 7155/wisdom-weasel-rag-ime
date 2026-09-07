@@ -16,10 +16,10 @@ import urllib.request
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
 
-from rag_ime.agent_lab_micro import canonical,digest,turn_usage,write_private
-from rag_ime.agent_lab_medium import SEED,SPEC,UPDATE,create_workspace,verify_workspace,prepare_checkpoint,verify_delivery,task_seed,task_update,checkpoint_name
-from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
-from rag_ime.agent_lab_trials import AgentLabTrialStore
+from rag_ime.agent_lab.micro import canonical,digest,turn_usage,write_private
+from rag_ime.agent_lab.medium import SEED,SPEC,UPDATE,create_workspace,verify_workspace,prepare_checkpoint,verify_delivery,task_seed,task_update,checkpoint_name
+from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
+from rag_ime.agent_lab.trials import AgentLabTrialStore
 
 MODEL={'provider':'openai-codex','model':'gpt-5.6-luna','thinkingLevel':'low'}
 BUDGET={'maxProviderCallsPerArm':18,'maxObservedTokensPerArm':100000,'maxStages':3,'stageTimeoutSeconds':300,'maxOutputTokens':4096}
@@ -168,7 +168,7 @@ class MediumAdapter:
                         elif partial and (measured['providerCalls']+partial['providerCalls']>=BUDGET['maxProviderCallsPerArm'] or measured['tokens']+partial['usage']['totalTokens']>=BUDGET['maxObservedTokensPerArm']):stop_reason='observed_budget'
                         if stop_reason:service.runtime.abort(sid)
                     elif elapsed>BUDGET['stageTimeoutSeconds']+40:raise TimeoutError('abort did not settle')
-                from rag_ime.agent_lab_golden_pi import _settled_output
+                from rag_ime.agent_lab.golden_pi import _settled_output
                 aggregate=turn_usage(transcript,tid)
                 measured['providerCalls']+=aggregate['providerCalls'];measured['tokens']+=aggregate['usage']['totalTokens']
                 if 'estimatedCostUsd' in aggregate['usage']:measured['estimatedCostUsd']+=aggregate['usage']['estimatedCostUsd']
@@ -235,7 +235,7 @@ def main():
         for arm in ('solo','room'):create_workspace(root/arm/'workspace',args.storage_format)
     frozen={'schemaVersion':'paw.medium-coding-contract.v1','storageFormat':args.storage_format,'taskSha256':digest({'seed':task_seed(args.storage_format),'update':task_update(args.storage_format),'stages':stages}),
         'model':MODEL,'budget':BUDGET,'primary':'complete task, then continuity and no regressions; cost is secondary',
-        'seedHashes':json.loads((resume/'frozen.json').read_text())['seedHashes'] if resume else tree_hashes(root/'solo/workspace'),'sourceHashes':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [Path(__file__),ROOT/'rag_ime/agent_lab_medium.py',ROOT/'rag_ime/agent_lab_micro.py']},
+        'seedHashes':json.loads((resume/'frozen.json').read_text())['seedHashes'] if resume else tree_hashes(root/'solo/workspace'),'sourceHashes':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [Path(__file__),ROOT/'rag_ime/agent_lab/medium.py',ROOT/'rag_ime/agent_lab/micro.py']},
         'sameStageInstructions':True,'armOrder':['solo','room'],'repeats':1,'candidateTuning':False,'holdoutClaim':False}
     if not resume:assert tree_hashes(root/'solo/workspace')==tree_hashes(root/'room/workspace')
     else:

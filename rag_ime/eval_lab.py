@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .agent_sessions import AgentSessionStore
-from .agent_lab_experiments import AgentLabExperimentStore
-from .agent_lab_candidate_evidence import project_candidate_evidence
+from .agent_lab.experiments import AgentLabExperimentStore
+from .agent_lab.candidate_evidence import project_candidate_evidence
 from .contracts.json_schema import load_contract, validate_contract
 
 

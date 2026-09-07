@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from rag_ime.agent_lab_room_merge import BUDGET, RoomMergeTrialAdapter, merge_disjoint
+from rag_ime.agent_lab.room_merge import BUDGET, RoomMergeTrialAdapter, merge_disjoint
 
 
 class RoomMergeTests(unittest.TestCase):
@@ -48,7 +48,7 @@ class RoomMergeTests(unittest.TestCase):
         self.assertNotEqual(calls[0]['room_group'],calls[4]['room_group'])
 
     def test_settled_budget_crossing_preserves_quality_without_another_call(self):
-        from rag_ime.agent_lab_room_comparison import EXPECTED
+        from rag_ime.agent_lab.room_comparison import EXPECTED
         calls=[]
         def complete(**kw):
             calls.append(kw)
@@ -68,7 +68,7 @@ class RoomMergeTests(unittest.TestCase):
         self.assertEqual(result['arms']['candidate']['score']['passed'],3)
 
     def test_budget_crossing_blocks_the_pending_integrator(self):
-        from rag_ime.agent_lab_room_comparison import EXPECTED
+        from rag_ime.agent_lab.room_comparison import EXPECTED
         calls=[]
         def complete(**kw):
             calls.append(kw)

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from .db import apply_database_migrations, sqlite_connection
+from ..db import apply_database_migrations, sqlite_connection
 
 __all__ = [
     "AgentLabGoldenConflict", "AgentLabGoldenServiceUnavailable",

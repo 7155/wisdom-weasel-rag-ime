@@ -20,18 +20,18 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .agent_lab_knowledge_data import (
+from .knowledge_data import (
     MAX_BYTES, MAX_DOCUMENT_BYTES, KnowledgeIntakeError, collect_folder, content_identities, digest,
     file_hash, normalize_cases, normalize_documents, read_case_file,
     read_jsonl, write_json, write_jsonl,
 )
-from .embeddings import embedding_provider_from_env, embedding_provider_info
-from .knowledge_embedding_profile import embedding_environment_from_settings, normalize_knowledge_embedding_profile
-from .knowledge_library import KnowledgeLibraryConfig, KnowledgeLibraryService
-from .knowledge_library.dense import NullDenseIndex, dense_index_from_env
-from .knowledge_library.rerank import knowledge_reranker_from_env
-from .rag_benchmark_sandbox import RagBenchmarkSandbox, RagBenchmarkSandboxPolicy
-from .rag_retrieval_experiment import evaluate_retrieval_configuration
+from ..embeddings import embedding_provider_from_env, embedding_provider_info
+from ..knowledge_embedding_profile import embedding_environment_from_settings, normalize_knowledge_embedding_profile
+from ..knowledge_library import KnowledgeLibraryConfig, KnowledgeLibraryService
+from ..knowledge_library.dense import NullDenseIndex, dense_index_from_env
+from ..knowledge_library.rerank import knowledge_reranker_from_env
+from ..rag_benchmark_sandbox import RagBenchmarkSandbox, RagBenchmarkSandboxPolicy
+from ..rag_retrieval_experiment import evaluate_retrieval_configuration
 
 SCENE_ID = "knowledge-resource"
 _SCHEMA = "paw.lab-knowledge-resource.v1"
@@ -482,7 +482,7 @@ class AgentLabKnowledgeResource:
         return method(*args, **kwargs)
 
     def _connected_base(self, kb_id: str, observer: Any, cancelled: Callable[[], bool]) -> tuple[list[dict], dict]:
-        from .knowledge_library.parsers import ParserRouter
+        from ..knowledge_library.parsers import ParserRouter
         import tempfile
         base = self._management("management_get_base", kb_id)
         listed = self._management("management_list_documents", kb_id).get("documents", [])
@@ -557,10 +557,10 @@ class AgentLabKnowledgeResource:
         encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
         if len(encoded.encode()) > 80 * 1024 * 1024:
             raise KnowledgeIntakeError("知识库应用快照超过 80 MB，请拆分应用知识范围后再准备。")
-        owner = Path(__file__).with_name("knowledge_library")
+        owner = Path(__file__).parent.parent / "knowledge_library"
         names = ("store.py", "models.py", "permissions.py")
         files = {"knowledge/search-snapshot.json": encoded, "knowledge_owner/__init__.py": '"""Frozen PAW KnowledgeStore search owner."""\n',
-                 "knowledge_runtime.py": Path(__file__).with_name("agent_lab_app_knowledge_runtime.py").read_text()}
+                 "knowledge_runtime.py": Path(__file__).with_name("app_knowledge_runtime.py").read_text()}
         files.update({"knowledge_owner/" + name: (owner / name).read_text() for name in names})
         manifest = {"schemaVersion": "paw.lab-app-knowledge.v1", "sourceIndexId": index["jobId"], "corpusHash": index["corpusHash"],
                     "indexConfigHash": index["configHash"], "queryField": field, "profile": profile,

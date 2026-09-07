@@ -16,10 +16,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
-from .agent_lab_project_artifacts import VIEWS, validate_artifact
-from .agent_lab_project_materials import empty_intake, read_inline_materials, read_local_materials, validate_material_set
-from .db import apply_database_migrations
-from .db.connection import sqlite_connection
+from .project_artifacts import VIEWS, validate_artifact
+from .project_materials import empty_intake, read_inline_materials, read_local_materials, validate_material_set
+from ..db import apply_database_migrations
+from ..db.connection import sqlite_connection
 
 
 class AgentLabProjectValidationError(ValueError):

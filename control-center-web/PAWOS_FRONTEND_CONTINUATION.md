@@ -18,7 +18,7 @@ Thoroughly reconstruct PAWOS frontend from the user's design, not a colour pass.
   multi-window information flow, what each satellite shows), then OS shell, then
   App-by-App polish. Use the in-repo baseline
   `control-center-web/docs/references/pawos-conversation-baseline.html` plus BRIEF
-  interaction contracts. Do **not** fetch Tutti or CodingTo.
+  interaction contracts. Use the in-repo React OS sources.
 - Also inspect performance, flicker, layout jump, and streaming reflow (user: 频闪 / 跳动抽搐 / 拖动卡顿).
 - Frontend-only. Do not edit `rag_ime/`, migrations, Pi Runtime, or backend contracts. Do not install unless the user asks.
 - Merges may ignore CI when failures are billing/account limits, not product proof.
@@ -93,7 +93,7 @@ Priority order is the user's:
 
 ```text
 1. git fetch && git log -1 && git status
-2. Read CLOUD_MODEL.md, REQUIREMENTS, BRIEF §2 (Agent), in-repo baseline HTML. Do not fetch Tutti/CodingTo.
+2. Read CLOUD_MODEL.md, REQUIREMENTS, BRIEF §2 (Agent), in-repo baseline HTML. Use the in-repo React OS sources.
 3. Reconstruct Agent conversation (tree, composer, rich results, trace)
 4. Then shell, then remaining Apps one vertical slice at a time if serial;
    parallel only with hard file-ownership partitions

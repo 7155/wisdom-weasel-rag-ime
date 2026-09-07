@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from rag_ime.agent_lab_golden_pi import AgentLabGoldenPiExecutor
+from rag_ime.agent_lab.golden_pi import AgentLabGoldenPiExecutor
 from rag_ime.agent_sessions import AgentSessionStore
 from tests.test_agent_lab_golden_pi import Runtime
 
@@ -62,7 +62,7 @@ class Observer:
 
 class MemoryTrialTests(unittest.TestCase):
     def setUp(self):
-        from rag_ime.agent_lab_memory_trial import AgentLabMemoryTrialAdapter
+        from rag_ime.agent_lab.memory_trial import AgentLabMemoryTrialAdapter
         self.adapter_type = AgentLabMemoryTrialAdapter
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -111,7 +111,7 @@ class MemoryTrialTests(unittest.TestCase):
         source.chmod(0o600)
         adapter = self.adapter_type(self.root / 'trials', pi_executor_factory=self.factory, abort_session=self.abort,
             source_assets={'approved-shadow': source}, production_db=self.root / 'production.sqlite')
-        with patch('rag_ime.agent_lab_memory_trial.verify_recovered_memory_shadow', return_value={}):
+        with patch('rag_ime.agent_lab.memory_trial.verify_recovered_memory_shadow', return_value={}):
             prepared = adapter.prepare({'sourceAssetId': 'approved-shadow'}, 'lab-trial:host')
         self.assertEqual('host-shadow', prepared['publicSpec']['evaluationMode'])
         self.assertNotIn('private-source-sentinel', json.dumps(prepared))
@@ -128,7 +128,7 @@ class MemoryTrialTests(unittest.TestCase):
         alias.hardlink_to(production)
         adapter = self.adapter_type(self.root / 'trials', pi_executor_factory=self.factory, abort_session=self.abort,
             source_assets={'forbidden': alias}, production_db=production)
-        with patch('rag_ime.agent_lab_memory_trial.verify_recovered_memory_shadow') as verify:
+        with patch('rag_ime.agent_lab.memory_trial.verify_recovered_memory_shadow') as verify:
             with self.assertRaisesRegex(ValueError, 'production'):
                 adapter.prepare({'sourceAssetId': 'forbidden'}, 'lab-trial:forbidden')
         verify.assert_not_called()
@@ -164,8 +164,8 @@ class MemoryTrialTests(unittest.TestCase):
             self.assertEqual(0, path.stat().st_mode & 0o077, path.name)
 
     def test_cancel_prevents_next_phase_aborts_once_and_cleans_shadow(self):
-        from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
-        from rag_ime.agent_lab_trials import AgentLabTrialStore
+        from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
+        from rag_ime.agent_lab.trials import AgentLabTrialStore
         entered, released = threading.Event(), threading.Event()
         original_wait = self.runtime.await_turn_settled
         def wait(*args, **kwargs):
@@ -209,13 +209,13 @@ class MemoryTrialTests(unittest.TestCase):
         self.assertFalse(list((self.root / 'trials').rglob('work')))
 
     def test_missing_runtime_cost_is_unavailable_not_zero(self):
-        from rag_ime.agent_lab_memory_trial import _public_cost
+        from rag_ime.agent_lab.memory_trial import _public_cost
         result = _public_cost([{'requestId': 'a', 'status': 'completed', 'usage': {'available': False}}])
         self.assertFalse(result['available'])
         self.assertNotIn('estimatedCostUsd', result)
 
     def test_unattempted_recovery_is_not_reported_as_passed_after_failure_or_cancel(self):
-        from rag_ime.agent_lab_memory_trial import _public_report
+        from rag_ime.agent_lab.memory_trial import _public_report
         report = _public_report({'status': 'cancelled', 'passed': True,
             'rollback': {'attempted': False, 'ok': True}, 'replay': {'attempted': False, 'ok': True}},
             job_id='lab-trial:cancelled', mode='synthetic-fixture', cost={'available': False})
@@ -225,8 +225,8 @@ class MemoryTrialTests(unittest.TestCase):
         self.assertIsNone(report['metrics']['recovery']['replayPassed'])
 
     def test_failed_pi_execution_is_failed_with_unavailable_quality_and_retained_cost(self):
-        from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
-        from rag_ime.agent_lab_trials import AgentLabTrialStore
+        from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
+        from rag_ime.agent_lab.trials import AgentLabTrialStore
         self.runtime.failed = True
         app = AgentLabTrialApplication(AgentLabTrialStore(self.root / 'jobs.sqlite'), {'memory': self.adapter}, start_workers=False)
         self.addCleanup(app.close)
@@ -298,7 +298,7 @@ class MemoryTrialTests(unittest.TestCase):
         self.assertFalse(list((self.root/'trials').rglob('work')))
 
     def test_failed_settlement_is_interrupted_and_cannot_reexecute_same_trial(self):
-        from rag_ime.agent_lab_trial_execution import AgentLabTrialExecutionInterrupted
+        from rag_ime.agent_lab.trial_execution import AgentLabTrialExecutionInterrupted
         self.runtime.fail_lookup = True
         prepared = self.prepared()['privateInput']
         for _ in range(2):

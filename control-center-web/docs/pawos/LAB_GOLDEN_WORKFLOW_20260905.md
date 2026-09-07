@@ -55,10 +55,10 @@ reuse historical scores as a same-case baseline.
 
 ## Owners and bounded work
 
-- Store lane: new `rag_ime/agent_lab_golden.py`, migration 0190, focused store
+- Store lane: new `rag_ime/agent_lab/golden.py`, migration 0190, focused store
   tests and the migration-head expectation only. Own persistence, validation,
   human-review/calibration/freeze rules and command idempotency.
-- Execution lane: new `rag_ime/agent_lab_golden_execution.py` and focused tests.
+- Execution lane: new `rag_ime/agent_lab/golden_execution.py` and focused tests.
   Own asynchronous jobs, Pi-backed draft/Judge/experiment calls and actual result
   evidence. Use an injected model-call callback; parent supplies the Pi adapter.
 - UI lane: new `features/eval-lab/golden/` only, including TS contract, API hooks,

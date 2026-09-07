@@ -162,6 +162,29 @@ current Room runtime or UI owner.
 | UI projection | `control-center-web/src/contracts/room-reducer.ts`, `control-center-web/src/features/rooms/` | deterministic read model, rendering, user intent | runtime ownership or inferred completion |
 | PAW OS product frontend | PAW-owned product composition in `7155/personal-agent-workbench` plus the existing versioned transport and reducers | App composition, windows, Dock, Mission Control, layout snapshots, PAW surface rendering | Session/Room/Package/WorkDocument/Memory/Knowledge lifecycle or copied Runtime state |
 
+## Source Layout
+
+| Path | Owner and purpose |
+| --- | --- |
+| `rag_ime/agent_lab/` | Lab projects, materials, trials, comparison, evidence and App delivery; see its [module map](rag_ime/agent_lab/README.md) |
+| `rag_ime/agent_service.py` | Composes Agent services and their Lab dependencies |
+| `rag_ime/control_api/` | Typed transport contracts and route ownership |
+| `rag_ime/knowledge_library/`, `rag_ime/db/` | Knowledge and database owners; Lab consumes their APIs |
+| `control-center-web/src/paw-os/` | React OS desktop shell, windows and App surfaces |
+| `control-center-web/src/features/agent/` | Shared Agent conversation, model selection and recovery controls |
+| `control-center-web/src/features/agent/portable/` | Shared Agent controls bundled for independently exported Apps |
+| `control-center-web/src/features/eval-lab/` | Lab project and evaluation UI |
+| `control-center-web/src/contracts/` | Runtime transport types, adapters and state projections |
+| `control-center-web/extension-apps/` | Source-isolated vertical plugins |
+| `control-center-web/docs/references/` | Supplied reference packages and attribution; no runtime imports |
+| `control-center-web/docs/history/`, `eval/room-blackbox/` | Dated design QA and Room acceptance records |
+| `scripts/`, `tests/`, `eval/` | Operator entrypoints, executable regressions and evaluation fixtures/records |
+
+Imports use their owning package directly. Lab's previous flat
+`rag_ime.agent_lab_*` modules now live under `rag_ime.agent_lab.*`; executable
+consumers and resource lookups move together. Stored schema IDs, SQL tables,
+API routes and frozen historical evidence keep their existing identities.
+
 ## Primary Flows
 
 ### Agent Session
@@ -221,7 +244,7 @@ Simple route families use descriptors. Streaming, path-parameter, binary, and
 special-authorization routes keep dedicated adapters when a generic descriptor
 would hide behavior.
 
-### PAW OS Frontend Projection
+### React OS Frontend Projection
 
 ```text
 PAW snapshot / ordered SSE / typed command
@@ -231,13 +254,14 @@ PAW snapshot / ordered SSE / typed command
   -> PAW-owned window / Dock / Mission Control / snapshot mechanics
 ```
 
-PAW OS is built and released from `7155/personal-agent-workbench`. The existing
-`control-center-web` shell remains a selectable legacy fallback until cutover;
-the new shell shares PAW contracts, generated types, reducers, and Gateway
-adapters instead of copying them. `7155/tutti` and `tutti-os/tutti` are
-reference sources only. PAW may adapt their proven interaction mechanics, but
-no Tutti repository, absolute local path, or Tutti Runtime state is a product
-dependency.
+React OS is the current PAWOS frontend, built and released from
+`7155/personal-agent-workbench` in `control-center-web`. Its desktop shell
+lives in `src/paw-os`; the selectable legacy shell remains in `src/app`. Both
+share PAW contracts, generated types, reducers, and Gateway adapters.
+[Reference sources](control-center-web/docs/references/README.md) retain their
+original attribution; external repositories and their Runtime state are not
+product dependencies. The `paw-os` frontend key and persisted layout namespaces
+remain stable across this naming change.
 
 A PAW OS shell snapshot may retain product identity, node identity, frame,
 focus, z-order, and other presentation state. It must not persist or reconstruct
@@ -248,7 +272,7 @@ staged migration or rollback cannot overwrite the other shell's layout.
 
 Feature migration keeps the PAW reducer/store/contract owner intact and adds a
 narrow PAW OS surface around it. Closing a window removes or hides that view;
-Stop and Cancel remain explicit PAW/Pi commands. Tutti-inspired behavior is
+Stop and Cancel remain explicit PAW/Pi commands. React OS behavior is
 implemented behind PAW-owned interfaces and verified inside this repository.
 
 Related Web routes converge into PAW OS Apps instead of becoming one App per
@@ -259,8 +283,8 @@ Room list, collaboration timeline, and Workflow graph; Memory and Knowledge
 retain separate context authorities; Input Studio owns voice, Squirrel/Rime,
 lexicon, and input history. App Center, System Monitor, and System Settings own
 capability installation, operational evidence, and policy respectively. Files,
-Browser, and Terminal adapt Tutti's proven presentation mechanics behind
-PAW-owned contracts rather than importing Tutti Runtime ownership.
+Browser, and Terminal expose desktop interactions through PAW-owned contracts;
+Pi and the existing services retain Runtime ownership.
 
 The Browser App deliberately gives the human and Agent one visible page
 identity:

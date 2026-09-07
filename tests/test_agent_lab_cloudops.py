@@ -8,9 +8,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from rag_ime.agent_lab_cloudops import CloudOpsTrialAdapter, CloudOpsTrialAssets
-from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
-from rag_ime.agent_lab_trials import AgentLabTrialStore
+from rag_ime.agent_lab.cloudops import CloudOpsTrialAdapter, CloudOpsTrialAssets
+from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
+from rag_ime.agent_lab.trials import AgentLabTrialStore
 from rag_ime.eval_run_store import EvalRunStore
 from rag_ime.sandbox_run_store import SandboxRunStore
 from rag_ime.trace_store import TraceStore

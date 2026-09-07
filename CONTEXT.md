@@ -29,6 +29,12 @@ Sessions or Room runs.
 
 _Avoid:_ treating Outcome as a live task, frontend card, or filesystem folder.
 
+## React OS
+
+PAWOS’s React frontend, implemented in `control-center-web`.
+PAW remains the product identity; Pi remains the Agent Runtime. Existing
+`paw-os` route and layout keys retain their compatibility meaning.
+
 ## Session
 
 A private, resumable Pi conversation and execution unit with its own transcript,

@@ -41,7 +41,7 @@ from .active_rag_service import (
 )
 from .activity_timeline import DailyActivityTimelineStore, activity_timeline_date_range
 from .agent_extensions import AgentExtensionService
-from .agent_lab_scene_recipes import (
+from .agent_lab.scene_recipes import (
     AgentLabSceneRecipeConflict,
     AgentLabSceneRecipeServiceUnavailable,
     AgentLabSceneRecipeUnavailable,
@@ -7796,7 +7796,7 @@ def _agent_lab_scene_recipe_error_response(exc: Exception) -> tuple[HTTPStatus, 
 
 
 def _agent_lab_trial_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
-    from .agent_lab_trials import AgentLabTrialConflict, AgentLabTrialNotFound, AgentLabTrialServiceUnavailable
+    from .agent_lab.trials import AgentLabTrialConflict, AgentLabTrialNotFound, AgentLabTrialServiceUnavailable
     if isinstance(exc, (AgentLabTrialConflict, AgentLabTrialServiceUnavailable)):
         return HTTPStatus(exc.http_status), exc.response_payload()
     if isinstance(exc, AgentLabTrialNotFound):
@@ -7820,7 +7820,7 @@ def _agent_lab_trial_error_response(exc: Exception) -> tuple[HTTPStatus, dict[st
 
 
 def _agent_lab_project_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
-    from .agent_lab_projects import AgentLabProjectValidationError, AgentLabProjectUnavailable
+    from .agent_lab.projects import AgentLabProjectValidationError, AgentLabProjectUnavailable
     if isinstance(exc, AgentLabProjectValidationError):
         return HTTPStatus(exc.http_status), exc.response_payload()
     if isinstance(exc, (sqlite3.Error, OSError)):
@@ -7835,7 +7835,7 @@ def _agent_lab_project_error_response(exc: Exception) -> tuple[HTTPStatus, dict[
 
 
 def _agent_lab_golden_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
-    from .agent_lab_golden import (
+    from .agent_lab.golden import (
         AgentLabGoldenConflict, AgentLabGoldenServiceUnavailable, AgentLabGoldenValidationError,
     )
     if isinstance(exc, (AgentLabGoldenConflict, AgentLabGoldenServiceUnavailable, AgentLabGoldenValidationError)):

@@ -30,8 +30,8 @@ class Adapter:
 
 class AgentLabTrialExecutionTests(unittest.TestCase):
     def setUp(self):
-        from rag_ime.agent_lab_trials import AgentLabTrialStore
-        from rag_ime.agent_lab_trial_execution import AgentLabTrialApplication
+        from rag_ime.agent_lab.trials import AgentLabTrialStore
+        from rag_ime.agent_lab.trial_execution import AgentLabTrialApplication
         self.application = AgentLabTrialApplication
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -199,7 +199,7 @@ class AgentLabTrialExecutionTests(unittest.TestCase):
         self.assertEqual(self.app.read()["jobs"], [])
 
     def test_changed_scene_conflicts_even_without_a_registered_adapter(self):
-        from rag_ime.agent_lab_trials import AgentLabTrialConflict
+        from rag_ime.agent_lab.trials import AgentLabTrialConflict
         self.start()
         with self.assertRaises(AgentLabTrialConflict):
             self.app.start("click", "unregistered-scene", {"model": "test"})

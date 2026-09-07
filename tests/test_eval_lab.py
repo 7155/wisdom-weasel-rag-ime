@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.contracts.json_schema import ContractValidationError, validate_contract
-from rag_ime.agent_lab_experiments import AgentLabExperimentStore
+from rag_ime.agent_lab.experiments import AgentLabExperimentStore
 from rag_ime.eval_lab import EvalLabProjection
 
 from tests.test_agent_lab_experiment_store import _experiment

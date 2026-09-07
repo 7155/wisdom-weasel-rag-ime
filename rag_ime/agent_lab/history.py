@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 
-from .agent_lab_projects import AgentLabProjectConflict, AgentLabProjectValidationError
+from .projects import AgentLabProjectConflict, AgentLabProjectValidationError
 
 SCENES = (
     ("enterpriseops", "企业客户支持", {"enterprise-customer-support", "agent-evaluation-cost"}),

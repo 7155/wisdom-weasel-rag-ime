@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from rag_ime.agent_lab_trials import AgentLabTrialConflict, AgentLabTrialStore
+from rag_ime.agent_lab.trials import AgentLabTrialConflict, AgentLabTrialStore
 from rag_ime.agent_service import AgentService
 from rag_ime.control_api import ControlAccessContext, ControlApiError, ControlRequest, default_route_policy
 from rag_ime.control_api.route_table import find_route
@@ -223,8 +223,8 @@ class TrialServiceTests(unittest.TestCase):
             service.close()
 
     def test_default_memory_registration_and_reads_do_not_construct_pi_or_create_artifacts(self):
-        from rag_ime.agent_lab_memory_trial import AgentLabMemoryTrialAdapter
-        with patch("rag_ime.agent_lab_golden_pi.AgentLabGoldenPiExecutor") as executor:
+        from rag_ime.agent_lab.memory_trial import AgentLabMemoryTrialAdapter
+        with patch("rag_ime.agent_lab.golden_pi.AgentLabGoldenPiExecutor") as executor:
             service = self.service(adapters=False)
             try:
                 adapter = service._eval_lab_trial_adapters.get("memory")
@@ -341,7 +341,7 @@ class TrialRouteTests(unittest.TestCase):
             self.assertEqual(written, [(status, receipt)])
 
     def test_read_failure_and_mutation_errors_never_leak_private_details(self):
-        from rag_ime.agent_lab_trials import AgentLabTrialNotFound
+        from rag_ime.agent_lab.trials import AgentLabTrialNotFound
         for method, path, attribute in (
             ("GET", "/api/agent/eval-lab/trials", "eval_lab_trials"),
             ("POST", "/api/agent/eval-lab/trials/start", "eval_lab_trial_start"),
