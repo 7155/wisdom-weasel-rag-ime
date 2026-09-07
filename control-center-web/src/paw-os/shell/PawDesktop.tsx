@@ -286,7 +286,11 @@ function PawDesktopSurface() {
     else state.openApp(appId, { title: pawApp(appId).label });
     state.setLaunchpadOpen(false);
     pulsePawComposition('app', .72);
-    window.history.replaceState(null, '', `${window.location.search}#${pawApp(appId).route}`);
+    // Returning to an existing window keeps its page. The reload entry point
+    // must follow that page too, rather than silently pointing at the App home.
+    const currentRoute = existingWindowId ? api.getState().windows[existingWindowId]?.initialRoute : undefined;
+    const route = currentRoute && pawAppForPath(currentRoute)?.id === appId ? currentRoute : pawApp(appId).route;
+    window.history.replaceState(window.history.state, '', `${window.location.search}#${route}`);
   }, [api, installation.enabledExtensionIds]);
   const toggleLaunchpad = useCallback(() => {
     const state = api.getState();

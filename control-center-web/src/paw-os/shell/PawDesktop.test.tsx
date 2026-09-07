@@ -15,6 +15,14 @@ import { PawDesktop } from './PawDesktop';
 import desktopSource from './PawDesktop.tsx?raw';
 import wayfinderWorkSource from './PawWayfinderWork.tsx?raw';
 
+// The shell owns window selection and routes; App body behavior has its own suites.
+vi.mock('../apps/PawApps', () => ({
+  PawAppProcess: ({ appId, initialRoute }: { appId: string; initialRoute?: string }) => (
+    <output aria-label={`${appId} current page`}>{initialRoute ?? ''}</output>
+  ),
+  warmPawAppProcess: vi.fn(),
+}));
+
 const pointerFixture = vi.hoisted(() => ({ role: undefined as string | undefined, portalled: false }));
 
 vi.mock('./PawWindowLayer', async (importOriginal) => {
@@ -36,7 +44,7 @@ beforeEach(() => {
   pointerFixture.role = undefined;
   pointerFixture.portalled = false;
   window.localStorage.clear();
-  Object.defineProperty(Element.prototype, 'animate', { configurable: true, value: vi.fn(() => ({ cancel: vi.fn() })) });
+  Object.defineProperty(Element.prototype, 'animate', { configurable: true, value: vi.fn(() => ({ cancel: vi.fn(), finished: Promise.resolve() })) });
   Object.defineProperty(Element.prototype, 'getAnimations', { configurable: true, value: vi.fn(() => []) });
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
     matches: false,
@@ -59,6 +67,28 @@ afterEach(() => {
 });
 
 describe('PAWOS desktop', () => {
+  it.each(['desktop', 'launcher'])('preserves an App subpage in the reload URL when returning through %s', async (entry) => {
+    const transport = new MockControlTransport();
+    const page = renderDesktop('app-center', transport, '/plugins?view=skills');
+    expect(screen.getByLabelText('app-center current page')).toHaveTextContent('/plugins?view=skills');
+    const shortcuts = screen.getByLabelText('桌面 App');
+    fireEvent.keyDown(within(shortcuts).getByRole('button', { name: 'Agent' }), { key: 'Enter' });
+    expect(window.location.hash).toBe('#/agent');
+
+    if (entry === 'desktop') {
+      fireEvent.keyDown(within(shortcuts).getByRole('button', { name: 'App Center' }), { key: 'Enter' });
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: '打开全部 App' }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: '全部 App' })).getByRole('button', { name: /App Center/ }));
+    }
+    expect(screen.getByLabelText('app-center current page')).toHaveTextContent('/plugins?view=skills');
+    expect(window.location.hash).toBe('#/plugins?view=skills');
+    const reloadRoute = window.location.hash.slice(1);
+    page.unmount();
+    renderDesktop('app-center', transport, reloadRoute);
+    expect(screen.getByLabelText('app-center current page')).toHaveTextContent('/plugins?view=skills');
+  });
+
   it('opens and closes the App launcher with the advertised keyboard shortcut', () => {
     renderDesktop();
 
@@ -1076,7 +1106,7 @@ describe('PAWOS desktop', () => {
   });
 });
 
-function renderDesktop(initialAppId?: PawAppId, transport = new MockControlTransport()) {
+function renderDesktop(initialAppId?: PawAppId, transport = new MockControlTransport(), initialRoute?: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -1086,7 +1116,7 @@ function renderDesktop(initialAppId?: PawAppId, transport = new MockControlTrans
         <ThemeProvider>
           <MotionProvider>
             <GlobalFeedbackProvider>
-              <PawDesktopProvider initialAppId={initialAppId}>
+              <PawDesktopProvider initialAppId={initialAppId} initialRoute={initialRoute}>
                 <PawDesktop />
               </PawDesktopProvider>
             </GlobalFeedbackProvider>
