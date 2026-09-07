@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-07T06:14:07.445121+00:00",
+  "generatedAt": "2026-09-07T06:30:00.443569+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -23,7 +23,7 @@
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 413
+      "pathCount": 414
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -63,15 +63,15 @@
     }
   },
   "summary": {
-    "pathCount": 940,
+    "pathCount": 941,
     "dispositionCounts": {
-      "keep_release": 939,
+      "keep_release": 940,
       "delete_old_implementation": 1
     },
     "groupCounts": {
       "project_harness": 7,
       "requirement_evidence": 51,
-      "control_center_release_ui": 413,
+      "control_center_release_ui": 414,
       "memory_context_continuity": 30,
       "execution_reliability": 30,
       "evaluation_audit": 134,
@@ -2287,6 +2287,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain memory switch visibility and capability settings clarity with focused regressions."
+    },
+    {
+      "path": "control-center-web/src/features/plugins/skill-presentation.ts",
+      "group": "control_center_release_ui",
+      "reason": "Share source-scoped skill names and purpose summaries between library and scene selection.",
+      "status": "added",
+      "disposition": "keep_release"
     },
     {
       "path": "control-center-web/src/features/rooms/RoomStatusPanel.tsx",

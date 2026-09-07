@@ -995,6 +995,40 @@ describe('PluginsFeature', () => {
     expect(screen.getByRole('heading', { name: '还没有额外扩展' })).toBeVisible();
   });
 
+  it('uses the same skill purposes as scene loading while preserving original identity and body', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins({
+      'agent.extensions.skills.list': { schemaVersion: 'rag-ime.skill-inventory.v1', ok: true, runtimeAvailable: true, items: [
+        { skillId: 'skill:debug:exact', name: 'systematic-debugging', description: 'Original diagnostic guidance.', sourceKind: 'bundled',
+          installed: true, enabled: null, management: 'inspect_only',
+          managementReason: 'This Skill is supplied by Pi and has no independent enable switch.', actions: [] },
+        { skillId: 'project:custom', name: 'Project Guide', description: 'Author supplied content.', sourceKind: 'project', installed: true, enabled: null, management: 'inspect_only' },
+        { skillId: 'project:debug', name: 'systematic-debugging', description: 'Custom project instructions.', sourceKind: 'project', installed: true, enabled: null, management: 'inspect_only' },
+      ] },
+      'agent.extensions.skills.get': { ok: true, item: { body: '# Original Skill body' } },
+    }, '/plugins?view=skills');
+    await user.type(await screen.findByRole('textbox', { name: '搜索' }), '故障');
+    const list = await screen.findByRole('group', { name: 'Skill 列表' });
+    await user.click(within(list).getByRole('button', { name: /故障定位/ }));
+    const detail = screen.getByRole('complementary', { name: 'Skill 详情' });
+    expect(within(detail).getByRole('heading', { name: '故障定位' })).toBeVisible();
+    expect(detail).toHaveTextContent('先复现并定位故障原因，再验证修复');
+    expect(detail).toHaveTextContent('systematic-debugging');
+    expect(detail).not.toHaveTextContent('This Skill is supplied by Pi');
+    expect(detail).not.toHaveTextContent('随产品提供 · 随产品提供');
+    expect(await within(detail).findByText('# Original Skill body')).toBeVisible();
+    expect(transport.requests.find(({ request }) => request.pathId === 'agent.extensions.skills.get')?.request.query).toEqual({ skillId: 'skill:debug:exact' });
+    await user.click(within(detail).getByText('查看原始用途说明'));
+    expect(detail).toHaveTextContent('Original diagnostic guidance.');
+    await user.clear(screen.getByRole('textbox', { name: '搜索' }));
+    await user.type(screen.getByRole('textbox', { name: '搜索' }), 'systematic-debugging');
+    expect(within(list).getByRole('button', { name: /故障定位/ })).toBeVisible();
+    expect(within(list).getByRole('button', { name: /systematic-debugging/ })).toHaveTextContent('Custom project instructions.');
+    await user.click(within(detail).getByRole('button', { name: '设置场景加载' }));
+    expect(screen.getByTestId('test-location')).toHaveTextContent('/plugins?view=scenes');
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.configuration.update')).toBe(false);
+  });
+
   it('browses Skills by source, reads bounded detail, and scopes Package actions', async () => {
     const user = userEvent.setup();
     const packageSkill = {

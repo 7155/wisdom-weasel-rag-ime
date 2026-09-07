@@ -1321,3 +1321,15 @@
 .plugins-list__aside > small { flex-basis: 100%; text-align: right; }
 
 .plugins-capability-counts { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+
+
+.skills-detail__original > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.skills-detail__original > summary svg { flex: 0 0 auto; }
+.skills-detail__original[data-expanded] > summary svg { transform: rotate(90deg); }
+.skills-detail__original p { overflow-wrap: anywhere; }

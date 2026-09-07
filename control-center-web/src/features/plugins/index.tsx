@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { presentSkill } from './skill-presentation';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Button,
@@ -472,7 +473,11 @@ export function PluginsFeature() {
   const filteredSkills = useMemo(() => {
     const needle = skillQuery.trim().toLocaleLowerCase('zh-CN');
     return skillItems.filter((item) => {
+      const presentation = presentSkill(item);
       const haystack = [
+        presentation.name,
+        presentation.description,
+        skillSourceLabel(stringValue(item.sourceKind)),
         stringValue(item.skillId),
         stringValue(item.name),
         stringValue(item.description),
@@ -847,8 +852,8 @@ export function PluginsFeature() {
       ) : null}
       <MetricStrip items={[
         { label: '可查看', value: skillItems.length, detail: '当前可发现的 Skill', icon: Sparkles },
-        { label: 'Package 管理', value: skillItems.filter((item) => stringValue(item.management) === 'package').length, detail: '按 Package 统一变更', icon: PackageCheck },
-        { label: '仅查看', value: skillItems.filter((item) => stringValue(item.management) === 'inspect_only').length, detail: 'Bundled 或项目来源', icon: ShieldQuestion },
+        { label: '随插件管理', value: skillItems.filter((item) => stringValue(item.management) === 'package').length, detail: '按 Package 统一变更', icon: PackageCheck },
+        { label: '仅查看', value: skillItems.filter((item) => stringValue(item.management) === 'inspect_only').length, detail: '随产品提供或来自当前项目', icon: ShieldQuestion },
       ]} />
       <div className="skills-filters">
         <Field className="plugins-search" htmlFor="skill-search" label="搜索">
@@ -865,8 +870,8 @@ export function PluginsFeature() {
             onValueChange={setSkillSource}
             options={[
               { value: 'all', label: '全部来源' },
-              { value: 'package', label: 'Pi Package' },
-              { value: 'bundled', label: 'Bundled' },
+              { value: 'package', label: '插件提供' },
+              { value: 'bundled', label: '随产品提供' },
               { value: 'project', label: '当前项目' },
             ]}
             value={skillSource}
@@ -891,7 +896,8 @@ export function PluginsFeature() {
           <div aria-label="Skill 列表" className="plugins-list" role="group">
             {filteredSkills.map((item) => {
               const id = stringValue(item.skillId);
-              const name = stringValue(item.name, id);
+              const presentation = presentSkill(item);
+              const name = presentation.name;
               const isSelected = id === selectedSkillId;
               return (
                 <button
@@ -903,9 +909,9 @@ export function PluginsFeature() {
                   type="button"
                 >
                   <span className="plugins-list__copy">
-                    <small>{skillSourceLabel(stringValue(item.sourceKind))} · {skillInstallStateLabel(item)}</small>
+                    <small>{skillOriginSummary(item)}</small>
                     <strong>{name}</strong>
-                    <span>{stringValue(item.description, '没有提供用途说明。')}</span>
+                    <span>{presentation.description || '没有提供用途说明。'}</span>
                   </span>
                   <span className="plugins-list__aside">
                     <StatusBadge {...skillStatusBadge(item)} />
@@ -925,6 +931,7 @@ export function PluginsFeature() {
               lifecyclePending={lifecyclePending}
               onAction={(action) => void previewInstalledAction(action, stringValue(selectedSkill.packageId))}
               onClose={() => setSelectedSkillId('')}
+              onOpenScenes={() => desktop ? openPawOsRoute(desktop, '/plugins?view=scenes') : navigate('/plugins?view=scenes')}
               onRetry={() => void skill.refetch()}
               onUpdate={() => {
                 if (selectedSkillPackage && selectedSkillUpdate) {
@@ -1366,6 +1373,7 @@ function SkillDetail({
   lifecyclePending,
   onAction,
   onClose,
+  onOpenScenes,
   onRetry,
   onUpdate,
   update,
@@ -1378,6 +1386,7 @@ function SkillDetail({
   lifecyclePending: boolean;
   onAction: (action: 'enable' | 'disable' | 'uninstall') => void;
   onClose: () => void;
+  onOpenScenes: () => void;
   onRetry: () => void;
   onUpdate: () => void;
   update?: Record<string, unknown>;
@@ -1386,6 +1395,8 @@ function SkillDetail({
   const packageId = stringValue(item.packageId);
   const actions = stringArray(item.actions);
   const body = stringValue(detail.body);
+  const presentation = presentSkill(item);
+  const originalDescription = stringValue(item.description);
   const contentRevision = stringValue(item.contentRevision, stringValue(item.digest, '未提供'));
   const packageVersion = stringValue(item.packageVersion);
   const canManagePackage = stringValue(item.management) === 'package' && Boolean(packageId);
@@ -1405,13 +1416,22 @@ function SkillDetail({
       <div className="plugins-detail__heading">
         <span className="plugins-detail__icon"><Sparkles aria-hidden="true" size={18} /></span>
         <div>
-          <small>{skillSourceLabel(sourceKind)} · {skillInstallStateLabel(item)}</small>
-          <h3>{stringValue(item.name, stringValue(item.skillId, '未命名 Skill'))}</h3>
-          <p>{stringValue(item.description, '没有提供用途说明。')}</p>
+          <small>{skillOriginSummary(item)}</small>
+          <h3>{presentation.name}</h3>
+          <p>{presentation.description || '没有提供用途说明。'}</p>
         </div>
         <StatusBadge {...skillStatusBadge(item)} />
       </div>
+      {item.installed !== false && item.enabled !== false ? (
+        <Button onClick={onOpenScenes} size="small" variant="quiet">设置场景加载</Button>
+      ) : null}
+      {originalDescription && originalDescription !== presentation.description ? (
+        <Disclosure className="skills-detail__original" summary={<><ChevronRight aria-hidden="true" size={14} />查看原始用途说明</>}>
+          <p>{originalDescription}</p>
+        </Disclosure>
+      ) : null}
       <dl className="skills-detail__facts">
+        <div><dt>技能标识</dt><dd className="skills-detail__path">{stringValue(item.name, stringValue(item.skillId))}</dd></div>
         <div><dt>来源</dt><dd>{skillSourceLabel(sourceKind)}</dd></div>
         {packageId ? <div><dt>Package</dt><dd>{packageId}{packageVersion ? ` · v${packageVersion}` : ''}</dd></div> : null}
         <div><dt>资源路径</dt><dd className="skills-detail__path">{stringValue(item.resourcePath, '未提供')}</dd></div>
@@ -1419,9 +1439,9 @@ function SkillDetail({
       </dl>
       <div className="skills-detail__scope">
         <strong>{canManagePackage ? 'Package 范围管理' : '仅查看'}</strong>
-        <span>{stringValue(item.managementReason, canManagePackage
+        <span>{publicSkillManagementReason(stringValue(item.managementReason, canManagePackage
           ? 'Skill 的生命周期由整个 Pi Package 统一管理。'
-          : '这个 Skill 没有独立的启用开关，当前仅提供正文查看。')}</span>
+          : '这里查看技能正文；新对话的加载范围在场景加载中设置。'))}</span>
       </div>
       <div className="skills-detail__actions">
         {canManagePackage && actions.includes(enabled ? 'disable' : 'enable') ? (
@@ -1782,10 +1802,20 @@ function publicInstalledPluginDescription(plugin: Record<string, unknown>): stri
     'vertical-agent-sandbox': '为当前对话连接由运行环境管理的垂直场景沙盒。',
   } as Record<string, string>)[stringValue(plugin.id)] ?? stringValue(plugin.description);
 }
+function publicSkillManagementReason(reason: string): string {
+  return ({
+    'This Skill is supplied by Pi and has no independent enable switch.': '技能随产品提供；新对话的加载范围在场景加载中设置。',
+    'This project Skill is discovered from the project workspace and has no independent Package lifecycle.': '技能来自当前项目，不作为独立插件启停或卸载；可在场景加载中选择是否使用。',
+    'This Skill belongs to the Package; lifecycle changes apply to the whole Package and all of its resources.': '启停、更新或卸载会影响整个插件及其所有技能与资源。',
+  } as Record<string, string>)[reason] ?? reason;
+}
+function skillOriginSummary(item: Record<string, unknown>): string {
+  return [...new Set([skillSourceLabel(stringValue(item.sourceKind)), skillInstallStateLabel(item)])].join(' · ');
+}
 function skillSourceLabel(value: string): string {
   return ({
-    package: 'Pi Package',
-    bundled: 'Bundled',
+    package: '插件提供',
+    bundled: '随产品提供',
     project: '当前项目',
   } as Record<string, string>)[value] ?? (value || '未知来源');
 }
