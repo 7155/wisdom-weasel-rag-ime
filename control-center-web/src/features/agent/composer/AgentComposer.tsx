@@ -141,6 +141,7 @@ export function AgentComposer({
   thinkingPickerRequest = 0,
   permissionPickerRequest = 0,
   toolPickerRequest = 0,
+  toolPickerQuery = '',
   helpRequest = 0,
   imageSupport = 'unknown',
   showJumpLatest = false,
@@ -186,6 +187,7 @@ export function AgentComposer({
   thinkingPickerRequest?: number;
   permissionPickerRequest?: number;
   toolPickerRequest?: number;
+  toolPickerQuery?: string;
   helpRequest?: number;
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
   showJumpLatest?: boolean;
@@ -563,6 +565,7 @@ export function AgentComposer({
                   capabilityPolicyPending={capabilityPolicyPending}
                   disabled={!session}
                   requestOpen={toolPickerRequest}
+                  requestQuery={toolPickerQuery}
                   session={session}
                   status={toolCatalogStatus}
                   tools={tools}

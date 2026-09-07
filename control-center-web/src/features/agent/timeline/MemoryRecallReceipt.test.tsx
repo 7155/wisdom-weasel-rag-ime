@@ -75,18 +75,18 @@ describe('MemoryRecallReceipt', () => {
 
     const disclosure = container.querySelector('details');
     expect(disclosure).not.toHaveAttribute('open');
-    expect(screen.getByText('记忆召回 · 3 条 · 18 ms')).toBeInTheDocument();
+    expect(screen.getByText('本轮记忆 · 3 条 · 18 ms')).toBeInTheDocument();
     expect(screen.queryByText('偏好：回答保持简洁')).not.toBeInTheDocument();
 
-    await user.click(screen.getByText('记忆召回 · 3 条 · 18 ms'));
+    await user.click(screen.getByText('本轮记忆 · 3 条 · 18 ms'));
     expect(screen.getByText('偏好：回答保持简洁')).toBeInTheDocument();
     expect(screen.getByText('PAW 项目约定')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '在记忆中打开 atom-1' }));
     expect(openRoute).toHaveBeenCalledWith('/memory?layer=atoms&id=atom-1');
     await user.click(screen.getByRole('button', { name: '查看本轮上下文轨迹' }));
     expect(openRoute).toHaveBeenCalledWith('/agent?session=session-memory&trace=trace-memory&node=node-memory');
-    await user.click(screen.getByRole('button', { name: '打开记忆召回设置' }));
-    expect(openRoute).toHaveBeenCalledWith('/memory?view=preferences');
+    await user.click(screen.getByRole('button', { name: '打开本对话记忆开关' }));
+    expect(openRoute).toHaveBeenCalledWith(expect.stringMatching(/^\/agent\?session=session-memory&tools=memory&toolsRequest=\d+$/));
   });
 
   it('keeps a real legacy trace visible without confusing pack count with hit count', () => {
@@ -95,7 +95,7 @@ describe('MemoryRecallReceipt', () => {
     const receipt = memoryRecallReceiptFromTrace(trace);
     expect(receipt).toMatchObject({ status: 'included', count: undefined });
     render(<MemoryRecallReceipt receipt={receipt!} />);
-    expect(screen.getByText(/记忆召回 · 已载入/)).toBeInTheDocument();
+    expect(screen.getByText(/本轮记忆 · 已载入/)).toBeInTheDocument();
     expect(screen.queryByText(/1 条/)).not.toBeInTheDocument();
   });
 
@@ -103,7 +103,7 @@ describe('MemoryRecallReceipt', () => {
     ['empty', 0, '未找到相关记忆'],
     ['failed', undefined, '本轮未能召回'],
     ['disabled', undefined, '已关闭'],
-    ['reused', 3, '沿用已有记忆'],
+    ['reused', 3, '复用已载入记忆'],
   ] as const)('shows the recorded %s outcome without manufacturing a new search', (status, count, label) => {
     const trace = memoryTrace({ hitCount: count });
     trace.nodes[0].metadata.recallStatus = status;
@@ -149,7 +149,7 @@ describe('MemoryRecallReceipt', () => {
         <MemoryRecallReceipt receipt={receipt!} />
       </PawOsDesktopProvider>,
     );
-    await user.click(within(container).getByText('记忆召回 · 3 条 · 18 ms'));
+    await user.click(within(container).getByText('本轮记忆 · 3 条 · 18 ms'));
     await user.click(within(container).getByRole('button', { name: '在知识库中打开 doc-1' }));
     expect(openRoute).toHaveBeenCalledWith('/knowledge?document=doc-1&tab=viewer');
   });

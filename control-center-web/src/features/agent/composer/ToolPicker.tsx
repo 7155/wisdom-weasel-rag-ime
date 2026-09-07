@@ -1,4 +1,4 @@
-import { Search, X } from 'lucide-react';
+import { BrainCircuit, Search, Settings2, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import {
@@ -14,6 +14,7 @@ import {
   type CapabilityCatalog,
   type CapabilityPreference,
 } from '@/features/plugins/capability-policy';
+import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { CapabilityMark } from '../marks/ConversationMarks';
 import type { SessionSummary, ToolManifest } from '../types';
 import {
@@ -33,6 +34,7 @@ export function ToolPicker({
   session,
   disabled,
   requestOpen,
+  requestQuery = '',
   onCapabilityPreferenceChange,
   onSelect,
 }: {
@@ -44,17 +46,21 @@ export function ToolPicker({
   session?: SessionSummary;
   disabled: boolean;
   requestOpen: number;
+  requestQuery?: string;
   onCapabilityPreferenceChange: (canonicalId: string, preference: CapabilityPreference) => void;
   onSelect: (tool: ToolManifest) => void;
 }) {
+  const desktop = usePawOsDesktop();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   useEffect(() => {
-    if (requestOpen > 0 && status === 'ready' && !disabled) setOpen(true);
-  }, [disabled, requestOpen, status]);
+    if (requestOpen > 0 && status === 'ready' && !disabled) { setQuery(requestQuery); setOpen(true); }
+  }, [disabled, requestOpen, requestQuery, status]);
 
+  const memory = capabilityCatalog?.items.find((item) => item.canonicalId === 'tool:memory');
+  const memoryEnabled = memory?.disclosure.effective === 'enabled';
   const availableCount = countAvailableTools(tools, session, capabilityCatalog);
   const registeredCount = countRegisteredTools(tools);
   const auxiliaryCapabilityCount = capabilityCatalog
@@ -63,8 +69,12 @@ export function ToolPicker({
   const search = query.trim().toLocaleLowerCase();
   const visibleTools = tools.filter((tool) => {
     const presentation = toolPresentation(tool);
-    return !search || [tool.id, tool.displayName, tool.description, presentation.name, presentation.description]
+    return !search || [tool.id, tool.displayName, tool.description, presentation.name, presentation.description, tool.id === 'memory' ? '记忆自举 自动召回' : '']
       .some((value) => value.toLocaleLowerCase().includes(search));
+  }).sort((left, right) => {
+    if (!search) return 0;
+    const byName = (tool: ToolManifest) => Number(toolPresentation(tool).name.toLocaleLowerCase().includes(search));
+    return byName(right) - byName(left);
   });
   const label = status === 'loading'
     ? '能力列表正在读取'
@@ -78,6 +88,20 @@ export function ToolPicker({
       : ` · ${availableCount}/${registeredCount}`;
 
   return (
+    <>
+      {memory ? (
+        <Button
+          aria-label={`当前对话记忆${memoryEnabled ? '已开启' : '已关闭'}，打开记忆开关`}
+          className="agent-composer__picker agent-composer__memory-picker"
+          data-memory-enabled={memoryEnabled}
+          disabled={disabled || status !== 'ready'}
+          leadingIcon={<BrainCircuit size={15} />}
+          onClick={() => { setQuery('记忆'); setOpen(true); }}
+          size="small"
+          title={`当前对话记忆${memoryEnabled ? '已开启' : '已关闭'} · ${capabilityScopeLabel(memory.effectiveScope)}；更改从下一轮生效`}
+          variant="quiet"
+        >记忆 · {memoryEnabled ? '开' : '关'}</Button>
+      ) : null}
     <Popover open={open} onOpenChange={(nextOpen) => {
       setOpen(nextOpen);
       if (nextOpen) setQuery('');
@@ -178,6 +202,10 @@ export function ToolPicker({
                   <div className="agent-tool-picker__metadata">
                     <span data-risk={tool.riskLevel}>{available ? riskLabel(tool.riskLevel) : '当前对话不可用'}</span>
                     {capability ? <span>{capabilityScopeLabel(capability.effectiveScope)}</span> : null}
+                    {capability && capabilityCatalog?.sessionPolicy?.disclosurePreferences.globalDefault[capability.canonicalId]
+                      && capabilityCatalog.sessionPolicy.disclosurePreferences.globalDefault[capability.canonicalId] !== 'inherit'
+                      ? <span>所有对话默认：{capabilityCatalog.sessionPolicy.disclosurePreferences.globalDefault[capability.canonicalId] === 'enabled' ? '开启' : '关闭'}</span>
+                      : null}
                   </div>
                   {capability ? (
                     <Select
@@ -202,8 +230,22 @@ export function ToolPicker({
         <p className="agent-tool-picker__note">
           更改从下一轮生效，后台任务继续运行。
         </p>
+        <Button
+          className="agent-tool-picker__manage"
+          leadingIcon={<Settings2 size={14} />}
+          onClick={() => {
+            setOpen(false);
+            const params = new URLSearchParams({ view: 'capabilities' });
+            if (session?.id) params.set('sessionId', session.id);
+            if (query.includes('记忆')) params.set('capability', 'tool:memory');
+            openPawOsRoute(desktop, `/plugins?${params.toString()}`);
+          }}
+          size="small"
+          variant="quiet"
+        >管理功能与默认设置</Button>
       </PopoverContent>
     </Popover>
+    </>
   );
 }
 
@@ -217,7 +259,7 @@ function toolPresentation(tool: ToolManifest): { name: string; description: stri
   if (tool.id === 'memory') {
     return {
       name: '记忆召回',
-      description: '控制本对话的自动记忆自举、压缩后召回和记忆工具查询，从下一轮生效。',
+      description: '把相关记忆加入对话，并允许 Agent 查询记忆。关闭后从下一轮停止使用；不会删除已保存的记忆。',
     };
   }
   if (tool.id === 'knowledge') {

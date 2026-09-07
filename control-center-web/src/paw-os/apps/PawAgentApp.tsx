@@ -112,6 +112,14 @@ export function PawAgentApp({
     return routeSessionId && selection.kind === 'session' && selection.id === routeSessionId ? focus.nodeId : '';
   }, [initialRoute, selection]);
 
+  const toolPickerIntent = useMemo(() => {
+    const params = new URLSearchParams(initialRoute.split('?', 2)[1] ?? '');
+    const routeSessionId = params.get('session') || params.get('sessionId');
+    const tools = params.get('tools');
+    return routeSessionId === selectedSessionId && (tools === 'open' || tools === 'memory')
+      ? { id: initialRoute, query: tools === 'memory' ? '记忆' : '' } : undefined;
+  }, [initialRoute, selectedSessionId]);
+
   useEffect(() => {
     setSelection(initialSelection(initialRoute, targetKind, targetId, targetRoomId));
     setRailOpen(false);
@@ -454,6 +462,7 @@ export function PawAgentApp({
             record={selectedSessionRecord}
             recordId={selection.id}
             traceFocusNodeId={evidenceFocus}
+            toolPickerIntent={toolPickerIntent}
             onNewWork={() => setSelection({ kind: 'new' })}
             onSessionCreated={(created, draft) => {
               optimisticSessionsRef.current[created.id] = created;

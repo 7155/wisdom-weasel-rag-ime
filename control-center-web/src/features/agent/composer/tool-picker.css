@@ -96,3 +96,7 @@
   .agent-tool-picker__name,
   .agent-tool-picker__preference .ui-select__trigger { min-height: 44px; }
 }
+
+.agent-composer__memory-picker { white-space: nowrap; }
+.agent-composer__memory-picker[data-memory-enabled='true'] { color: var(--color-success); }
+.agent-tool-picker__manage { flex: none; align-self: flex-start; margin: 0 12px 10px; }

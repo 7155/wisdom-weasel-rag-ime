@@ -151,6 +151,7 @@ export function PawSessionWorkspace({
   onSessionActivity,
   onSessionUpdated,
   traceFocusNodeId = '',
+  toolPickerIntent,
   appearance = 'full',
   showComposerControls = appearance !== 'embedded',
   composerPlaceholder,
@@ -165,6 +166,7 @@ export function PawSessionWorkspace({
   screenContext?: ScreenContext;
   /** 反向证据链落点：直接进入轨迹视图并聚焦这个装配节点。 */
   traceFocusNodeId?: string;
+  toolPickerIntent?: { id: string; query: string };
   onNewWork: () => void;
   onSessionCreated: (session: SessionSummary, draft: string) => void;
   onSessionActivity?: () => void;
@@ -218,6 +220,14 @@ export function PawSessionWorkspace({
   const [thinkingPickerRequest, setThinkingPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
+  const [toolPickerQuery, setToolPickerQuery] = useState('');
+  const appliedToolIntent = useRef('');
+  useEffect(() => {
+    if (!toolPickerIntent || appliedToolIntent.current === toolPickerIntent.id || toolCatalogStatus !== 'ready') return;
+    appliedToolIntent.current = toolPickerIntent.id;
+    setToolPickerQuery(toolPickerIntent.query);
+    setToolPickerRequest((value) => value + 1);
+  }, [toolCatalogStatus, toolPickerIntent]);
   const [helpRequest, setHelpRequest] = useState(0);
   const [requestedApproval, setRequestedApproval] = useState<AgentActivityProjection>();
   const [conversationForkAvailable, setConversationForkAvailable] = useState(false);
@@ -279,40 +289,40 @@ export function PawSessionWorkspace({
   const loadControlCatalog = useCallback(async (signal?: AbortSignal) => {
     if ((!liveActive && !signal) || signal?.aborted) return;
     setToolCatalogStatus('loading');
-    const [modelsResult, commandsResult, toolsResult, runtimeResult] = await Promise.allSettled([
-      transport.request({ pathId: 'agent.session.models', params: { sessionId: recordId }, ...(signal ? { signal } : {}) }),
-      transport.request({ pathId: 'agent.session.commands', params: { sessionId: recordId }, ...(signal ? { signal } : {}) }),
-      transport.request({ pathId: 'agent.tools.list', query: { sessionId: recordId }, ...(signal ? { signal } : {}) }),
-      transport.request<Record<string, unknown>>({ pathId: 'agent.runtime.get', ...(signal ? { signal } : {}) }),
-    ]);
-    if (signal?.aborted) return;
-    if (modelsResult.status === 'fulfilled' && isModelCatalog(modelsResult.value)) setCatalog(modelsResult.value);
-    if (commandsResult.status === 'fulfilled') setCommands(commandItems(commandsResult.value));
-    if (toolsResult.status === 'fulfilled') {
-      setTools(toolItems(toolsResult.value));
-      try {
-        setCapabilityCatalog(requireSessionCapabilityCatalog(toolsResult.value, recordId));
+    // Publish each independent catalog as it arrives. A slow model/command
+    // lookup must not keep the already-confirmed memory and tool switches hidden.
+    const requestOptions = signal ? { signal } : {};
+    await Promise.allSettled([
+      transport.request({ pathId: 'agent.session.models', params: { sessionId: recordId }, ...requestOptions }).then((value) => {
+        if (!signal?.aborted && isModelCatalog(value)) setCatalog(value);
+      }),
+      transport.request({ pathId: 'agent.session.commands', params: { sessionId: recordId }, ...requestOptions }).then((value) => {
+        if (!signal?.aborted) setCommands(commandItems(value));
+      }),
+      transport.request({ pathId: 'agent.tools.list', query: { sessionId: recordId }, ...requestOptions }).then((value) => {
+        if (signal?.aborted) return;
+        setTools(toolItems(value));
+        setCapabilityCatalog(requireSessionCapabilityCatalog(value, recordId));
         setCapabilityCatalogError('');
         setToolCatalogStatus('ready');
-      } catch (reason) {
+      }).catch((reason: unknown) => {
+        if (signal?.aborted) return;
+        setTools([]);
         setCapabilityCatalog(undefined);
         setCapabilityCatalogError(errorText(reason));
         setToolCatalogStatus('failed');
-      }
-    } else {
-      setTools([]);
-      setCapabilityCatalog(undefined);
-      setCapabilityCatalogError(toolsResult.status === 'rejected' ? errorText(toolsResult.reason) : '能力目录不可用。');
-      setToolCatalogStatus('failed');
-    }
-    if (runtimeResult.status === 'fulfilled') {
-      const capabilities = asRecord(runtimeResult.value.capabilities);
-      setConversationForkAvailable(capabilities.conversationFork === true);
-      setConversationRewriteAvailable(capabilities.conversationRewrite === true);
-    } else {
-      setConversationForkAvailable(false);
-      setConversationRewriteAvailable(false);
-    }
+      }),
+      transport.request<Record<string, unknown>>({ pathId: 'agent.runtime.get', ...requestOptions }).then((value) => {
+        if (signal?.aborted) return;
+        const capabilities = asRecord(value.capabilities);
+        setConversationForkAvailable(capabilities.conversationFork === true);
+        setConversationRewriteAvailable(capabilities.conversationRewrite === true);
+      }).catch(() => {
+        if (signal?.aborted) return;
+        setConversationForkAvailable(false);
+        setConversationRewriteAvailable(false);
+      }),
+    ]);
   }, [liveActive, recordId, transport]);
 
   const refreshControlCatalog = useCallback(() => {
@@ -1136,7 +1146,7 @@ export function PawSessionWorkspace({
     else if (command === 'model') setModelPickerRequest((value) => value + 1);
     else if (command === 'thinking') setThinkingPickerRequest((value) => value + 1);
     else if (command === 'permissions') setPermissionPickerRequest((value) => value + 1);
-    else if (command === 'tools') setToolPickerRequest((value) => value + 1);
+    else if (command === 'tools') { setToolPickerQuery(''); setToolPickerRequest((value) => value + 1); }
     else if (command === 'status' || command === 'session') setPanel('status');
     else if (command === 'subagents') setPanel('subagents');
     else if (command === 'stop') void stop();
@@ -1488,6 +1498,7 @@ export function PawSessionWorkspace({
                 stopping={stopping}
                 toolCatalogStatus={toolCatalogStatus}
                 toolPickerRequest={toolPickerRequest}
+                toolPickerQuery={toolPickerQuery}
                 tools={tools}
                 minimal={!showComposerControls}
                 placeholder={composerPlaceholder}

@@ -38,7 +38,7 @@ describe('CapabilitySessionView', () => {
     const preference = screen.getByRole('combobox', { name: '我的记忆的当前对话临时设置' });
     expect(preference).toHaveTextContent('继承默认');
     await user.click(preference);
-    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+    await user.click(await screen.findByRole('option', { name: '关闭' }));
     expect(onPreferenceChange).toHaveBeenCalledWith('tool:memory', 'disabled');
     expect(dialog).toHaveTextContent('当前对话临时设置在下一次打开或下一轮对话时生效');
     expect(dialog).toHaveTextContent('披露能力不代表已获得执行授权');
@@ -46,7 +46,7 @@ describe('CapabilitySessionView', () => {
     await user.click(screen.getByText('查看来源、权限和生效依据'));
     expect(dialog).toHaveTextContent('已由现有策略授权');
     expect(dialog).toHaveTextContent('需要逐项确认');
-    expect(screen.getByText('项目默认').closest('div')).toHaveTextContent('向伙伴披露');
+    expect(screen.getByText('项目默认').closest('div')).toHaveTextContent('启用');
 
     const search = screen.getByRole('searchbox', { name: '搜索工具、技能或扩展' });
     await user.type(search, '没有这项能力');

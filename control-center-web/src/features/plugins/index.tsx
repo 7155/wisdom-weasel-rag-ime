@@ -55,7 +55,6 @@ import {
   capabilityScopeLabel,
   capabilityStatusLabel,
   preferenceLabel,
-  projectScopeReason,
   type CapabilityCatalogItem,
   type CapabilityDefaultsSnapshot,
   type CapabilityKind,
@@ -76,7 +75,7 @@ import './plugins.css';
 type ToolRecord = CapabilityCatalogItem;
 type KindFilter = 'all' | CapabilityKind;
 type DefaultMutationOutcome = CapabilityMutationOutcome & { scope: 'global' | 'project' };
-type AvailabilityFilter = 'all' | 'online' | 'attention';
+type AvailabilityFilter = 'all' | 'online' | 'attention' | 'enabled' | 'disabled';
 type LifecycleReceipt = { summary: string; evidence: string };
 
 const kindFilters: readonly { label: string; value: KindFilter }[] = [
@@ -150,7 +149,11 @@ export function PluginsFeature() {
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [availability, setAvailability] = useState<AvailabilityFilter>('all');
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(searchParams.get('capability') ?? '');
+  useEffect(() => {
+    const requested = searchParams.get('capability');
+    if (requested) { setSelectedId(requested); setQuery(''); setAvailability('all'); setKind('all'); }
+  }, [searchParams]);
   const selectedTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [enableAfterInstall, setEnableAfterInstall] = useState(true);
   const [packageSource, setPackageSource] = useState('');
@@ -162,7 +165,7 @@ export function PluginsFeature() {
   const [hookError, setHookError] = useState('');
   const [showMaintenance, setShowMaintenance] = useState(Boolean(packageContextId));
   const nativeAppCenter = appSurface?.appId === 'app-center';
-  const nativePage = skillsView ? 'skills' : searchParams.get('view') === 'studio' ? 'studio' : searchParams.get('view') === 'proposals' ? 'proposals' : 'installed';
+  const nativePage = searchParams.get('view') === 'capabilities' ? 'capabilities' : skillsView ? 'skills' : searchParams.get('view') === 'studio' ? 'studio' : searchParams.get('view') === 'proposals' ? 'proposals' : 'installed';
   const items = catalog.data?.items ?? [];
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
@@ -176,7 +179,10 @@ export function PluginsFeature() {
         ...item.requiredPermissions,
       ].join(' ').toLocaleLowerCase('zh-CN');
       const matchesAvailability = availability === 'all'
-        || (availability === 'online' ? state === 'online' || state === 'ready' || state === 'installed' : !['online', 'ready', 'installed'].includes(state));
+        || (availability === 'enabled' || availability === 'disabled'
+          ? item.disclosure.effective === availability
+          : availability === 'online' ? ['online', 'ready', 'installed'].includes(state)
+            : !['online', 'ready', 'installed'].includes(state));
       return (!needle || haystack.includes(needle))
         && (kind === 'all' || item.kind === kind)
         && matchesAvailability;
@@ -498,36 +504,13 @@ export function PluginsFeature() {
 
   const capabilityOverviewBlock = (
     <>
-      <MetricStrip items={[
-        { label: '可查看', value: items.length, detail: '技能、工具与扩展', icon: Wrench },
-        { label: '当前可用', value: availableCount, detail: '连接正常', icon: ShieldCheck },
-        { label: 'Agent 可见', value: disclosedCount, detail: hiddenCount ? `${hiddenCount} 项暂不显示` : '全部可见', icon: PackageCheck },
-      ]} />
-      <Disclosure
-        className="plugins-policy-disclosure"
-        summary={<>
-          <span>
-            <strong>能力如何生效</strong>
-            <small>{catalog.data?.projectScope.supported ? '当前项目有独立默认设置' : '当前使用所有对话的默认设置'}</small>
-          </span>
-          <ChevronRight aria-hidden="true" size={16} />
-        </>}
-      >
-        <div className="capability-policy-notices">
-          <InlineNotice title="显示出来，不等于自动执行" tone="info">
-            开启后，伙伴会在下一轮对话中知道这项能力；涉及风险的操作仍会按原有规则询问你。
-          </InlineNotice>
-          {catalog.data?.projectScope.supported ? (
-            <InlineNotice title="当前项目默认可用" tone="success">
-              {projectScopeReason(catalog.data.projectScope.reason)} 当前项目默认优先于所有对话默认，当前对话临时设置仍可覆盖它。
-            </InlineNotice>
-          ) : (
-            <InlineNotice title="当前只显示所有对话设置" tone="info">
-              从某个项目的伙伴对话进入后，才能设置该项目的默认范围。所有对话设置仍可正常使用。
-            </InlineNotice>
-          )}
+      <p className="plugins-capability-counts">{items.length} 项功能 · {disclosedCount} 项已启用 · {hiddenCount} 项已关闭 · {availableCount} 项连接正常</p>
+      <div className="plugins-settings-scope">
+        <div><strong>{sessionContextId ? '正在查看当前对话的功能设置' : '正在设置所有对话的默认功能'}</strong>
+          <p>对话单独设置优先，其次是项目设置，最后是所有对话默认。更改从下一轮生效。</p>
         </div>
-      </Disclosure>
+        {sessionContextId ? <Button onClick={() => openPawOsRoute(desktop, `/agent?session=${encodeURIComponent(sessionContextId)}&tools=open&toolsRequest=${Date.now()}`)} size="small" variant="quiet">调整本对话开关</Button> : null}
+      </div>
       <div className="capability-policy-feedback">
         {defaults.error ? (
           <InlineNotice title="默认设置暂时无法读取" tone="danger">
@@ -563,7 +546,9 @@ export function PluginsFeature() {
             onValueChange={setAvailability}
             options={[
               { value: 'all', label: '全部状态' },
-              { value: 'online', label: '当前可用' },
+              { value: 'enabled', label: '已启用' },
+              { value: 'disabled', label: '已关闭' },
+              { value: 'online', label: '连接正常' },
               { value: 'attention', label: '需要处理' },
             ]}
             value={availability}
@@ -585,7 +570,7 @@ export function PluginsFeature() {
                     <strong>{publicCapabilityDisplayName(item)}</strong>
                     <span>{publicCapabilityDescription(item)}</span>
                   </span>
-                  <span className="plugins-list__aside"><StatusBadge {...availabilityBadge(item)} /><ChevronRight aria-hidden="true" size={15} /></span>
+                  <span className="plugins-list__aside"><StatusBadge {...availabilityBadge(item)} /><StatusBadge label={capabilityEffectiveLabel(item.disclosure.effective)} tone={item.disclosure.effective === 'enabled' ? 'success' : 'neutral'} /><small>{capabilityScopeLabel(item.effectiveScope)}</small><ChevronRight aria-hidden="true" size={15} /></span>
                 </button>
               );
             })}
@@ -1140,7 +1125,18 @@ export function PluginsFeature() {
      目录 and 建议 stay on their own routes. ------------------------------- */
 
   const studioBlock = <><PluginStudio onPreview={(value) => { setPendingChange(value); setLifecycleError(''); }} />{approvalBlock}{receiptBlock}{errorBlock}</>;
-  const nativeBody = nativePage === 'studio' ? studioBlock : nativePage === 'skills' ? (
+  const nativeBody = nativePage === 'capabilities' ? (
+      <NativeConsole
+        icon={Wrench}
+        title="功能开关"
+        trailing={catalog.data ? <span className="plugins-count">{filtered.length} 项</span> : null}
+      >
+        <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
+          {capabilityOverviewBlock}
+          {capabilityBrowseBlock}
+        </QueryState>
+      </NativeConsole>
+  ) : nativePage === 'studio' ? studioBlock : nativePage === 'skills' ? (
     <NativeConsole
       icon={Sparkles}
       title="Skills"
@@ -1172,7 +1168,7 @@ export function PluginsFeature() {
     </NativeConsole>
   ) : (
     <>
-      <NativeConsole icon={Boxes} title="Pi Package" trailing={packageStatusBadge}>
+      <NativeConsole icon={Boxes} title="插件安装与更新" trailing={packageStatusBadge}>
         <QueryState error={packagesError} isPending={packagesPending} onRetry={retryPackages}>
           <div className="plugin-lifecycle">
             {runtimeNotice}
@@ -1186,16 +1182,7 @@ export function PluginsFeature() {
         </QueryState>
       </NativeConsole>
 
-      <NativeConsole
-        icon={Wrench}
-        title="能力与可见范围"
-        trailing={catalog.data ? <span className="plugins-count">{filtered.length} 项</span> : null}
-      >
-        <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
-          {capabilityOverviewBlock}
-          {capabilityBrowseBlock}
-        </QueryState>
-      </NativeConsole>
+      <Button onClick={() => openPawOsRoute(desktop, `/plugins?view=capabilities${sessionContextId ? `&sessionId=${encodeURIComponent(sessionContextId)}` : ''}`)} variant="quiet">管理 Agent 功能开关与默认设置</Button>
 
       <NativeConsole icon={Clock3} title="自动整理与提醒" trailing={hooksStatusBadge}>
         <QueryState error={asError(lifecycle.error)} isPending={lifecycle.isPending} onRetry={() => void lifecycle.refetch()}>
@@ -1226,7 +1213,7 @@ export function PluginsFeature() {
     <>
       <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection
-          description="在这里选择各类 Agent 可以发现哪些能力。涉及文件、账户或其他敏感操作时，仍会在执行前征求你的同意。"
+          description="选择 Agent 可以使用的功能，分别管理当前对话、项目和全局默认。插件安装与更新在下方单独管理。"
           title="能力概览"
         >
           {capabilityOverviewBlock}
@@ -1234,7 +1221,7 @@ export function PluginsFeature() {
 
         <ManagementSection
           description="选择一项查看它能做什么、当前是否可用，以及由哪一层设置决定伙伴能否使用。"
-          title="浏览插件与能力"
+          title="功能开关"
           trailing={<span className="plugins-count">{filtered.length} 项</span>}
         >
           {capabilityBrowseBlock}
@@ -1522,40 +1509,6 @@ function ToolDetail({
         <StatusBadge {...availabilityBadge(item)} />
       </div>
 
-      <dl className="plugins-detail__facts">
-        <div>
-          <dt><CheckCircle2 aria-hidden="true" size={15} />安装与在线状态</dt>
-          <dd>{capabilityStatusLabel(item.status)}</dd>
-        </div>
-        <div>
-          <dt><ShieldAlert aria-hidden="true" size={15} />风险</dt>
-          <dd>{capabilityRiskLabel(item.risk)}</dd>
-        </div>
-        <div>
-          <dt><ShieldCheck aria-hidden="true" size={15} />所需权限</dt>
-          <dd>{item.requiredPermissions.length ? item.requiredPermissions.join('、') : '不需要额外权限'}</dd>
-        </div>
-        <div>
-          <dt><ShieldCheck aria-hidden="true" size={15} />执行授权</dt>
-          <dd>
-            {item.authorization.state === 'authorized' ? '已授权'
-              : item.authorization.state === 'denied' ? '未授权' : '不适用'}
-            {item.authorization.reason ? ` · ${item.authorization.reason}` : ''}
-          </dd>
-        </div>
-        <div>
-          <dt><MessageCircle aria-hidden="true" size={15} />伙伴可见范围</dt>
-          <dd>
-            {item.disclosure.effective === 'enabled' ? `会向${assistantName}显示` : `暂不向${assistantName}显示`}
-            {item.disclosure.reason ? ` · ${item.disclosure.reason}` : ''}
-          </dd>
-        </div>
-        <div>
-          <dt><History aria-hidden="true" size={15} />生效来源</dt>
-          <dd>{capabilityScopeLabel(item.effectiveScope)}</dd>
-        </div>
-      </dl>
-
       {fixed ? (
         <section aria-label="固定能力策略" className="capability-precedence">
           <header>
@@ -1582,39 +1535,14 @@ function ToolDetail({
                 tone={item.disclosure.effective === 'enabled' ? 'success' : 'neutral'}
               />
             </header>
-            <dl>
-              {sessionOwnerId ? (
-                <div>
-                  <dt>当前对话</dt>
-                  <dd>{preferenceLabel(sessionPreference)}<small>仅影响当前对话</small></dd>
-                </div>
-              ) : null}
-              {projectAvailable ? (
-                <div>
-                  <dt>当前项目</dt>
-                  <dd>{preferenceLabel(projectPreference)}<small>影响此项目的新对话</small></dd>
-                </div>
-              ) : null}
-              <div>
-                <dt>所有对话</dt>
-                <dd>{preferenceLabel(defaultPreference)}<small>由所有对话设置控制</small></dd>
-              </div>
-              <div>
-                <dt>默认设置</dt>
-                <dd>{item.effectiveScope === 'built_in_default' ? capabilityEffectiveLabel(item.disclosure.effective) : '由可用能力决定'}<small>仅在上层全部继承时使用</small></dd>
-              </div>
-            </dl>
-            <p>对话中的选择优先于项目和全局设置；可见范围不会改变执行权限。</p>
-          </section>
-
           <Field
             className="capability-default-field"
             description="用于没有项目或临时设置的对话；正在进行的任务不会因此中断或获得额外权限。"
             htmlFor={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
-            label="所有对话默认可见范围"
+            label="所有对话默认"
           >
             <Select
-              aria-label={`${item.displayName}的所有对话默认可见范围`}
+              aria-label={`${item.displayName}的所有对话默认`}
               disabled={!defaultsAvailable || defaultPending}
               id={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
               onValueChange={onDefaultPreferenceChange}
@@ -1627,10 +1555,10 @@ function ToolDetail({
               className="capability-default-field"
               description="当前项目会优先采用这里的选择；当前对话的临时选择仍优先。"
               htmlFor={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
-              label="当前项目默认可见范围"
+              label="当前项目默认"
             >
               <Select
-                aria-label={`${item.displayName}的当前项目默认可见范围`}
+                aria-label={`${item.displayName}的当前项目默认`}
                 disabled={projectPending}
                 id={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
                 onValueChange={onProjectPreferenceChange}
@@ -1639,9 +1567,67 @@ function ToolDetail({
               />
             </Field>
           ) : null}
+
+            <dl>
+              {sessionOwnerId ? (
+                <div>
+                  <dt>当前对话</dt>
+                  <dd>{preferenceLabel(sessionPreference)}<small>仅影响当前对话</small></dd>
+                </div>
+              ) : null}
+              {projectAvailable ? (
+                <div>
+                  <dt>当前项目</dt>
+                  <dd>{preferenceLabel(projectPreference)}<small>适用于此项目中跟随默认的对话</small></dd>
+                </div>
+              ) : null}
+              <div>
+                <dt>所有对话</dt>
+                <dd>{preferenceLabel(defaultPreference)}<small>由所有对话设置控制</small></dd>
+              </div>
+              <div>
+                <dt>默认设置</dt>
+                <dd>{item.effectiveScope === 'built_in_default' ? capabilityEffectiveLabel(item.disclosure.effective) : '由可用能力决定'}<small>仅在上层全部继承时使用</small></dd>
+              </div>
+            </dl>
+            <p>更改从下一轮生效。已关闭的功能仍可保留安装；安装和对话使用分别管理。</p>
+          </section>
+
         </>
       )}
 
+
+      <dl className="plugins-detail__facts">
+        <div>
+          <dt><CheckCircle2 aria-hidden="true" size={15} />安装与在线状态</dt>
+          <dd>{capabilityStatusLabel(item.status)}</dd>
+        </div>
+        <div>
+          <dt><ShieldAlert aria-hidden="true" size={15} />风险</dt>
+          <dd>{capabilityRiskLabel(item.risk)}</dd>
+        </div>
+        <div>
+          <dt><ShieldCheck aria-hidden="true" size={15} />所需权限</dt>
+          <dd>{item.requiredPermissions.length ? item.requiredPermissions.join('、') : '不需要额外权限'}</dd>
+        </div>
+        <div>
+          <dt><ShieldCheck aria-hidden="true" size={15} />执行授权</dt>
+          <dd>
+            {item.authorization.state === 'authorized' ? '已授权'
+              : item.authorization.state === 'denied' ? '未授权' : '不适用'}
+          </dd>
+        </div>
+        <div>
+          <dt><MessageCircle aria-hidden="true" size={15} />伙伴可见范围</dt>
+          <dd>
+            {item.disclosure.effective === 'enabled' ? `会向${assistantName}显示` : `暂不向${assistantName}显示`}
+          </dd>
+        </div>
+        <div>
+          <dt><History aria-hidden="true" size={15} />生效来源</dt>
+          <dd>{capabilityScopeLabel(item.effectiveScope)}</dd>
+        </div>
+      </dl>
 
       {operations.length || unknownOperationCount ? (
         <div className="plugins-detail__capabilities">
@@ -1653,12 +1639,7 @@ function ToolDetail({
         </div>
       ) : null}
 
-      {item.reasons.length ? (
-        <section className="capability-disclosure">
-          <h4>为什么得到当前结果</h4>
-          <ul>{item.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
-        </section>
-      ) : null}
+
 
       {Object.keys(schema).length ? (
         <section className="capability-disclosure">
@@ -1681,6 +1662,7 @@ function publicCapabilityDisplayName(item: ToolRecord): string {
   return ({ Ask: '向你提问', Todo: '任务清单' } as Record<string, string>)[item.displayName] ?? item.displayName;
 }
 function publicCapabilityDescription(item: ToolRecord): string {
+  if (item.canonicalId === 'tool:memory') return '把相关记忆加入对话，并允许 Agent 查询记忆；关闭后不再使用，已保存的记忆仍保留。';
   const exact = ({
     '维护当前 Session 的分阶段执行清单': '维护当前对话的分阶段任务清单',
     '查看语音状态，并在批准后切换已配置的语音 Provider': '查看语音状态，并在你同意后切换已配置的语音服务',
@@ -1780,7 +1762,7 @@ function publicPluginResourceKindLabel(kind: string): string {
 function operationLabelsFor(item: ToolRecord): string[] { return stringArray(item.operations).map((operation) => operationLabels[operation]).filter((operation): operation is string => Boolean(operation)); }
 function availabilityBadge(item: ToolRecord): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } {
   const status = item.status.toLowerCase();
-  if (status === 'online' || status === 'ready' || status === 'installed') return { label: capabilityStatusLabel(status), tone: 'success' };
+  if (status === 'online' || status === 'ready' || status === 'installed') return { label: '连接正常', tone: 'success' };
   if (status === 'offline') return { label: capabilityStatusLabel(status), tone: 'danger' };
   if (status === 'unconfigured') return { label: capabilityStatusLabel(status), tone: 'warning' };
   return { label: capabilityStatusLabel(status), tone: 'neutral' };

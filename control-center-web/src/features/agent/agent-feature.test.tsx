@@ -1463,6 +1463,14 @@ describe('Agent experience', () => {
   });
 
 
+  it('opens the memory control from a historical receipt deep link without changing preferences', async () => {
+    const transport = productionTransport();
+    renderAgent(transport, '/agent?session=session-preview&tools=memory');
+    const search = await screen.findByRole('textbox', { name: '搜索工具' });
+    expect(search).toHaveValue('记忆');
+    expect(transport.requests.some((call) => call.pathId === 'agent.session.capability-policy.update')).toBe(false);
+  });
+
   it('persists a temporary capability preference and renders the backend-confirmed outcome', async () => {
     let disabled = false;
     const transport = productionTransport({
@@ -1511,7 +1519,7 @@ describe('Agent experience', () => {
     await user.click(capabilityToggle);
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
     await user.click(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' }));
-    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+    await user.click(await screen.findByRole('option', { name: '关闭' }));
 
     await waitFor(() => expect(transport.requests).toContainEqual({
       pathId: 'agent.session.capability-policy.update',
@@ -1524,7 +1532,7 @@ describe('Agent experience', () => {
     }));
     expect(await screen.findByText('当前对话临时设置已保存')).toBeVisible();
     expect(screen.getByText(/后端已确认隐藏/)).toBeVisible();
-    expect(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' })).toHaveTextContent('不向伙伴披露');
+    expect(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' })).toHaveTextContent('关闭');
   });
 
   it('keeps a failed temporary override on its Session owner and retries the exact preference', async () => {
@@ -1546,7 +1554,7 @@ describe('Agent experience', () => {
     await user.click(capabilityToggle);
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
     await user.click(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' }));
-    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+    await user.click(await screen.findByRole('option', { name: '关闭' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('临时策略修订冲突');
 
     await user.click(screen.getByRole('button', { name: '重试这项调整' }));
@@ -1682,7 +1690,7 @@ describe('Agent experience', () => {
     await user.click(capabilityToggle);
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
     await user.click(screen.getByRole('combobox', { name: '后台任务的当前对话临时设置' }));
-    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+    await user.click(await screen.findByRole('option', { name: '关闭' }));
 
     expect(await screen.findByText('当前对话临时设置已保存')).toBeVisible();
     await user.keyboard('{Escape}');

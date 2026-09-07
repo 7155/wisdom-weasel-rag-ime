@@ -1279,3 +1279,14 @@
   :is(main, section)[data-route-id='plugins'][data-paw-os-app] .plugins-native-card { animation: none; }
   :is(main, section)[data-route-id='plugins'][data-paw-os-app] :is(.installed-plugin, .plugin-proposal) { transition: none; }
 }
+
+.plugins-settings-scope { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-block: 12px 16px; border-bottom: 1px solid var(--color-border-soft); }
+.plugins-settings-scope > div { flex: 1 1 240px; min-width: 0; }
+.plugins-settings-scope strong { font-size: 14px; }
+.plugins-settings-scope p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
+.plugins-list__aside > small { color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+
+.plugins-list__aside { flex-wrap: wrap; justify-content: flex-end; max-width: 170px; }
+.plugins-list__aside > small { flex-basis: 100%; text-align: right; }
+
+.plugins-capability-counts { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }

@@ -66,11 +66,11 @@ export function MemoryRecallReceipt({ receipt }: { receipt: MemoryRecallReceiptV
             查看上下文轨迹 <ExternalLink aria-hidden="true" size={12} />
           </button>
           <button
-            aria-label="打开记忆召回设置"
-            onClick={() => openPawOsRoute(desktop, '/memory?view=preferences')}
+            aria-label="打开本对话记忆开关"
+            onClick={() => openPawOsRoute(desktop, `/agent?session=${encodeURIComponent(receipt.sessionId)}&tools=memory&toolsRequest=${Date.now()}`)}
             type="button"
           >
-            召回设置 <Settings2 aria-hidden="true" size={12} />
+            本对话记忆开关 <Settings2 aria-hidden="true" size={12} />
           </button>
         </div>
       </div>
@@ -220,13 +220,12 @@ function receiptPriority(receipt: MemoryRecallReceiptView): number {
 }
 
 function memoryReceiptLabel(receipt: MemoryRecallReceiptView): string {
-  const kind = receipt.trigger === 'first_user_prompt' ? '记忆自举'
-    : receipt.trigger === 'compaction' ? '压缩后记忆召回' : '记忆召回';
+  const kind = receipt.trigger === 'compaction' ? '压缩后记忆' : '本轮记忆';
   const outcome = receipt.status === 'included'
     ? receipt.count === undefined ? '已载入' : `${receipt.count} 条`
     : {
       empty: '未找到相关记忆', failed: '本轮未能召回', disabled: '已关闭',
-      reused: '沿用已有记忆', unavailable: '本轮未装载',
+      reused: '复用已载入记忆', unavailable: '本轮未装载',
     }[receipt.status];
   const timing = receipt.durationMs !== undefined && ['included', 'empty'].includes(receipt.status)
     ? ` · ${receipt.durationMs} ms` : '';
@@ -238,8 +237,8 @@ function memoryReceiptExplanation(receipt: MemoryRecallReceiptView): string {
     included: '这些记忆已加入本轮上下文。可打开来源核对；旧记录没有命中数时不推算数量。',
     empty: '这次自动检索没有找到可加入的相关记忆，当前对话可以继续。',
     failed: '本轮未能载入记忆，当前消息仍可继续。详情可在上下文轨迹中查看。',
-    disabled: '当前记忆召回已关闭，可在召回设置中调整。',
-    reused: '沿用会话已经载入的记忆，没有再次查询。需要新信息时，Agent 仍可调用记忆工具。',
+    disabled: '该轮未启用记忆召回。这是当时的执行记录；当前开关可在本对话的记忆设置中查看。',
+    reused: '该轮复用了对话先前已载入的记忆，没有再次检索。这是当时的执行记录，不代表当前开关状态。',
     unavailable: '这条投递记录没有附带新的记忆包，不能据此判断没有相关记忆。',
   }[receipt.status];
 }

@@ -122,6 +122,16 @@ function renderPicker({
 }
 
 describe('ToolPicker conversation capability presentation', () => {
+  it('shows the current memory state before opening the menu and jumps directly to its control', async () => {
+    const change = renderPicker();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '当前对话记忆已开启，打开记忆开关' }));
+    expect(screen.getByRole('textbox', { name: '搜索工具' })).toHaveValue('记忆');
+    expect(screen.getByRole('combobox', { name: '记忆召回的当前对话使用' })).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: '知识库 / Agent RAG的当前对话使用' })).not.toBeInTheDocument();
+    expect(change).not.toHaveBeenCalled();
+  });
+
   it('counts only capabilities that the current session can actually disclose', async () => {
     renderPicker();
 
@@ -135,7 +145,7 @@ describe('ToolPicker conversation capability presentation', () => {
     const dialog = screen.getByRole('dialog', { name: '当前对话工具' });
 
     const memoryRow = within(dialog).getByRole('button', { name: /^记忆召回/ }).closest('article')!;
-    expect(memoryRow).toHaveTextContent('控制本对话的自动记忆自举、压缩后召回和记忆工具查询，从下一轮生效。');
+    expect(memoryRow).toHaveTextContent('把相关记忆加入对话，并允许 Agent 查询记忆。关闭后从下一轮停止使用；不会删除已保存的记忆。');
     expect(memoryRow).toHaveTextContent('已启用');
     expect(memoryRow).toHaveTextContent('产品内置默认');
 

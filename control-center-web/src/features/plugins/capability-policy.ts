@@ -70,8 +70,8 @@ export interface CapabilityDefaultsSnapshot {
 
 export const capabilityPreferenceOptions = [
   { value: 'inherit', label: '继承默认' },
-  { value: 'enabled', label: '向伙伴披露' },
-  { value: 'disabled', label: '不向伙伴披露' },
+  { value: 'enabled', label: '启用' },
+  { value: 'disabled', label: '关闭' },
 ] as const;
 
 export function parseCapabilityCatalog(value: unknown): CapabilityCatalog | null {
@@ -162,7 +162,7 @@ export function capabilityScopeLabel(value: CapabilityCatalogItem['effectiveScop
 }
 
 export function capabilityEffectiveLabel(value: CapabilityEffective): string {
-  return value === 'enabled' ? '向伙伴披露' : '不向伙伴披露';
+  return value === 'enabled' ? '已启用' : '已关闭';
 }
 
 export function capabilityStatusLabel(value: string): string {

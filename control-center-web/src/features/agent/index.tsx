@@ -127,6 +127,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   const [thinkingPickerRequest, setThinkingPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
+  const [toolPickerQuery, setToolPickerQuery] = useState('');
   const [helpRequest, setHelpRequest] = useState(0);
   const [requestedApproval, setRequestedApproval] = useState<AgentActivityProjection>();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -612,6 +613,18 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
     }
     void loadSessions(requestedSessionId);
   }, [loadSessions, requestedSessionId]);
+  useEffect(() => {
+    if (!['open', 'memory'].includes(searchParams.get('tools') ?? '') || !sessionControlsAvailable
+      || selectedId !== requestedSessionId || toolCatalogStatus !== 'ready') return;
+    setToolPickerQuery(searchParams.get('tools') === 'memory' ? '记忆' : '');
+    setToolPickerRequest((value) => value + 1);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('tools');
+      return next;
+    }, { replace: true });
+  }, [requestedSessionId, searchParams, selectedId, sessionControlsAvailable, setSearchParams, toolCatalogStatus]);
+
   useEffect(() => {
     if (!requestedDraft) {
       requestedDraftAppliedRef.current = '';
@@ -1524,6 +1537,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   }
 
   function openToolPicker(): void {
+    setToolPickerQuery('');
     if (!sessionControlsAvailable) return;
     if (toolCatalogStatus !== 'ready') {
       setError('工具目录暂时不可用。');
@@ -2259,6 +2273,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
             stopping={stopping}
             toolCatalogStatus={toolCatalogStatus}
             toolPickerRequest={toolPickerRequest}
+            toolPickerQuery={toolPickerQuery}
             tools={tools}
             onAttachmentsChange={setSelectedAttachments}
             onCancelEdit={cancelEdit}

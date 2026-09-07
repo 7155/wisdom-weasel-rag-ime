@@ -1,11 +1,11 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-07T02:54:46.966591+00:00",
+  "generatedAt": "2026-09-07T03:24:00.859047+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
     "baseCommit": "f0bcdab577bb5d7f33afec1797bffd23f7946323",
-    "candidateCommitPolicy": "Inventory covers base through the September 7 Agent and subagent interface refinements. Installation and foreground acceptance remain separate."
+    "candidateCommitPolicy": "Inventory covers base through the September 7 Agent, memory control, and capability settings refinements. Installation and foreground acceptance remain separate."
   },
   "dispositions": {
     "keep_release": "Retain this path change in the source release candidate.",
@@ -23,7 +23,7 @@
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 407
+      "pathCount": 411
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -63,15 +63,15 @@
     }
   },
   "summary": {
-    "pathCount": 934,
+    "pathCount": 938,
     "dispositionCounts": {
-      "keep_release": 933,
+      "keep_release": 937,
       "delete_old_implementation": 1
     },
     "groupCounts": {
       "project_harness": 7,
       "requirement_evidence": 51,
-      "control_center_release_ui": 407,
+      "control_center_release_ui": 411,
       "memory_context_continuity": 30,
       "execution_reliability": 30,
       "evaluation_audit": 134,
@@ -903,6 +903,13 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "control-center-web/src/features/agent/composer/AgentComposer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain memory switch visibility and capability settings clarity with focused regressions."
+    },
+    {
       "path": "control-center-web/src/features/agent/composer/ModelPicker.test.tsx",
       "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -1069,6 +1076,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/CapabilitySessionView.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain memory switch visibility and capability settings clarity with focused regressions."
     },
     {
       "path": "control-center-web/src/features/agent/status/ContextUsagePopover.css",
@@ -2233,6 +2247,13 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/src/features/plugins/capability-policy.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain memory switch visibility and capability settings clarity with focused regressions."
+    },
+    {
       "path": "control-center-web/src/features/plugins/index.tsx",
       "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -2252,6 +2273,13 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/plugins/plugins.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain memory switch visibility and capability settings clarity with focused regressions."
     },
     {
       "path": "control-center-web/src/features/rooms/RoomStatusPanel.tsx",

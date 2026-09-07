@@ -59,6 +59,22 @@ afterEach(() => {
 });
 
 describe('PAWOS Agent Session structural migration', () => {
+  it('opens the linked memory control while model discovery is still pending', async () => {
+    const transport = createPreviewTransport();
+    const request = transport.request.bind(transport);
+    const delayedModel = deferred<unknown>();
+    vi.spyOn(transport, 'request').mockImplementation((input) => input.pathId === 'agent.session.models' ? delayedModel.promise as never : request(input));
+    render(<ControlTransportProvider transport={transport}><TooltipProvider>
+      <PawSessionWorkspace record={liveSession()} recordId="session-live"
+        toolPickerIntent={{ id: 'memory-request-1', query: '记忆' }}
+        onNewWork={vi.fn()} onSessionCreated={vi.fn()} onSessionUpdated={vi.fn()} />
+    </TooltipProvider></ControlTransportProvider>);
+    const search = await screen.findByRole('textbox', { name: '搜索工具' });
+    expect(search).toHaveValue('记忆');
+    expect(screen.getByRole('combobox', { name: '记忆召回的当前对话使用' })).toBeVisible();
+    await act(async () => { delayedModel.resolve({}); });
+  });
+
   it('keeps transient connection recovery out of the operation-failure alert and preserves the draft', async () => {
     const sessionId = 'session-quiet-reconnect';
     const transport = new StubControlTransport('mock', idleSessionRoutes());
