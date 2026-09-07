@@ -9,6 +9,7 @@ import type { ControlPathId } from '@/platform/routes';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { ConfigurationFeature } from '.';
+import { ScenarioSkillSettings } from './ScenarioSkillSettings';
 
 const scenarios = ['ordinary', 'room', 'trace', 'agentLab'] as const;
 type Scenario = (typeof scenarios)[number];
@@ -103,14 +104,14 @@ it('isolates Trace Skills and preserves unavailable names in a scoped save', asy
 
   await user.click(within(scenarioTabs).getByRole('tab', { name: /Trace Agent/ }));
   const tracePanel = screen.getByRole('tabpanel', { name: /Trace Agent/ });
-  const requiredTraceSkill = within(tracePanel).getByRole('switch', { name: /trace-agent-diagnostics/ });
+  const requiredTraceSkill = within(tracePanel).getByRole('switch', { name: /运行诊断/ });
   expect(requiredTraceSkill).toBeChecked();
   expect(requiredTraceSkill).toBeDisabled();
-  expect(within(tracePanel).queryByRole('switch', { name: /facilitate-room/ })).not.toBeInTheDocument();
-  expect(within(tracePanel).queryByRole('switch', { name: /agent-eval-room-optimizer/ })).not.toBeInTheDocument();
+  expect(within(tracePanel).queryByRole('switch', { name: /Room 协作主持/ })).not.toBeInTheDocument();
+  expect(within(tracePanel).queryByRole('switch', { name: /实验执行/ })).not.toBeInTheDocument();
   expect(within(tracePanel).getByText(/1 个已配置名称当前不在唯一可用清单中/)).toBeInTheDocument();
 
-  await user.click(within(tracePanel).getByRole('switch', { name: /systematic-debugging/ }));
+  await user.click(within(tracePanel).getByRole('switch', { name: /故障定位/ }));
   await user.click(within(tracePanel).getByRole('button', { name: '保存 Trace Agent 技能加载' }));
 
   await waitFor(() => expect(transport.requests.find(
@@ -146,4 +147,87 @@ function skill(name: string) {
     managementReason: 'bundled',
     actions: [],
   };
+}
+
+
+it('searches skill purposes while preserving hidden selections in the saved scenario', async () => {
+  const user = userEvent.setup();
+  const transport = renderScenarioSkills();
+  await user.type(await screen.findByRole('textbox', { name: '搜索技能' }), '网页');
+  expect(screen.queryByRole('switch', { name: /故障定位/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('switch', { name: /网页操作/ }));
+  await user.click(screen.getByRole('button', { name: '保存 普通对话 技能加载' }));
+  await waitFor(() => expect(transport.requests.find(({ request }) => request.pathId === 'agent.configuration.update')?.request.body).toEqual({
+    expectedRevision: 7,
+    changes: { 'skillRouting.ordinary': ['ego-browser', 'removed-but-configured', 'systematic-debugging'] },
+    updatedBy: 'settings-ui',
+  }));
+  await user.clear(screen.getByRole('textbox', { name: '搜索技能' }));
+  await user.click(screen.getByRole('combobox', { name: '筛选技能' }));
+  await user.click(screen.getByRole('option', { name: '场景必需' }));
+  expect(screen.getByText('没有匹配的技能')).toBeVisible();
+  await user.click(screen.getByRole('tab', { name: /Trace Agent/ }));
+  expect(screen.getByRole('switch', { name: /运行诊断.*场景必需/ })).toBeDisabled();
+  expect(screen.getByRole('switch', { name: /运行诊断.*场景必需/ })).toBeChecked();
+});
+
+it('loads the full original instruction only when opened and keeps the canonical skill identity', async () => {
+  const user = userEvent.setup();
+  const transport = renderScenarioSkills();
+  const row = await screen.findByRole('article', { name: '故障定位' });
+  expect(row).toHaveTextContent('先复现并定位故障原因，再验证修复');
+  expect(row).not.toHaveTextContent('systematic-debugging description');
+  expect(transport.requests.some(({ request }) => request.pathId === 'agent.extensions.skills.get')).toBe(false);
+  await user.click(within(row).getByText('查看技能原文'));
+  expect(await within(row).findByText('Complete original instruction beyond the inventory summary.')).toBeVisible();
+  expect(row).toHaveTextContent('systematic-debugging');
+  expect(transport.requests.find(({ request }) => request.pathId === 'agent.extensions.skills.get')?.request.query).toEqual({ skillId: 'skill:debug:exact' });
+  expect(transport.requests.some(({ request }) => request.pathId === 'agent.configuration.update')).toBe(false);
+  expect(screen.getByRole('article', { name: 'vendor-custom' })).toHaveTextContent('Author supplied description.');
+});
+
+it('lets an instruction read fail and retry without losing the scene selection', async () => {
+  const user = userEvent.setup();
+  let attempts = 0;
+  const transport = renderScenarioSkills(() => {
+    if (++attempts === 1) throw new Error('offline');
+    return { ok: true, item: { body: 'Recovered original instruction.' } };
+  });
+  const row = await screen.findByRole('article', { name: '故障定位' });
+  await user.click(within(row).getByText('查看技能原文'));
+  expect(await within(row).findByText('技能原文暂时无法读取')).toBeVisible();
+  expect(within(row).getByRole('switch')).toBeChecked();
+  await user.click(within(row).getByRole('button', { name: '重试原文' }));
+  expect(await within(row).findByText('Recovered original instruction.')).toBeVisible();
+  expect(transport.requests.some(({ request }) => request.pathId === 'agent.configuration.update')).toBe(false);
+});
+
+function renderScenarioSkills(readBody = () => ({ ok: true, item: { body: 'Complete original instruction beyond the inventory summary.' } })) {
+  let revision = 7;
+  const routing: Routing = {
+    ordinary: ['removed-but-configured', 'systematic-debugging'], room: ['facilitate-room'],
+    trace: ['trace-agent-diagnostics'], agentLab: ['agent-eval-room-optimizer'],
+  };
+  const configuration = () => ({ ok: true, configuration: { revision, configuration: { skillRouting: routing } } });
+  const routeIds = ['agent.configuration.get', 'agent.configuration.update', 'agent.extensions.skills.list', 'agent.extensions.skills.get'] as const;
+  const transport = new MockControlTransport({ routes: {
+    'agent.configuration.get': configuration,
+    'agent.configuration.update': ({ body }: ControlRequest) => {
+      const changes = (body as { changes: Record<string, string[]> }).changes;
+      for (const scenario of scenarios) if (changes[`skillRouting.${scenario}`]) routing[scenario] = changes[`skillRouting.${scenario}`]!;
+      revision += 1;
+      return configuration();
+    },
+    'agent.extensions.skills.list': { schemaVersion: 'rag-ime.skill-inventory.v1', ok: true, runtimeAvailable: true, items: [
+      { ...skill('systematic-debugging'), skillId: 'skill:debug:exact' }, skill('ego-browser'), skill('facilitate-room'),
+      skill('trace-agent-diagnostics'), skill('agent-eval-room-optimizer'),
+      { ...skill('vendor-custom'), sourceKind: 'project', description: 'Author supplied description.' },
+    ] },
+    'agent.extensions.skills.get': readBody,
+  } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(<TooltipProvider><QueryClientProvider client={client}>
+    <ScenarioSkillSettings routeIds={routeIds} transport={transport} />
+  </QueryClientProvider></TooltipProvider>);
+  return transport;
 }
