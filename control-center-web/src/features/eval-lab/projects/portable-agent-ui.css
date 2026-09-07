@@ -1,0 +1,12 @@
+:root { --color-accent:#1c6d59; --color-accent-soft:#edf5f1; --color-focus:#368574;
+  --color-text:#263c36; --color-text-secondary:#64766e; --color-text-tertiary:#74837a;
+  --color-surface:#fff; --color-surface-hover:#f1f5f2; --color-border:#dce5dc;
+  --radius-1:4px; --radius-2:8px; --radius-3:12px; --font-weight-semibold:600;
+  --font-family-ui:system-ui,sans-serif; }
+.agent-composer__picker { display:inline-flex;align-items:center;max-width:100%;gap:7px;white-space:nowrap; }
+.agent-composer__picker-text { overflow:hidden;text-overflow:ellipsis; }
+.agent-composer__picker-thinking { margin-left:5px;color:var(--color-text-secondary);font-size:11px; }
+.paw-app-recovery { margin:8px 0;font:13px/1.6 system-ui;color:#744b36; }
+.paw-app-recovery p { margin:0 0 8px; }
+.paw-app-recovery > div { display:flex;flex-wrap:wrap;gap:8px; }
+.agent-model-picker { z-index:100; max-width:calc(100vw - 24px); }

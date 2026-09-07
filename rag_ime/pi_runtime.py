@@ -2191,11 +2191,15 @@ class PiRuntimeManager:
                 )
             elif update_type == "thinking_end":
                 raw_message = as_mapping(raw.get("message"))
-                summaries = public_reasoning_summaries(raw_message)
+                summaries = public_reasoning_summaries(
+                    raw_message,
+                    completed_content_index=as_integer(update.get("contentIndex")),
+                )
                 if summaries:
                     message_id = pi_message_id(raw_message, turn_id)
-                    content_index = as_integer(update.get("contentIndex"))
-                    reasoning_id = f"reasoning:{message_id}:{content_index}"
+                    # The payload is a cumulative message summary, so update
+                    # the same card used by durable history, not one per block.
+                    reasoning_id = f"reasoning:{message_id}:0"
                     self.events.publish(
                         session_id,
                         "reasoning_summary",

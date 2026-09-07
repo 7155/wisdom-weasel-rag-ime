@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -624,6 +625,69 @@ class KnowledgeStore:
             )
             for index, row in enumerate(rows)
         ]
+
+    def export_search_snapshot(self, base_id: str) -> dict[str, Any]:
+        """Export frozen search data without storage paths, jobs or credentials."""
+        with self.connection() as connection:
+            connection.execute("BEGIN")
+            base = connection.execute("SELECT * FROM knowledge_bases WHERE id=?", (base_id,)).fetchone()
+            if base is None:
+                raise KnowledgeNotFoundError("knowledge base was not found")
+            documents = connection.execute("SELECT id,display_name,sha256,byte_size,chunk_count,status,indexed_config_revision FROM knowledge_documents WHERE base_id=? ORDER BY rowid", (base_id,)).fetchall()
+            size = connection.execute("SELECT COUNT(*),COALESCE(SUM(length(CAST(content AS BLOB))),0) FROM knowledge_chunks WHERE base_id=?", (base_id,)).fetchone()
+            if not documents or len(documents) > 20000 or size[0] > 200000 or size[1] > 64 * 1024 * 1024:
+                raise KnowledgeLibraryError("search snapshot exceeds the portable document or chunk budget", code="snapshot_budget")
+            if any(row["status"] != "ready" or row["indexed_config_revision"] != base["config_revision"] for row in documents):
+                raise KnowledgeLibraryError("search snapshot requires a complete current index", code="index_not_ready")
+            chunks = connection.execute("SELECT id,document_id,ordinal,content,heading,page,content_hash FROM knowledge_chunks WHERE base_id=? ORDER BY rowid", (base_id,)).fetchall()
+            if sum(row["chunk_count"] for row in documents) != len(chunks):
+                raise KnowledgeLibraryError("search snapshot chunk counts are inconsistent", code="index_not_ready")
+            return {"schemaVersion": "paw.knowledge-search-snapshot.v1",
+                    "base": {"id": base_id, "name": base["name"], "chunkingConfig": json.loads(base["chunking_config_json"]),
+                             "retrievalConfig": json.loads(base["retrieval_config_json"])},
+                    "documents": [{"id": row["id"], "title": row["display_name"], "sha256": row["sha256"],
+                                   "byteSize": row["byte_size"], "chunkCount": row["chunk_count"]} for row in documents],
+                    "chunks": [{"id": row["id"], "documentId": row["document_id"], "ordinal": row["ordinal"],
+                                "content": row["content"], "heading": row["heading"], "page": row["page"],
+                                "contentHash": row["content_hash"]} for row in chunks]}
+
+    def import_search_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Rehydrate an exported search cache into an empty library, atomically.
+
+        This is an internal package/cache contract, not the document-ingestion
+        path. It does not claim the original source files are present.
+        """
+        if (snapshot.get("schemaVersion") != "paw.knowledge-search-snapshot.v1"
+                or not isinstance(snapshot.get("base"), dict) or not isinstance(snapshot.get("documents"), list)
+                or not isinstance(snapshot.get("chunks"), list) or not 1 <= len(snapshot["documents"]) <= 20000
+                or not 1 <= len(snapshot["chunks"]) <= 200000):
+            raise KnowledgeLibraryError("invalid search snapshot", code="invalid_snapshot")
+        base, documents, chunks = snapshot["base"], snapshot["documents"], snapshot["chunks"]
+        ids = {row["id"] for row in documents}
+        if len(ids) != len(documents) or len({row["id"] for row in chunks}) != len(chunks):
+            raise KnowledgeLibraryError("duplicate search snapshot identity", code="invalid_snapshot")
+        counts = {identifier: 0 for identifier in ids}
+        total = 0
+        for chunk in chunks:
+            content = chunk["content"].encode("utf-8")
+            total += len(content)
+            if (chunk["documentId"] not in ids or total > 64 * 1024 * 1024
+                    or hashlib.sha256(content).hexdigest() != chunk["contentHash"]):
+                raise KnowledgeLibraryError("search snapshot content or reference mismatch", code="invalid_snapshot")
+            counts[chunk["documentId"]] += 1
+        if any(row["chunkCount"] != counts[row["id"]] for row in documents):
+            raise KnowledgeLibraryError("search snapshot chunk counts do not match", code="invalid_snapshot")
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT 1 FROM knowledge_bases LIMIT 1").fetchone():
+                raise KnowledgeConflictError("search snapshot needs an empty package cache")
+            connection.execute("INSERT INTO knowledge_bases(id,name,normalized_name,parser_mode,agent_enabled,chunking_config_json,retrieval_config_json,created_at_ms,updated_at_ms) VALUES(?,?,?,'builtin',1,?,?,0,0)",
+                               (base["id"], base["name"], base["id"], json.dumps(base["chunkingConfig"]), json.dumps(base["retrievalConfig"])))
+            connection.executemany("INSERT INTO knowledge_documents(id,base_id,display_name,source_name,sha256,byte_size,stored_path,status,chunk_count,indexed_config_revision,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?,'','ready',?,1,0,0)",
+                                   [(row["id"], base["id"], row["title"], "", row["sha256"], row["byteSize"], row["chunkCount"]) for row in documents])
+            connection.executemany("INSERT INTO knowledge_chunks(id,document_id,base_id,ordinal,content,heading,page,content_hash,created_at_ms) VALUES(?,?,?,?,?,?,?,?,0)",
+                                   [(row["id"], row["documentId"], base["id"], row["ordinal"], row["content"], row.get("heading", ""), row.get("page"), row["contentHash"]) for row in chunks])
+            connection.executemany("INSERT INTO knowledge_chunks_fts(chunk_id,content) VALUES(?,?)", [(row["id"], row["content"]) for row in chunks])
 
     def hydrate_dense_hits(
         self,

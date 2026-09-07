@@ -1,3 +1,4 @@
+import { publicReasoningSummaryText } from './public-reasoning-summary';
 import { useEffect, useId, useState } from 'react';
 import {
   Activity,
@@ -285,11 +286,11 @@ export function ReasoningSummaryBlockRenderer({ block }: AgentBlockRenderProps) 
   const values = Array.isArray(block.data.items) ? block.data.items : [];
   const items = values
     .filter((value): value is string => typeof value === 'string')
-    .map((value) => value.replace(/\s+/gu, ' ').trim())
+    .map(publicReasoningSummaryText)
     .filter(Boolean);
   const [visibleCount, setVisibleCount] = useState(8);
   const visibleItems = items.slice(0, visibleCount);
-  const fallback = text(block.data.summary ?? block.data.text ?? block.data.detail);
+  const fallback = publicReasoningSummaryText(text(block.data.summary ?? block.data.text ?? block.data.detail));
   if (!items.length && !fallback) return null;
   const state = text(block.data.state ?? block.status) || 'completed';
   return (

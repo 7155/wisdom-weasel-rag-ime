@@ -27,6 +27,7 @@ export type LabBinding = {
 export type LabProjectSummary = {
   projectId: string; revision: number; title: string; materialCount: number; artifactCount: number;
   guideSessionId: string; createdAtMs: number; updatedAtMs: number;
+  historyOrigin?: { sceneId: string; sourceHash: string; experimentCount: number; importedAtMs: number; snapshotArtifactId: string; snapshotArtifactRevision: number };
 };
 export type LabProject = LabProjectSummary & {
   schemaVersion: 'rag-ime.agent-lab-project.v1'; description: string; briefVersion: number;
@@ -42,11 +43,15 @@ export type LabProject = LabProjectSummary & {
 export type ProjectRead = {
   ok: true; items: LabProjectSummary[]; project: LabProject | null; artifact?: LabArtifact; materialSet?: MaterialSet;
   supportedViews: ArtifactView[]; availableAdapters?: { adapterId: string; title: string; description: string }[];
+  historyCollections?: { sceneId: string; title: string; sourceHash: string; experimentCount: number; datasetIds: string[]; latestEvidenceAtMs: number }[];
+  historyUnavailable?: boolean;
+  knowledge?: import('./knowledge-types').KnowledgeState;
 };
-export const projectActions = ['create', 'update_brief', 'import_materials', 'remove_materials', 'publish_artifact', 'set_workspace', 'bind_execution', 'ensure_guide', 'prepare_app'] as const;
+export const projectActions = ['create', 'import_history', 'update_brief', 'import_materials', 'remove_materials', 'publish_artifact', 'set_workspace', 'bind_execution', 'ensure_guide', 'prepare_app', 'knowledge'] as const;
 export type ProjectAction = typeof projectActions[number];
 export type ProjectCommand = { action: ProjectAction; projectId?: string; expectedRevision: number; clientRequestId: string; input: Record<string, JsonValue> };
-export type ProjectReceipt = { ok: true; project: LabProject; artifact?: LabArtifact; binding?: LabBinding; clientRequestId: string; replayed: boolean };
+export type ProjectReceipt = { ok: true; project: LabProject; artifact?: LabArtifact; binding?: LabBinding; clientRequestId: string; replayed: boolean;
+  job?: import('./knowledge-types').KnowledgeJob; upload?: { uploadId: string; ready?: boolean; chunkBytes?: number } };
 export const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown): value is string => typeof value === 'string';
 const natural = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;

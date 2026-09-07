@@ -43,6 +43,7 @@ config/rag-ime.config.yaml
 config/rag-ime.config.local.yaml
 control-center-web/node_modules/
 control-center-web/dist/
+control-center-web/.generated/
 control-center-web/.playwright-cli/
 .playwright-cli/
 .playwright-daemon/
@@ -51,3 +52,6 @@ control-center-web/test-results/
 
 # Local-only design notes, agent logs, screenshots, and acceptance records.
 /docs/
+
+# Local interface design evidence.
+.impeccable/

@@ -534,6 +534,10 @@ class DebugImeService:
             runtime_execution_owner=self._agent_runtime_execution_owner,
             defer_startup_recovery=True,
         )
+        self.agent.configure_lab_knowledge(
+            client=self.knowledge_client,
+            settings_provider=lambda: self.settings_store.get_settings(include_sensitive=True),
+        )
         self._memory_runtime_restart_recovery = (
             reconcile_stale_memory_runtime_sessions(
                 self.agent.sessions,
@@ -10501,7 +10505,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; "
             "worker-src 'self' blob:; connect-src 'self'; object-src 'none'; "
-            "frame-src 'self' blob:; base-uri 'none'; "
+            # Portable Apps may declare a separate HTTPS or loopback workspace.
+            # The App host validates that destination and keeps its message
+            # bridge bound to the separate, opaque-origin conversation frame.
+            "frame-src 'self' blob: https: http://127.0.0.1:* http://localhost:* http://[::1]:*; base-uri 'none'; "
             "form-action 'none'; frame-ancestors 'none'",
         )
         self.send_header("Referrer-Policy", "no-referrer")

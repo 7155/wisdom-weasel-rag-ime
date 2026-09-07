@@ -4,11 +4,13 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, IconButton } from '@/components/primitives';
 import { GoldenWorkflow } from '../golden/GoldenWorkflow';
+import { SceneTrialPanel } from '../trials/SceneTrialPanel';
 import { ArtifactSurface, type ArtifactDraft } from './ArtifactSurface';
 import { projectError, useLabArtifact, useLabProjects } from './api';
 import { initialProjectMessage, pendingProjectMessages, ProjectGuide, retainProjectMessage, sendProjectGuideMessage, type PendingProjectMessage } from './ProjectGuide';
 import { readArtifactDrafts, writeArtifactDrafts } from './drafts';
 import { LabAppDelivery } from './LabAppDelivery';
+import { LabKnowledge } from './LabKnowledge';
 import { defaultProjectView, readProjectViews, writeProjectViews, type ProjectPage, type ProjectView } from './views';
 import { object, type ArtifactAction, type JsonValue, type LabBinding, type LabProject, type ProjectReceipt } from './types';
 import './lab-project-workbench.css';
@@ -24,6 +26,7 @@ export function LabProjectWorkbench({ initialProjectId = '', onOpenHistory, onPr
   const [drafts, setDrafts] = useState<Record<string, ArtifactDraft>>(() => readArtifactDrafts(workflow.connection));
   const draftsRef = useRef(drafts);
   const [notice, setNotice] = useState(''); const [sending, setSending] = useState(false);
+  const [historyImportOpen, setHistoryImportOpen] = useState(false);
   const [pendingMessages, setPendingMessages] = useState<PendingProjectMessage[]>([]);
   const [draftRequest, setDraftRequest] = useState<{ id: number; text: string }>();
   const [stagedAction, setStagedAction] = useState<{ text: string; title: string }>();
@@ -106,9 +109,10 @@ export function LabProjectWorkbench({ initialProjectId = '', onOpenHistory, onPr
         <div><small>Agent Lab</small><h1>{project?.title ?? (projectId ? '正在读取项目' : '从你的项目开始')}</h1></div></div>
       <div className="lab-project-header__actions"><IconButton icon={<RefreshCw size={16} />} label="重新读取 Lab 项目" onClick={refresh} disabled={workflow.catalog.isFetching || workflow.project.isFetching} />
         {project ? <><Button size="small" onClick={() => setIntakeOpen(true)}><Upload size={14} />添加材料</Button><IconButton icon={guideOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} label={guideOpen ? '收起项目 Agent' : '展开项目 Agent'} onClick={() => setGuideOpen((value) => !value)} /></> : null}
+        {!projectId ? <Button size="small" onClick={() => setHistoryImportOpen(true)}><History size={14} />导入已有实验</Button> : null}
         {onOpenHistory ? <Button size="small" onClick={onOpenHistory}><History size={14} />已有实验</Button> : null}</div>
     </header>
-    {workflow.pending?.outcome === 'unknown' ? <div className="lab-project-notice" role="status"><p>上次操作的回执尚未确认，原请求和输入已保留。</p><Button disabled={workflow.mutation.isPending} onClick={() => void workflow.reconcile().then((receipt) => { if (receipt && workflow.pending?.command.action === 'create') void created(receipt); })}>核对原操作</Button></div> : null}
+    {workflow.pending?.outcome === 'unknown' ? <div className="lab-project-notice" role="status"><p>上次操作的回执尚未确认，原请求和输入已保留。</p><Button disabled={workflow.mutation.isPending} onClick={() => void workflow.reconcile().then((receipt) => { if (receipt && workflow.pending?.command.action === 'create') void created(receipt); else if (receipt && workflow.pending?.command.action === 'import_history') { setHistoryImportOpen(false); openProject(receipt.project.projectId); } })}>核对原操作</Button></div> : null}
     {activeError ? <p className="lab-project-error" role="alert">{projectError(activeError)}</p> : null}
     {notice && !pendingMessages.length ? <p className="lab-project-notice" role="status">{notice}</p> : null}
     {pendingMessages.map((message) => <div className="lab-project-notice" role="status" key={message.clientMessageId}><p>{message.error || '项目消息的接纳结果尚未确认，原输入已保留。'}</p><Button disabled={sending} onClick={() => void recoverMessage(message)}>{message.outcome === 'unknown' ? '核对原消息' : '重新发送项目消息'}</Button></div>)}
@@ -126,6 +130,7 @@ export function LabProjectWorkbench({ initialProjectId = '', onOpenHistory, onPr
           <nav className="lab-project-tabs" aria-label="项目成果">
             <div className="lab-project-tabs__artifacts">{project.workspace.artifactOrder.map((id) => project.artifacts.find((item) => item.artifactId === id)).filter((item) => item !== undefined).map((item) => <button key={item.artifactId} title={item.title} aria-current={page === 'artifact' && selectedId === item.artifactId ? 'page' : undefined} onClick={() => updateView({ artifactId:item.artifactId, page:'artifact', bindingId:undefined })}><FileText size={14} /><span>{item.title}</span></button>)}</div>
             <div className="lab-project-tabs__resources"><button aria-current={page === 'materials' ? 'page' : undefined} onClick={() => setPage('materials')}>材料 {project.materialCount}</button>
+            <button aria-current={page === 'knowledge' ? 'page' : undefined} onClick={() => setPage('knowledge')}>知识库实验</button>
             {project.bindings.length ? <button aria-current={page === 'runs' ? 'page' : undefined} onClick={() => setPage('runs')}>运行</button> : null}
             <button aria-current={page === 'apps' ? 'page' : undefined} onClick={() => setPage('apps')}>应用交付</button>
             <button aria-current={page === 'brief' ? 'page' : undefined} onClick={() => setPage('brief')}>项目说明</button>
@@ -134,10 +139,12 @@ export function LabProjectWorkbench({ initialProjectId = '', onOpenHistory, onPr
           {stagedAction ? <div className="lab-project-notice" role="status"><span>“{stagedAction.title}”提供了一项交互输入。</span><Button size="small" onClick={() => { setDraftRequest({ id: Date.now(), text: stagedAction.text }); setStagedAction(undefined); setGuideOpen(true); }}>带入对话</Button><Button size="small" onClick={() => setStagedAction(undefined)}>关闭</Button></div> : null}
           <div className="lab-project-stage">
             {page === 'materials' ? <Materials project={project} onAdd={() => setIntakeOpen(true)} />
-              : page === 'apps' ? <LabAppDelivery projectId={project.projectId} />
+              : page === 'knowledge' ? <LabKnowledge key={project.projectId} project={project} busy={busy} onCommand={(input) => workflow.submit('knowledge', input, project)} onBind={(input) => workflow.submit('bind_execution', input, project)} onOpenBinding={(binding) => updateView({ page: 'runs', bindingId: binding.bindingId })} />
+              : page === 'apps' ? <LabAppDelivery projectId={project.projectId} preparing={busy} onPrepare={async (directory, appId) => Boolean(await workflow.submit('prepare_app', { directory, ...(appId ? { appId } : {}) }, project))} />
               : page === 'brief' ? <section className="lab-project-brief"><small>用户描述 · v{project.briefVersion}</small><h2>{project.title}</h2><p>{project.description}</p><p className="lab-project-muted">需要调整方向时，可以直接告诉项目 Agent。</p></section>
                 : page === 'runs' ? binding?.ownerRef.kind === 'golden_suite' ? <GoldenWorkflow key={binding.bindingId} initialSuiteId={binding.ownerRef.id} onClose={() => setBinding(undefined)} />
-                  : <section className="lab-project-bindings"><h2>已连接的执行能力</h2>{project.bindings.map((item) => <button key={item.bindingId} onClick={() => setBinding(item)}><span><strong>{item.adapterId === 'golden.context_qa' ? '资料问答评测' : item.adapterId}</strong><small>进入查看当前标准、任务和实际运行结果</small></span><ArrowUpRight size={18} /></button>)}</section>
+                  : binding?.ownerRef.kind === 'scene_trial' ? <section className="lab-project-bindings"><h2>继续场景验证</h2><p>历史对照保存在项目成果中。这里使用执行器当前登记的资料与规则，新运行单独记录；不会覆盖历史成绩。</p><SceneTrialPanel sceneId={binding.ownerRef.id} /></section>
+                  : <section className="lab-project-bindings"><h2>已连接的执行能力</h2>{project.bindings.map((item) => <button key={item.bindingId} onClick={() => setBinding(item)}><span><strong>{item.adapterId === 'golden.context_qa' ? '资料问答评测' : item.adapterId === 'golden.knowledge_qa' ? '知识库回答评测' : item.adapterId === 'scene.trial' ? '场景验证' : item.adapterId}</strong><small>{item.summary || '进入查看当前标准、任务和实际运行结果'}</small></span><ArrowUpRight size={18} /></button>)}</section>
                   : selected ? artifact.isPending ? <p className="lab-project-loading" role="status">正在读取成果…</p> : artifact.isError ? <div className="lab-project-error" role="alert"><p>{projectError(artifact.error)}</p><Button onClick={() => void artifact.refetch()}>重新读取成果</Button></div>
                     : artifact.data ? <ArtifactSurface artifact={artifact.data} draft={drafts[draftKey]} busy={busy || sending}
                       onDraft={(draft) => updateDraft(draftKey, draft)}
@@ -148,6 +155,11 @@ export function LabProjectWorkbench({ initialProjectId = '', onOpenHistory, onPr
         </div>
       </div>}
     <Dialog.Root open={intakeOpen && Boolean(project)} onOpenChange={setIntakeOpen}><Dialog.Overlay className="lab-project-modal-backdrop" /><Dialog.Content className="lab-project-modal" aria-describedby={undefined}><header><Dialog.Title asChild><h2>添加项目材料</h2></Dialog.Title><Dialog.Close asChild><Button size="small">关闭</Button></Dialog.Close></header>{project ? <MaterialIntake busy={busy} onAdd={async (input) => { const receipt = await workflow.submit('import_materials', input, project); if (receipt) { setIntakeOpen(false); setPage('materials'); } }} /> : null}</Dialog.Content></Dialog.Root>
+    <Dialog.Root open={historyImportOpen} onOpenChange={setHistoryImportOpen}><Dialog.Overlay className="lab-project-modal-backdrop" /><Dialog.Content className="lab-project-modal" aria-describedby="lab-history-import-description"><header><Dialog.Title asChild><h2>导入已有实验</h2></Dialog.Title><Dialog.Close asChild><Button size="small">关闭</Button></Dialog.Close></header><p id="lab-history-import-description">把已有基线、候选、失败记录和原始指标保留为项目成果。导入不会运行模型或重新评分。</p>
+      {workflow.catalog.data?.historyUnavailable ? <p role="alert">已有实验来源暂时不可读取，请重新读取后再试。</p> : null}
+      {workflow.catalog.data?.historyCollections?.map((source) => { const imported = workflow.catalog.data?.items.find((item) => item.historyOrigin?.sceneId === source.sceneId); return <section key={source.sceneId} className="lab-project-bindings" aria-label={source.title}><h3>{source.title}</h3><p>{source.experimentCount} 条实验记录 · {source.datasetIds.length} 个数据集版本</p><Button disabled={busy} onClick={() => { if (imported) { setHistoryImportOpen(false); openProject(imported.projectId); } else void workflow.submit('import_history', { sceneId: source.sceneId, sourceHash: source.sourceHash }).then((receipt) => { if (receipt) { setHistoryImportOpen(false); openProject(receipt.project.projectId); } }); }}>{imported ? '打开已导入项目' : '导入为项目'}</Button></section>; })}
+      {!workflow.catalog.isPending && !workflow.catalog.data?.historyUnavailable && !workflow.catalog.data?.historyCollections?.length ? <p>当前执行器没有可导入的已有实验。</p> : null}
+    </Dialog.Content></Dialog.Root>
   </main>;
 }
 

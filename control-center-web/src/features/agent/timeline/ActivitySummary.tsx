@@ -1,3 +1,4 @@
+import { publicReasoningSummaryText } from './public-reasoning-summary';
 import {
   BookOpenText,
   Bot,
@@ -662,9 +663,9 @@ function reasoningItemsFromPayload(payload: Record<string, unknown>, fallback: s
   const values = Array.isArray(payload.items) ? payload.items : [];
   const items = values
     .filter((value): value is string => typeof value === 'string')
-    .map((value) => value.replace(/\s+/gu, ' ').trim())
+    .map(publicReasoningSummaryText)
     .filter(Boolean);
-  const summary = fallback.replace(/\s+/gu, ' ').trim();
+  const summary = publicReasoningSummaryText(fallback);
   return items.length ? items : summary ? [summary] : [];
 }
 
@@ -716,6 +717,7 @@ function ToolProgressTimeline({
  * text itself is authoritative, so only the leading raw id is translated into
  * the public tool vocabulary; explicit Runtime summaries pass through. */
 function publicProgressSummary(summary: string, activity: AgentActivityProjection): string {
+  if (activity.kind === 'reasoning_summary' && activity.payload.source === 'provider_reasoning_summary') return publicReasoningSummaryText(summary);
   const rawId = text(activity.payload.toolName ?? activity.payload.toolId);
   if (rawId && summary.startsWith(rawId)) {
     return `${publicToolName(rawId)}${summary.slice(rawId.length)}`;

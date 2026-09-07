@@ -1,906 +1,170 @@
-# 澄 — Personal Agent Workbench
+# PAW — Personal Agent Workbench
 
-> A local-first macOS workspace for persistent agents, Rooms, tools, governed
-> memory, and optional input, voice, and browser assistance.
+一个本地优先的 Agent 工作台：持续处理任务，按需组织多 Agent 协作，
+通过测评改进执行方案，并把能力交付为可使用的应用。
 
-**Platform:** macOS 14+ | **Python:** 3.12+ | **License:** [GPL-3.0-only](LICENSE) | **Status:** public-source local prototype
+**macOS 14+ · Python 3.12+ · Node.js 22.19+ · [GPL-3.0-only](LICENSE)**
 
-Personal Agent Workbench combines private Agent Sessions, structured
-multi-Agent Rooms, auditable Tool and Skill execution, Provider adapters,
-governed local memory, and a native Control Center. `澄` is the user-facing
-assistant identity. Input-method, voice, and browser integrations are optional
-interaction surfaces around the same Agent runtime rather than the center of
-the product.
+[开始使用](#开始使用) · [构建与安装](release/README.md) ·
+[架构](ARCHITECTURE.md) · [更新记录](CHANGELOG.md) ·
+[Releases](https://github.com/7155/personal-agent-workbench/releases)
 
-For self-hosted development, start with [PROJECT.md](PROJECT.md) and the active
-focus in [OUTCOMES.md](OUTCOMES.md); [AGENTS.md](AGENTS.md) routes progressively
-to the glossary, decisions, architecture, source, and Skills.
+PAWOS 将对话、项目、协作、记忆、知识库和 Agent Lab 放在同一个桌面工作空间。
+用户可以从一次普通对话开始，在需要时打开工具结果、执行记录或协作窗口，
+并在刷新或中断后继续原来的任务。
 
-The input path remains deliberately conservative: ordinary Pinyin composition
-is still Rime's job, and remote generation is never used for passive
-per-keystroke prediction.
+当前提供源码预览版，面向本地开发和自托管体验。macOS 桌面宿主为 Electron；
+正式安装包的 Developer ID 签名、公证及完整前台验收仍在进行，详见
+[发布边界](release/README.md#source-publication-and-binary-release)。
 
-> [!WARNING]
-> The tracked source repository can be audited and built locally, but the
-> project does **not** yet publish a release-ready macOS binary. Foreground
-> input/voice/Accessibility acceptance, Developer ID signing, notarization,
-> stapling, and the final release manifest remain open. Treat local builds as
-> development installations.
+## 核心能力
 
-## PAWOS In One Tour
+### 持续工作的 Agent
 
-PAWOS keeps an Agent's work inspectable without turning the conversation into
-a wall of internal logs. Start from one resumable Session, disclose its Tool
-and context evidence when it matters, then return to the answer in the same
-workspace.
+每个 Agent 使用独立、可恢复的 Pi Session，保留对话和执行上下文。
+选择 Provider、模型和推理强度后，可以围绕绑定的项目读写文件、调用工具、
+维护任务进度，并在执行中补充指令或停止任务。
 
-![PAWOS Agent Session showing context assembly, token sources, Tool calls, and recovered-turn evidence](assets/showcase/pawos-agent-trace.webp)
+对话中展示回答、公开思考摘要、工具进度与结果。调用证据和上下文用量按需展开；
+网络中断后恢复原调用，失败时提供重试入口。
 
-When work benefits from several independently accountable Partners, the same
-workspace becomes a Room: public conversation stays central while the Sol
-overview can detach into a satellite window for responsibilities, handoffs,
-review state, and evidence.
+![PAWOS Agent 对话与调用证据](assets/showcase/pawos-agent-trace.webp)
 
-![PAWOS Room beside a detachable Sol collaboration overview](assets/showcase/pawos-room-focus-satellite.webp)
+### 按需组织多 Agent 协作
 
-The Room can project that same goal, Partner, WorkItem, and handoff state as a
-shared starfield—an overview of real collaboration structure, not a second
-agent runtime.
+简单任务由一个 Session 完成。需要分工时，主 Agent 可以调用私有 Tool Agent，
+或在 Room 中组织有明确职责的 Partner Session。
 
-![PAWOS Room starfield with Sol, Partner planets, work state, and handoffs](assets/showcase/pawos-room-starfield.webp)
+Room 保持主对话稳定，由 Facilitator 分配工作、接收结果并汇总。
+协作视图展示参与者、任务与交接关系；需要深入查看时，可以打开参与者窗口。
+各 Session 的模型和工具执行仍由 Pi 管理。
 
-These privacy-safe scenes use the deterministic public preview transport. They
-prove the reproducible UI tour, not a native installation, live Runtime health,
-macOS foreground acceptance, signing, notarization, or release readiness. Run
-`scripts/capture_pawos_showcase.sh` to regenerate the three WebP images, an
-ignored 1440×900 WebM recording, and a source/hash manifest. The exact Demo
-script and evidence boundary are documented in
-[PAWOS Showcase And Final Verification](control-center-web/docs/pawos/PAWOS_SHOWCASE.md).
+![Room 主对话与协作概览](assets/showcase/pawos-room-focus-satellite.webp)
 
-## What It Does
+### 测评与优化
 
-| Capability | Current boundary |
-| --- | --- |
-| Agent Sessions and Providers | Each companion keeps a private, resumable Session with an optional phased Todo that the Agent updates as work advances. Todo tracks progress but grants no execution authority; Pi adapters normalize configured Providers and models without exposing one protocol's private implementation to another. |
-| Structured Rooms | A Room is a lightweight composition of ordinary Partner Sessions led by one Facilitator. Partners use the same task Skills and native subagent events as standalone Sessions; the Facilitator integrates their results, chooses optional review, and emits one final result while the Runtime owns identity, cancellation, ordering, and terminal settlement. |
-| Tools and Skills | Tools are progressively disclosed, policy-checked, approval-aware, and recorded as typed receipts. Skills are task-scoped reusable methods: simple work needs none, ordinary work normally loads one responsibility Skill plus at most one complementary task method, and no Skill becomes a Kernel stage. |
-| Control Center | The native macOS workspace exposes conversations, projects, companions, memory, knowledge, planning, diagnostics, Provider settings, and bounded context inspection. |
-| Governed memory | SQLite evidence, Atoms, Books, tags, projections, revision fences, and retrieval keep long-term context reviewable and reversible rather than silently rewriting chat history. |
-| Optional interaction adapters | Patched Squirrel, push-to-talk voice, and Browser Co-pilot feed the same local workspace without owning Agent or memory semantics. |
-| Pinyin composition | Rime/librime owns schemas, fuzzy Pinyin, paging, native candidates, and user-dictionary ranking. The sidecar must never replace its composition path. |
-| Local completion | After a commit, a local MLX, Ollama, or loopback OpenAI-compatible runtime may offer short, source-marked continuations. `Tab` accepts the first suggestion and `Option+number` selects an ordinal; ordinary number keys stay with Rime or the host. |
-| Explicit knowledge work | Selected-text assistance, long-form answers, memory organization, and configured remote generation are explicit Control Center workflows, not background typing behavior. |
+Agent Lab 围绕具体任务建立项目：导入业务材料，整理案例和预期结果，运行基线，
+检查失败原因，再比较模型、提示词、工具、Skill 和工作流程的候选方案。
 
-## System Capabilities
+实验保留案例结果、执行轨迹、用量及成本估算，让改动能够追溯和比较。
+质量判定与成本、耗时分别展示；开发集上的改进和独立验证结果也分别记录。
+通用优化流程仍在完善，当前能力与验收进度见 [O6](OUTCOMES.md)。
 
-The status labels below deliberately distinguish code presence from real macOS
-foreground acceptance. "Implemented" does not mean that signing, notarization,
-or every host application's text field has passed manual testing.
+### 记忆与知识库
 
-### Agent Workspace And Control Center
+- **Memory** 保存个人偏好、长期事实和项目决策，支持来源检查、整理草稿、版本、归档和回滚。
+- **Knowledge** 管理外部文档的导入、解析、分块、索引、检索与引用，可选接入本地 MinerU。
+- Agent 按任务需要读取相关内容；记忆和文档库保留各自的数据与检索边界。
 
-**Status: implemented for local development; signed distribution remains a
-separate gate.**
+### 工具、Skill 与插件
 
-The native Control Center is the composition surface for Agent Sessions,
-Provider-qualified model selection, project-grouped conversations, companions,
-Rooms, memory, knowledge, planning, voice, input assistance, and diagnostics.
-Session history remains private; Room posts, Task handoffs, approval receipts,
-and accepted evidence are projected into shared collaboration state. Managed
-file and Diff results expand inline so the work stays in context instead of
-opening an unrelated modal workflow.
+Tools 提供可执行能力，Skills 提供按任务加载的方法，Pi Packages 承载可复用扩展。
+PAW 提供发现、安装、更新和回滚入口。
 
-Completed local Codex conversations can be staged and then registered as
-ordinary PAW conversation records without copying them into governed Memory:
+垂直应用以 Extension App 插件交付。Lab 可以生成、预览、版本化和导出应用，
+共享 Agent 的模型选择、执行反馈和错误恢复组件。导出应用可按配置连接本机 PAW，
+或使用独立 Provider；具体业务应用由插件自身维护。
+
+### PAWOS 工作空间
+
+窗口、Dock、Launchpad、项目导航和协作视图帮助用户在同一任务中切换资料、结果与工具。
+可选的浏览器、桌面、语音和 Squirrel/Rime 输入适配器连接到已有 Runtime。
+启用输入适配器时，拼音解析、原生候选和用户词库仍由 Rime 管理；被动输入预测保持本地运行。
+
+> 上方图片来自可复现的公开演示数据，用于展示交互界面。
+> 它们不代表真实用户数据、实时模型执行或 macOS 前台验收。
+> [演示生成与说明](control-center-web/docs/pawos/PAWOS_SHOWCASE.md)
+
+## 开始使用
+
+### 查看前端
+
+需要 Git、Python 3.12+、uv、Node.js 22.19+ 和 pnpm 11.9.0。
+在已获得仓库访问权限的环境中运行：
 
 ```bash
-python3 scripts/import_codex_conversation.py <codex-session-id>
-python3 scripts/import_codex_conversation.py <codex-session-id> --write
+git clone https://github.com/7155/personal-agent-workbench.git
+cd personal-agent-workbench
+uv sync --locked
+corepack enable
+corepack prepare pnpm@11.9.0 --activate
+pnpm --dir control-center-web install --frozen-lockfile
+pnpm --dir control-center-web dev
 ```
 
-The first command is a dry-run. The written record keeps its original title,
-uses a provenance-marked Pi v3 transcript, and can be restored through the
-existing Agent Session path. Its Codex origin stays in provenance rather than
-being added to the visible title. Import intentionally keeps visible
-user/assistant text and omits developer bootstrap, private reasoning, Tool
-calls/results, and Runtime events; the receipt records that fidelity boundary.
-Incomplete Codex rollouts are rejected unless `--allow-incomplete` is
-explicitly supplied.
+开发服务器会显示访问地址。默认预览使用演示传输，可以查看界面；
+真实 Agent 调用需要下面的 Gateway 和匹配的 managed Pi Runtime。
 
-Bulk discovery keys every JSONL by its embedded `session_meta.id`, so local
-symlinks, migrated copies, and stale Codex state paths do not create duplicate
-PAW records. Repeat `--source-root` to include external archives; currently
-open Codex rollouts are skipped by default:
+### 运行本地服务
 
 ```bash
-python3 scripts/import_codex_conversations.py \
-  --paw-python-root "$HOME/Library/Application Support/RagIme/app" \
-  --source-root ~/.codex/sessions \
-  --source-root ~/.codex/archived_sessions \
-  --source-root ~/.codex/history_sync_backups \
-  --source-root "/path/to/CodexData" \
-  --allow-incomplete
+uv run --locked python -m rag_ime.cli init-db
 
-# After reviewing the dry-run summary:
-python3 scripts/import_codex_conversations.py \
-  --source-root ~/.codex/sessions \
-  --source-root ~/.codex/archived_sessions \
-  --source-root ~/.codex/history_sync_backups \
-  --source-root "/path/to/CodexData" \
-  --allow-incomplete --write \
-  --receipt /path/to/new-import-receipt.json
-```
-
-`--paw-python-root` makes live writes use the installed PAW store implementation
-and schema while retaining the importer from the current checkout. Omit it for
-an isolated database initialized by the same checkout.
-
-### Rime Input
-
-**Status: implemented; real foreground acceptance remains required.**
-
-The optional input frontend is a single patched Squirrel/InputMethodKit route.
-Rime continues to own Pinyin parsing, fuzzy Pinyin, paging, native candidates,
-and the user dictionary. 澄 adds a source-aware assistant surface rather than
-replacing Rime's decoder. Ordinary number keys stay with Rime/the host; `Tab`
-and `Option+number` select assistant candidates. The Control Center can set
-post-commit enablement, trigger/cooldown limits, candidate count, Tab policy,
-and Option+number policy. Candidate count and trigger delay are projected only
-into the application-owned Rime YAML block before an attended Squirrel reload;
-user dictionaries and user-owned YAML remain outside that write boundary.
-
-### Local LLM Prediction
-
-**Status: in development; runtime integration and automated tests are present,
-but candidate quality and foreground stability are still release gates.**
-
-Passive post-commit prediction uses a local runtime such as MLX, Ollama, or a
-loopback OpenAI-compatible server. It emits short continuations without sending
-every keystroke to a remote model. The final prompt prioritizes the live input,
-today's plan, complete recent inputs, and then budgeted RAG evidence; it asks for
-bare continuation instead of an explanation or a copy of retrieved text.
-
-The Control Center input page exposes the governed local-prediction settings:
-registered hot model, local path, runtime profile, prompt mode, token cap,
-sampling values, and post-commit latency budget. Saving records desired state;
-the installed native host must then run the fixed `restart_predictor` action,
-which updates the model registry, reinstalls MLX and Sidecar, and accepts the
-change only after both health payloads agree. A browser build can edit through
-the approved settings contract but cannot execute this local helper.
-
-Current development-machine timing is split into two different measurements:
-
-| Measurement | Current observation |
-| --- | ---: |
-| Prefill / first token | about **54 ms** |
-| Three complete candidates | about **206 ms** |
-
-These are one local development measurement, not a service-level guarantee.
-Hardware, model, quantization, cache state, input length, and runtime all affect
-the result. In particular, this README does **not** claim that prediction is
-"finished in 50 ms".
-
-### Hybrid RAG
-
-**Status: implemented in the local core and sidecar; foreground relevance still
-needs continued evaluation.**
-
-Retrieval combines SQLite FTS5 BM25, vector similarity, tags and tag relations,
-time, feedback, and weighted reciprocal-rank fusion. A configurable soft
-context budget defaults to 4096 tokens with 1024 tokens reserved for output.
-Each consumer owns a bounded projection instead of receiving one shared text
-dump. Explicit generation prioritizes the current field, up to six planning
-items, two approved Timeline tasks, four recent complete inputs, and six
-governed Atom/Book grounding items. A new Agent Session receives one compact
-bootstrap; later turns rely on Session history and on-demand `memory` calls.
-Diagnostics report the number and estimated tokens actually injected for each
-source.
-
-Explicit queries such as "yesterday", "last week", "before", or "the original
-requirement" can retrieve the corresponding time window and bypass ordinary
-age decay. Old material is preserved, not silently treated as current truth.
-
-### AI Memory
-
-**Status: in development; draft generation, replacement links, decay, and
-rollback contracts are implemented and await prolonged real-data validation.**
-
-Short one- or two-character commits do not automatically become facts. Nearby
-Rime fragments are assembled using punctuation, pauses, focus changes, and
-context groups before they receive normal memory weight. New explicit facts,
-preferences, decisions, and requirements may supersede older memory without
-deleting its source. Temporary plans decay quickly, project state decays at a
-medium rate, and stable preferences decay slowly.
-
-Memory curation starts from an immutable evidence ledger rather than from the
-retrieval index. Eligible evidence is limited to final user input, explicit
-remember actions, applied tool receipts, and role-session compaction summaries.
-Generated side candidates, assistant turns, screenshots, fixtures, and model
-output are not memory sources. Once per day, each user, shared scope, or role is
-curated independently within its project. Deterministic noise rules run first;
-the configured organizer classifies the rest and can only create a review
-draft. Apply and rollback move every covered source together, including all
-low-level commits reconstructed into one Rime utterance.
-
-Forgetting is a reversible evidence disposition, not source deletion. Restoring
-rewinds the owner cursor so the evidence is classified again. Automatically
-excluded sensitive input remains non-restorable; create a separate, redacted
-explicit memory instead.
-
-The maintenance runner uses this owner-scoped path by default. The previous
-global compiler is retained only for compatibility and requires
-`RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE=1`.
-
-### Personal Knowledge Base
-
-**Status: in development; local review workflow is implemented.**
-
-The knowledge workbench combines local memory with optional explicit knowledge
-generation. AI organization produces an editable draft first. Only an explicit
-review action applies selected changes to formal memory, indexes, or the Rime
-lexicon. It is not a background remote upload path.
-
-### Document Knowledge Libraries
-
-**Status: in development; document management, parsing, indexing, retrieval,
-source review, and an independent document graph are implemented.**
-
-Large external documents live in a separate Knowledge Worker domain rather
-than being mixed into personal memory. The Control Center manages libraries,
-imports, parser and chunking settings, retrieval settings, source/Markdown/
-chunk/asset review, index jobs, retrieval tests, and a document knowledge
-graph. Built-in parsing is always available; MinerU can be installed as an
-optional local parser for layout-heavy PDFs and OCR. The graph projects
-document structure, topics, entities, terms, and evidence-bearing chunks into
-its own SQLite tables, with source navigation and rebuild status, without
-touching the personal-memory relationship graph.
-
-Agent access remains one explicit `knowledge` tool. Its list/search/find/open
-operations are bounded reads. Creating a library, changing chunk/retrieval
-settings, importing inline text, or rebuilding an index uses the same Tool but
-requires the normal approval and revision fences; read-only Sessions do not see
-those operations. Arbitrary host paths are not accepted. The graph is currently
-a Knowledge Worker retrieval and control-plane feature, not a second agent
-tool, so graph expansion cannot silently increase the agent's authority.
-
-The Knowledge settings page treats embedding selection as a global worker
-profile: probe a local, MLX, Sentence Transformers, or OpenAI-compatible
-candidate; preview every affected library; approve the setting; restart the
-isolated worker; and rebuild stale vectors. A saved model label is not reported
-as active until the worker fingerprint and vector coverage match it. API
-credentials remain environment references rather than page or database values.
-
-### Memory And Knowledge Management
-
-**Status: in development; management APIs and native views are implemented.**
-
-The Control Center can inspect full content, source events, tags, relationships,
-timestamps, confidence, and supersession state. Management operations include
-edit, merge, archive, suppress, restore, and rollback. Tag exploration supports
-both a list and a relationship graph. Topic books are reused instead of being
-created after every organization run; after a configurable inactive period
-(60 days by default) they become archive candidates. Archived books remain
-searchable with lower ordinary weight and can reactivate when an old project is
-explicitly requested or relevant content appears again.
-
-### Voice Input
-
-**Status: in development; recording, streaming ASR, overlay, and insertion are
-implemented, while host-specific focus behavior still requires manual tests.**
-
-The optional `RagImeVoice.app` agent shows a foreground recording overlay and
-an audio-reactive waveform, streams speech to the configured ASR provider, and
-inserts the final text at the active cursor. It runs outside Squirrel's
-keystroke path so a microphone/network failure cannot block ordinary typing.
-Microphone and Accessibility permissions belong to the stable installed app,
-not a temporary derived-build identity.
-
-### Daily Planning And Assistant
-
-**Status: in development; database, API, context injection, completion-event
-recognition, undo, and the native page are implemented.**
-
-The Planning page keeps long-term goals, today's plan, prioritized Todos,
-deadlines, completion state, and daily notes together. The assistant summarizes
-what was completed, what remains, and a sensible next action. Explicit phrases
-such as "completed task X" can complete a matching Todo and provide undo;
-ambiguous language only creates a confirmation suggestion. Open tasks, goals,
-and daily notes are eligible for the model context under the shared token
-budget.
-
-### Structured Agent Rooms
-
-**Status: core source paths are implemented; the conversation-first lifecycle and
-current managed-Pi payload still require fresh installed foreground acceptance.**
-
-Rooms support two explicit kinds: project collaboration and roleplay chat.
-They share one event contract, but keep different authority boundaries:
-collaboration Rooms require an authorized workspace, while roleplay Rooms can
-run without filesystem access. Routing is stored as structured configuration
-(`manual_mentions`, `moderator`, `sequential`, `natural`, or `invite_only`);
-participants are recorded by stable ID rather than by inserting fake speaker
-prefixes into message text.
-Choose the tier that matches the accountability you want:
-
-- **Facilitator/reporter:** coordinates the Room, settles material questions, assigns and integrates work, decides whether independent review is needed, and owns the one final user-facing report. It publishes necessary questions through the ordinary chronological Room path rather than opening competing participant prompts.
-- **Room partner Session:** a durable participant with a collaboration role and an accountable WorkItem/Dispatch. Choose a partner when the work needs a public Room responsibility, directed reassignment or cancellation, and an evidence-backed handoff. Multiple partners may run in parallel only for genuinely independent, non-overlapping slices; dependent work stays serial. Progress, accepted evidence, and handoffs may be public; the participant's transcript and reasoning remain private.
-- **Nested subagent:** a bounded private child Session for a narrow research, planning, or implementation check. It is not a Room member, cannot own or settle a Room Root/Task, and cannot publish its private transcript. It returns a bounded result to its parent as evidence; the parent must verify and integrate it rather than treating the return as automatic acceptance. The parent or Runtime may cancel it, and late output cannot revive cancelled work.
-
-Use a Room partner for durable, publicly accountable collaboration; use a nested
-subagent when the parent only needs a private, bounded result. A Room partner
-may launch a bounded nested batch for a smaller check; batch size and depth
-stay within the managed limits, while the selected role/profile determines
-read-only versus Worker capabilities.
-
-#### Context, questions, and workspace tools
-
-For a nested run, choose `fresh` for an independent review or other task that
-does not need the parent's conversation. Choose `fork` only when the parent's
-managed Pi transcript prefix materially helps and reusing its cache is worth
-the cost. A fork reuses the exact managed prefix and appends the bounded child
-brief; it does not reorder system, model, or Tool prompts merely to personalize
-the branch. Both modes keep the child Session private.
-
-Room partners and nested children do not open competing native Ask prompts. A
-Partner returns a bounded blocker or result to the Facilitator; a Tool Agent
-returns it to its parent. The Facilitator decides whether a material user-owned
-question should enter the chronological Room conversation. Outside a Room, a
-standalone parent Session may use native Ask when a real user choice remains.
-
-`workspace_lsp` is role- and authorization-scoped. Read-only roles may inspect
-status, symbols, hover, definitions, references, and diagnostics. A writable
-Worker may request `rename` or `code_action_apply` only through the existing
-hash-bound approval path; it must inspect references before changing an
-exported symbol. No role gains access to an unauthorized workspace, and a
-read-only child profile does not gain write operations.
-
-Managed `agents` delegation accepts one or two tasks per batch and limits
-nested delegation to depth two. Each child remains bounded by its run budget
-and terminal cancellation state; these limits apply to nested delegation, not
-to the number of Room participants or WorkItems.
-
-When a nested batch is Room-bound, its causal metadata links it to the Room
-`taskId`. The task read model may show each child beneath that task using only
-template, ordinal, task, state, budget, result/error, and timing. Protocol IDs,
-private transcript content, and child reasoning are not normal Room graph
-content; the Runtime still owns lifecycle and settlement.
-
-The three tiers use a conditional conversation-first sequence. `澄·远` is the
-default initial Facilitator; one explicit `@` in the opening message may select
-another Room companion. Later mentions are communication, not ownership.
-
-The opening user bytes remain the immutable request source. The canonical Skill
-flow is deliberately conditional rather than a fixed pipeline:
-
-1. The Facilitator uses `facilitate-room` and inspects reachable facts. It adds
-   `alignment-and-decision` only when an unresolved material user choice would
-   change scope, acceptance, authority, cost, compatibility, or behavior.
-2. A complete request starts without an extra confirmation. A necessary
-   question is published through the Room's chronological user-message path;
-   ordinary progress and answers keep their real event order.
-3. The Facilitator uses `implementation-planning` only for genuinely multi-step
-   or multi-owner work. A small coherent change stays in one Session.
-4. Each Partner receives one bounded TaskBrief with exact ContextRefs,
-   SkillRefs, workspace binding, capabilities, acceptance, and expected output.
-   The Partner then uses the same task Skills as a standalone Session:
-   `systematic-debugging` for an unknown cause or
-   `test-driven-implementation` for a known behavior with a real test seam.
-5. A Facilitator or Partner may add `orchestrate-session` when private child
-   work has a concrete benefit. Children return bounded native Session events;
-   they do not become Room partners or inherit the full parent transcript.
-6. Shared writable work is allowed when the Facilitator accepts the conflict
-   risk; independent workspaces remain an explicit option rather than a
-   mandatory per-task ceremony. Runtime permissions and workspace receipts,
-   not Skill prose, define the actual authority.
-7. `independent-review` is a fixed-scope, read-only option when the user asks or
-   risk warrants it. It is not a default quality gate. The Facilitator owns
-   repair routing, integration, acceptance evidence, and the one final result.
-8. `organize-work-documents` lets the existing background organizer link and
-   condense accepted document updates after the work. It neither performs the
-   task nor blocks Session or Room completion.
-
-Participant Session/Dispatch ownership is distinct from filesystem roots.
-Each participant acts only through its own bound workspace harness and accepted
-evidence receipts. A filesystem path does not prove identity or isolation; do
-not claim automatic Git worktree cloning without an inspectable receipt.
-Private participant reasoning and internal references stay private.
-`room_post` is not a second clarification channel; it is for material progress,
-not completion or acceptance evidence; a model's prose cannot settle a Root.
-
-Personal Agent Workbench is the Room authority: the Runtime owns identity,
-events, permissions, cancellation, workspaces, and the unique terminal result;
-managed Pi Skills guide Agent work without becoming lifecycle gates. The
-local `clowder-ai` Cat Cafe reference checkout is a
-reference-only source of mechanism lessons, not an implementation dependency.
-Its thread queue, event/reducer, handoff-recovery, and independent-review
-ideas are compared in `ARCHITECTURE.md`; its protocol, IDs, reducer/source,
-schemas, and routes are not copied.
-
-The Facilitator uses the Room Partner dispatch only for a bounded responsibility
-with an explicit brief and expected result. It is not intake fan-out,
-assignment-by-mention, or a replacement for the Facilitator's integration
-responsibility. Each participant keeps a private Session; only intentionally
-public progress, accepted evidence, handoffs, and results enter the Room
-timeline.
-
-The **Tasks** view in the Control Center is a dedicated work surface and leads
-with a live flow diagram:
-
-```text
-Created -> optional Partner work -> Facilitator integration
-         -> optional independent review -> Runtime settlement -> one final
-```
-
-Every work item gets its own path. Nodes show the responsible companion,
-current action, and state; connectors show which paths are waiting, active,
-complete, stopped, or need attention. The diagram updates from Room snapshots
-and events, stacks into a readable vertical flow in narrow layouts, and uses
-icons plus text rather than color alone. Detailed per-participant progress,
-review state, receipts, and private-session disclosure remain available below
-the diagram without competing with the primary lifecycle.
-
-Each accountable Room companion may also launch bounded private subagents for
-its own slice. Those nested runs appear inside/beneath the parent WorkItem with
-their public-safe task, state, budget/usage, result/error, and timing. They are
-visually subordinate to that parent and never become peer Room companions or
-delivery owners. This two-level view distinguishes several peer Room companions,
-each with possible private children, from a single-master/many-subagents tree.
-
-The diagram is a read model, not a second task engine. Room lifecycle and
-terminal decisions remain owned by the backend. A failed, blocked, cancelled,
-or not-yet-final run therefore cannot be painted as a completed shared result
-just because a participant returned text.
-
-The same backend ownership applies to causal child work. Nested subagents and
-governed `workspace_job` commands are linked to the current
-Root/generation/Dispatch; finalization waits for them, and stopping the Root
-fans cancellation out to their authoritative owners. The Agent status panel
-shows durable background-task state, bounded logs, refresh, and cancel controls.
-Hiding `workspace_job` from a later model turn does not hide or orphan a job
-that is already running.
-
-Managed Pi keeps its base Session capabilities available. Room Partner,
-workspace, and other product capabilities use the same progressive Tool
-disclosure path as ordinary Agent work; loading an additional capability does
-not replace the base tools.
-
-Each Room also owns a versioned common scenario, independent topics, and
-workspace-scoped shared artifacts. Topic changes only alter subsequent working
-context: participant identity, private Agent memory, global user memory, Room
-history, and shared files remain separate objects.
-
-### Session-Scoped Agent Context
-
-**Status: implemented in the local Agent runtime; long-running policy and
-review UX validation remain in development.**
-
-Each Agent role has a versioned Role Book containing approved collaboration
-style, evidence-backed capabilities, recent work with expiry, lessons, limits,
-and commitments. A Session pins one approved revision, so the role cannot
-silently change halfway through a conversation. Identity, permissions, safety
-rules, tool allowlists, and approval levels remain outside the Role Book.
-
-A new Session receives one query-free, budgeted bootstrap that can contain
-stable preferences, current project tasks and goals, active Memory Books and
-Atoms, recent cross-application timeline Books, and a small One Ring
-conversation tail.
-One-shot context is reserved before Runtime dispatch and is not reinjected on a
-retry. Later turns use Pi's native Session history; long-term memory is read
-only when the Agent explicitly calls `memory` in `current`, `historical`,
-or `change` mode.
-
-Chats, applied tool receipts, and accepted Room work are recorded as Evidence,
-not facts. Daily maintenance produces a conversation digest plus separate user
-memory and Role Book drafts. Explicit remember, correct, forget, and rollback
-operations are hash-bound, approval-gated, lineage-aware, and projected
-asynchronously through the durable outbox. Cross-application typing activity
-continues through the separate `input_events` to daily Memory Book timeline,
-so raw dialogue or typing history is never silently promoted into a system
-prompt.
-
-The bundled `rag-ime-memory-curator` skill follows the same authority boundary:
-Evidence can support a Current Atom, Atoms can be organized into Topic Books,
-and cross-App activity can become a reviewed Task Timeline. The skill may
-prepare and apply governed memory proposals, but it cannot bypass native
-approval or activate a Role Book revision.
-
-### Diagnostics And Repair
-
-**Status: implemented; doctor output is necessary but not sufficient evidence.**
-
-The diagnostics surface separates process health, model readiness, retrieval,
-permissions, context capture, and final model injection. It records the exact
-source counts and token estimates used by a request, while raw trace text stays
-behind an explicit debug option. Repair commands cover the sidecar, launch
-agents, patched Squirrel registration, voice agent, and local model runtime.
-
-### Configuration, Backup, And Restore
-
-**Status: in development; YAML preview/apply and portable backup/rollback are
-implemented and tested.**
-
-`config/rag-ime.config.example.yaml` documents every importable setting and the
-instant, knowledge, and voice provider slots. A user may create the ignored
-`config/rag-ime.config.yaml`; import changes it to mode `0600`, previews all
-changes, and moves supplied secrets into macOS Keychain without echoing them in
-the response. Existing keys are preserved when a slot omits its secret.
-
-A portable backup contains management settings, provider metadata without
-secrets, the SQLite database (including memory, knowledge, plans, and Todos),
-and safe Rime YAML/dictionary files. It deliberately excludes API keys, access
-tokens, model weights, caches, logs/traces, and Rime binary user databases.
-Restore validates every manifest entry, previews counts, snapshots current
-state, applies migrations, and rolls the database, Rime files, and provider
-metadata back if any step fails. The backup itself is not password encrypted.
-
-## Architecture
-
-```text
-Pinyin composition
-  -> Rime/librime
-  -> patched Squirrel
-  -> native composition panel and native commit
-
-Post-commit assistance
-  -> trusted foreground snapshot
-  -> Python sidecar (/rime-suggest)
-  -> local completion + local Hybrid RAG / memory
-  -> source-aware Squirrel overlay
-  -> Tab or Option+number
-  -> feedback (/rime-select)
-
-Explicit workflows
-  -> RagImeControl.app
-  -> local evidence and optional configured remote provider
-  -> reviewed result, draft, or explicit insertion
-
-Daily memory curation
-  -> immutable final-input / receipt / compaction evidence
-  -> owner + project cursor
-  -> deterministic noise filter
-  -> bounded organizer classification
-  -> review draft
-  -> apply or rollback
-  -> owner-scoped retrieval documents
-```
-
-Squirrel is the only real input-method frontend in this repository. The
-versioned frontend gateway exists to isolate shared backend contracts, but this
-project does not claim a Linux, Fcitx5, IBus, or second InputMethodKit runtime.
-`RagImeControl.app` is the supported settings and diagnostics surface;
-`RagImeVoice.app` is a headless voice agent rather than a second control center.
-
-## Privacy And Safety
-
-- Passive completion and retrieval are local by default.
-- Secure Input, password fields, account-like fields, unknown privacy state,
-  and stale focus fail closed before recording, retrieval, or model inference.
-- Remote generation is limited to explicit workflows. Selected text or context
-  leaves the Mac only after a user-configured action invokes that provider.
-- Raw typing history is not silently promoted into searchable memory. Memory
-  evidence is classified daily, and semantic organization creates a validated
-  draft that the user reviews, applies, or rolls back. Evidence can be forgotten
-  and restored without deleting its audit trail.
-- Model weights, local databases, personal input history, API keys, build
-  artifacts, and machine-local configuration must never be committed.
-
-Review the source and the Web Control Center privacy settings before using
-the project with sensitive material.
-
-## Quick Start
-
-### Requirements
-
-- macOS 14 or newer for the native build and foreground verification route.
-- Python 3.12 or newer. The source uses PEP 701 f-string syntax that does not
-  parse on Python 3.10 or 3.11.
-- Xcode command-line tools; full Xcode is required to build patched Squirrel.
-- Apple Silicon plus `mlx` / `mlx-lm` only when using the resident MLX
-  predictor.
-- A separately obtained local model checkpoint. Model weights are not included.
-
-### Run The Core Locally
-
-Run the test suite first:
-
-```bash
-python3 -m unittest discover -s tests
-```
-
-Initialize a local database and start the sidecar:
-
-```bash
-python3 -m rag_ime.cli init-db
-python3 -m rag_ime.cli sidecar-server --host 127.0.0.1 --port 8766
-```
-
-For a deterministic demonstration that does not touch personal history:
-
-```bash
-python3 scripts/ime_first_demo.py seed --reset
-python3 scripts/ime_first_demo.py verify --report output/ime-first-demo-report.json
-python3 scripts/ime_first_demo.py reset
-```
-
-### Build The macOS Frontend
-
-Prepare the pinned Squirrel checkout and build it with the project patch:
-
-```bash
-scripts/prepare_squirrel_workspace.sh
-scripts/build_patched_squirrel.sh build
-```
-
-Build or install the supported Control Center. The same React application runs
-inside the minimal WebKit shell on the Mac and as a same-origin HTTP build on
-the isolated Agent Gateway:
-
-```bash
-scripts/build_control_center.sh
-scripts/build_control_center.sh install
-```
-
-`build_control_center.sh install` updates only the Control Center app. For an
-existing full installation, use the generation-checked stack installer so the
-Sidecar, Agent gateway, MLX worker, voice agent, maintenance job, and visible
-app cannot silently remain on different commits:
-
-```bash
-scripts/build_control_center.sh install-stack --include-squirrel --include-pi
-scripts/check_installed_product_components.py --require-current
-```
-
-The stack installer isolates each worker's copied Python package, records its
-source commit, refuses dirty tracked source by default, and audits the complete
-installed generation before returning success.
-
-For the pinned Pi checkout, non-destructive native build walkthrough, local
-installation variants, rollback command, and the separate source-public versus
-signed-distribution gates, see [Build, Install, And Release](release/README.md).
-
-### Review And Migrate A Legacy Memory Database
-
-Historical curation is manual, copy-first, and fail-closed. Do not let a local
-large model rewrite the production database. First export an immutable private
-snapshot, make an explicit decision for every logical input and every existing
-Atom, Book, and Phrase, and validate the complete manifest. Questions without a
-durable assertion, workflow noise, failed receipts, duplicates, and one-turn
-commands stay in Evidence/audit storage as `not_for_memory`; they do not become
-Atoms, Books, Timelines, Phrases, or retrieval documents.
-
-A production candidate additionally requires the configured embedding provider,
-complete document/vector parity, caught-up projection checkpoints, an empty
-failed/dead Outbox, and exact source fingerprints. No Timeline or Role Book draft
-is auto-approved.
-
-The `wisdom-weasel-rag-ime` value in the migration command below is a legacy
-persisted project scope, not the current product name. Existing databases,
-schema identifiers, `rag_ime` imports, and `RAG_IME_*` environment variables
-retain compatibility until a separately versioned data migration can update
-them without losing memory provenance.
-
-```bash
-DB="$HOME/Library/Application Support/RagIme/rag-ime.sqlite"
-SNAPSHOT="/private/path/rag-ime-reviewed-source.sqlite"
-EXPORT="/private/path/rag-ime-review-export.json"
-MANIFEST="/private/path/rag-ime-review-manifest.json"
-CANDIDATE="/private/path/rag-ime-reviewed-candidate.sqlite"
-ROLLBACK="/path/to/rag-ime-before-semantic-v2.sqlite"
-
-python3 scripts/review_memory_history.py export \
-  --source "$DB" --snapshot "$SNAPSHOT" --output "$EXPORT" \
-  --project wisdom-weasel-rag-ime --timezone Asia/Shanghai
-
-# Review every exported logical input and existing memory item. Then assemble
-# the reviewed parts and catalog audit into one complete manifest.
-python3 scripts/review_memory_history.py assemble \
-  --export "$EXPORT" --part /private/path/review-part-01.json \
-  --existing-audit /private/path/existing-memory-audit.json \
-  --output "$MANIFEST"
-python3 scripts/review_memory_history.py validate \
-  --export "$EXPORT" --manifest "$MANIFEST"
-
-python3 scripts/apply_manual_memory_review.py \
-  --source "$SNAPSHOT" --export "$EXPORT" --manifest "$MANIFEST" \
-  --output "$CANDIDATE" --embedding-from-env
-
-scripts/stop_rag_ime_runtime.sh
-python3 scripts/activate_semantic_memory_candidate.py \
-  --target "$DB" --candidate "$CANDIDATE" \
-  --report "${CANDIDATE}.manual-review-report.json" --rollback "$ROLLBACK" \
-  --confirm ACTIVATE_SEMANTIC_MEMORY_V2
-scripts/build_control_center.sh install-stack --include-squirrel --include-pi --include-mlx
-```
-
-The activation report is bound to the candidate SHA-256 and all four reviewed
-source fingerprints. They are revalidated immediately before the atomic
-replacement, and the activated database is verified again afterward. Keep all
-writers stopped from the final drift check through activation.
-
-### Multi-Device Agent Gateway
-
-The Agent Gateway remains a control-plane process on loopback `127.0.0.1:8768`.
-It serves the production HTTP Control Center and the existing REST/SSE API from
-one origin. Squirrel and the foreground typing path continue to use the
-separate `127.0.0.1:8766` Sidecar; remote devices never enter that hot path.
-
-For local development:
-
-```bash
+# 构建连接真实 Gateway 的前端。
 RAG_IME_CONTROL_TRANSPORT=http \
 RAG_IME_CONTROL_BUILD_CHANNEL=production \
   scripts/build_control_center_web.sh
-python3 -m rag_ime.cli agent-gateway \
-  --host 127.0.0.1 \
-  --port 8768 \
+
+uv run --locked python -m rag_ime.cli agent-gateway \
+  --host 127.0.0.1 --port 8768 \
   --web-dist control-center-web/dist
 ```
 
-To expose the already installed gateway to phones, tablets, and other Macs on
-the same tailnet:
+随后访问 `http://127.0.0.1:8768`。Agent 执行需要安装与
+[Runtime 合约](integrations/pi/session-runtime-host-contract.json)兼容的 Pi，
+并在设置中配置 Provider 的 API Key 或受支持的 OAuth 登录。
+安装顺序、Pi 源码要求和 macOS 桌面构建见 [构建与安装](release/README.md)。
+
+已有安装应使用整套安装脚本更新组件，避免前后端和 Runtime 版本不同步。
+数据库、认证信息、模型权重和插件业务资料由用户本地管理。
+
+## 架构与职责
+
+| 层 | 负责的事情 | 主要入口 |
+| --- | --- | --- |
+| PAWOS / Control Center | 对话、窗口、项目、设置与执行状态展示 | [control-center-web](control-center-web/) |
+| PAW Gateway / 应用服务 | 产品 API、持久化事件、Room 协作及能力配置 | [rag_ime](rag_ime/) |
+| Pi Runtime | Session、模型和工具循环、上下文、压缩、中止与恢复 | [integrations/pi](integrations/pi/) |
+| Memory / Knowledge | 本地记忆治理、文档处理、索引和检索 | [架构说明](ARCHITECTURE.md) |
+| 平台适配器 | Electron、浏览器、桌面、语音及可选输入集成 | [integrations](integrations/) · [macos](macos/) · [squirrel-patches](squirrel-patches/) |
+
+PAW 的界面读取拥有该状态的服务。Room 组合普通 Pi Sessions；
+Skill 只提供方法，文档只保存约定，都不接管 Session 的运行与完成状态。
+
+## 开发与验证
+
+从 [AGENTS.md](AGENTS.md) 进入项目，再读取 [PROJECT.md](PROJECT.md) 和
+[当前 Outcome](OUTCOMES.md)。[CONTEXT.md](CONTEXT.md) 解释术语，
+[DECISIONS.md](DECISIONS.md) 记录跨模块决策。
 
 ```bash
-scripts/configure_agent_gateway_tailscale.sh enable --login you@example.com
-scripts/configure_agent_gateway_tailscale.sh status
-scripts/configure_agent_gateway_tailscale.sh disable
+uv run --locked python scripts/check_project_harness.py
+uv run --locked python scripts/check_import_boundaries.py
+uv run --locked python scripts/check_route_ownership.py
+uv run --locked python -m unittest discover -s tests
+pnpm --dir control-center-web typecheck
+pnpm --dir control-center-web test
+pnpm --dir control-center-web build
 ```
 
-This route uses tailnet-only Tailscale Serve, never public Funnel. The gateway
-accepts remote requests only when Serve supplies an allowlisted
-`Tailscale-User-Login`; it then applies the canonical remote-safe route and
-scope policy. Provider credentials, plugin installation, arbitrary files,
-database apply operations, and input-method configuration remain local-only.
-Session prompts and Room messages use durable `clientMessageId` receipts, so a
-network retry cannot silently start the same Agent turn twice.
+[CONTRIBUTING.md](CONTRIBUTING.md) 包含完整检查要求。
+输入、语音和桌面行为还需在真实前台应用中验证。
 
-Installing an input method changes user-level macOS state. Use an attended
-foreground session and verify the actual UI rather than trusting an HTTP
-response:
-
-```bash
-scripts/doctor_squirrel_integration.sh
-scripts/verify_squirrel_foreground_trace.sh
-```
-
-The optional voice lane, Active RAG provider, and Notion Worker each have
-separate setup in the Web Control Center; none is required for the local
-core.
-
-## Browser Co-pilot
-
-The optional Chrome extension under `integrations/browser-copilot/` adds a
-local, auditable browser lane without putting full pages into every Agent
-prompt:
-
-- the extension keeps compact multi-frame page snapshots in the existing local
-  SQLite control plane;
-- `browser` reads snapshots or screenshots on demand and sends write
-  actions through the existing Agent approval flow;
-- the Control Center exposes browser selection, visual and structured page
-  views, site permissions, execution traces, pairing, and an isolated managed
-  Chrome profile;
-- first-time cross-origin navigation requests a site decision and asks the
-  Agent to retry after approval; passwords are never included in snapshots.
-
-The product installer copies the unpacked extension to
-`~/Library/Application Support/RagIme/BrowserCopilot/extension`. Load that
-directory once from `chrome://extensions` with Developer mode enabled.
-
-## Validation And Release Gates
-
-The project distinguishes backend evidence from real foreground behavior.
-Passing tests or a health probe does not prove a visible, selectable candidate
-in a foreground application.
-
-```bash
-python3 -m compileall -q rag_ime scripts tests
-python3 scripts/check_import_boundaries.py
-python3 scripts/check_product_status.py --json
-python3 scripts/check_public_release.py --allow-blocked
-python3 scripts/evaluate_deployed_rime_lexicon.py
-python3 -m unittest discover -s tests
-```
-
-`check_public_release.py --allow-blocked` is intentionally a report while the
-prototype is unfinished. A real release additionally needs a clean source
-commit, foreground acceptance, Developer ID signing, notarization, stapling,
-and a hash-bound `rag-ime.release-manifest.v2` that verifies the project
-`LICENSE`, third-party notices, and exact patched Squirrel corresponding source.
-See the [release-manifest template](release/release-manifest.example.json).
-
-For a newly bound project that does not yet have repository instructions, run
-Pi's explicit `/init` prompt template. It inspects the actual workspace and
-creates or narrowly supplements the root `AGENTS.md`; creating a Session never
-writes project files implicitly.
-
-## Repository Map
-
-| Path | Purpose |
+| 文档或目录 | 用途 |
 | --- | --- |
-| `AGENTS.md` | Pi's bounded self-hosting bootstrap, Skill router, and repository work rules. |
-| `PROJECT.md` | Durable vision, current destination, product boundaries, and non-goals. |
-| `OUTCOMES.md` | Bounded current focus, honest progress, and next acceptance frontiers. |
-| `DECISIONS.md` | Cross-outcome architectural and workflow decisions. |
-| `CONTEXT.md` | Shared domain glossary without implementation detail. |
-| `ARCHITECTURE.md` | Runtime ownership, dependency direction, and primary flows. |
-| `rag_ime/` | Python sidecar, local RAG/memory core, model runtime adapters, management API, and release audit. |
-| `squirrel-patches/` | Pinned Squirrel patch, Swift overlay, and patch application checks. |
-| `control-center-web/` | React PAWOS UI plus the sole Electron release host. |
-| `integrations/browser-copilot/` | Local Chrome extension for compact page snapshots, screenshots, approved actions, and site-permission prompts. |
-| `macos/RagImeVoice/` | Headless push-to-talk agent, microphone pipeline, and cursor insertion. |
-| `macos/Shared/` | Shared native Keychain and streaming-ASR protocol code. |
-| `scripts/` | Build, install, runtime, evaluation, release, and foreground-verification commands. |
-| `tests/` | Unit, contract, privacy, patch, release, and integration-style tests. |
-| `eval/` | Synthetic public evaluation fixtures with no personal input history. |
-| `release/` | Public-safe feature registry, product status, and release-manifest template. |
-| `dataset/` | Public-safe demonstration and regression fixtures, not a production training corpus. |
+| [release](release/README.md) | 依赖、构建、安装、升级、回滚及发布 |
+| [本地运维](release/operations.md) | 对话导入、旧记忆迁移及多设备 Gateway |
+| [control-center-web/CLOUD_MODEL.md](control-center-web/CLOUD_MODEL.md) | 前端源码与继续开发入口 |
+| [eval](eval/) | 测评案例、实验方法和结果记录 |
+| [tests](tests/) · [scripts](scripts/) | 回归检查、构建与维护工具 |
+| [SECURITY.md](SECURITY.md) | 漏洞报告与敏感数据处理 |
 
-## Scope And Non-Goals
+## 许可与致谢
 
-- This is a local-first personal Agent workbench, not a hosted autonomous
-  workforce, enterprise control plane, or general cloud Agent service.
-- The native product currently targets macOS. The optional input adapter is a
-  Rime/Squirrel experiment, not a general cross-platform IME.
-- Rime remains authoritative during Pinyin composition; model and RAG output
-  does not reorder native candidates or train the Rime user dictionary.
-- Remote models are not permitted in passive per-keystroke completion.
-- Room collaboration does not merge private Session histories. Only explicit
-  Room posts, evidence, Tasks, handoffs, and receipts become shared state.
-- The repository does not redistribute trained model weights, personal typing
-  history, or a production-scale training corpus.
-- A public source repository and an ad-hoc signed engineering build are not
-  proof of a distributable macOS product.
+项目自有源码采用 [GPL-3.0-only](LICENSE)，Copyright © 2026 7155。
+第三方组件、模型和服务保留各自许可，详见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-## Contributing
-
-Keep changes narrow, preserve the Rime/Squirrel foreground boundary, and add
-tests for behavior, privacy, contracts, or patch application. Do not submit
-credentials, personal typing history, local databases, model weights, generated
-app bundles, or machine-specific defaults.
-
-Before opening a pull request, run the validation commands above and verify UI
-changes through the real Squirrel foreground path, not only preview fixtures.
-When a change distributes or packages patched Squirrel, preserve the required
-notices and corresponding source.
-
-## License
-
-Unless a file says otherwise, project-authored source is Copyright (C) 2026 7155 and
-licensed under [GPL-3.0-only](LICENSE). GPL is a deliberate choice for
-this project because its distributable macOS route includes a modified GPL-3.0
-Squirrel app.
-
-Third-party code, model weights, datasets, and remote services retain their own
-terms. A patched Squirrel binary or source distribution must include the
-applicable notices and exact corresponding source; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-## Acknowledgements
-
-- [Squirrel](https://github.com/rime/squirrel) and
-  [librime](https://github.com/rime/librime) provide the macOS frontend and
-  Rime engine foundations.
-- [Felix3322/Wisdom-Weasel](https://github.com/Felix3322/Wisdom-Weasel)
-  informed the prediction lifecycle and candidate-panel direction; its
-  implementation source is not copied into this repository without a separate
-  provenance review.
-- [MiniMind](https://github.com/jingyaogong/minimind),
-  [MLX](https://github.com/ml-explore/mlx),
-  [Ollama](https://github.com/ollama/ollama), and
-  [llama.cpp](https://github.com/ggml-org/llama.cpp) inform or provide optional
-  local model runtime boundaries.
-- [OpenLess](https://github.com/Open-Less/openless) and
-  [LazyTyper](https://github.com/oldcai/LazyTyper-releases) informed the voice
-  interaction study. [Volcengine Doubao streaming ASR 2.0](https://docs.volcengine.com/docs/6561/1354869?lang=zh)
-  is an optional configured provider.
-- [Yuxi](https://github.com/xerrors/Yuxi) informed the document knowledge-base
-  and knowledge-graph management workflow. The reference review used tag
-  `v0.7.1.beta1` (`c765d904`), released under the MIT License. This project
-  adapts the workflow to its existing local worker, SQLite storage, and Control
-  Center design; it does not copy or redistribute Yuxi source code or import
-  Yuxi's Neo4j/PostgreSQL/Milvus runtime stack.
-- [VCPToolBox](https://github.com/lioensky/VCPToolBox) informed the live browser
-  perception and human-Agent co-browsing direction. Browser Co-pilot is a
-  project-native implementation built on this repository's existing approval,
-  SQLite, Agent Tool, and Control Center contracts rather than copied VCP
-  extension source.
+感谢 Pi、Electron、React、Squirrel/librime 及相关开源项目。
+Tutti、Wisdom-Weasel、Yuxi、VCPToolBox 等项目为界面或工作流研究提供了参考；
+具体来源与许可边界以第三方声明为准。

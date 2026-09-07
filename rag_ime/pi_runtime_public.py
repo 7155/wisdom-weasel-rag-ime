@@ -348,6 +348,23 @@ def _transient_context_message(text: str) -> str | None:
 
 
 def visible_message_text(role: str, text: str) -> str:
+    if role == "assistant":
+        # Some adapters emit internal preambles as text instead of a thinking
+        # carrier. Never promote them to public summaries. Only a leading raw
+        # wrapper is protocol; quoted/fenced examples and user text stay intact.
+        remaining = text
+        while True:
+            stripped = remaining.lstrip()
+            lowered = stripped.lower()
+            if lowered and "<thinking>".startswith(lowered):
+                return ""
+            opening = re.match(r"<thinking\s*>", stripped, re.IGNORECASE)
+            if not opening:
+                return remaining
+            closing = re.search(r"</thinking\s*>", stripped[opening.end():], re.IGNORECASE)
+            if not closing:
+                return ""
+            remaining = stripped[opening.end() + closing.end():].lstrip()
     if role != "user":
         return text
     if text.startswith(_TRANSIENT_CONTEXT_PREFIX):
@@ -455,10 +472,10 @@ def last_assistant_preview(messages: list[object]) -> str:
             continue
         content = message.get("content")
         if isinstance(content, str):
-            return " ".join(content.split())[:240]
+            return " ".join(visible_message_text("assistant", content).split())[:240]
         if isinstance(content, list):
             text = " ".join(
-                str(as_mapping(block).get("text") or "")
+                visible_message_text("assistant", str(as_mapping(block).get("text") or ""))
                 for block in content
                 if str(as_mapping(block).get("type") or "") == "text"
             )
@@ -559,11 +576,11 @@ def pi_message_is_public(raw: Mapping[str, object]) -> bool:
         return False
     content = raw.get("content")
     if not isinstance(content, list):
-        return bool(str(content or "").strip()) or bool(raw.get("errorMessage"))
+        return bool(visible_message_text(role, str(content or "")).strip()) or bool(raw.get("errorMessage"))
     return any(
         (
             str(as_mapping(item).get("type") or "") == "text"
-            and bool(str(as_mapping(item).get("text") or "").strip())
+            and bool(visible_message_text(role, str(as_mapping(item).get("text") or "")).strip())
         )
         or str(as_mapping(item).get("type") or "") == "image"
         for item in content
@@ -595,6 +612,7 @@ def public_reasoning_summaries(
     raw: Mapping[str, object],
     *,
     maximum_items: int = 8,
+    completed_content_index: int | None = None,
 ) -> list[str]:
     """Project only Provider-authored reasoning *summaries*.
 
@@ -614,6 +632,16 @@ def public_reasoning_summaries(
     content = raw.get("content")
     if not isinstance(content, list):
         return []
+    if completed_content_index is not None:
+        # An empty/signature-only or private block ending is not a new public
+        # summary. Do not replay the previous block's text for that event.
+        if not 0 <= completed_content_index < len(content):
+            return []
+        if not public_reasoning_summaries(
+            {**raw, "content": [content[completed_content_index]]},
+            maximum_items=maximum_items,
+        ):
+            return []
     limit = max(1, min(int(maximum_items), 12))
     result: list[str] = []
     for raw_block in content:
@@ -623,6 +651,8 @@ def public_reasoning_summaries(
         value = str(block.get("thinking") or block.get("text") or "").strip()
         if not value:
             continue
+        # These wrappers may occur inside already-public Provider summaries.
+        value = re.sub(r"</?thinking\s*>", "", value, flags=re.IGNORECASE).strip()
         headings = re.findall(r"\*\*([^*\n]{1,300})\*\*", value)
         candidates = headings or re.split(r"(?:\r?\n){2,}|\r?\n", value)
         for candidate in candidates:
@@ -642,8 +672,10 @@ def public_reasoning_summaries(
             safe = redact_runtime_text(normalized)[:240].strip()
             if safe and safe not in result:
                 result.append(safe)
-            if len(result) >= limit:
-                return result
+            # A long Responses message can contain many thinking blocks. Keep
+            # the recent bounded tail so live updates do not freeze at item 8.
+            if len(result) > limit:
+                result.pop(0)
     return result
 
 

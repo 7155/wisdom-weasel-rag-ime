@@ -7,13 +7,13 @@ export type GoldenEvidence = { sourceId: string; quote: string };
 export type Verdict = 'pass' | 'fail' | 'uncertain';
 export type GoldenSample = {
   sampleId: string; answer: string; category: 'correct' | 'incorrect' | 'boundary';
-  humanVerdict: Verdict | null; humanNote: string;
+  humanVerdict: Verdict | null; humanNote: string; labelAuthor?: 'human' | 'agent';
 };
 export type GoldenCase = {
   caseId: string; question: string; taskType: string; answerable: boolean;
   requiredFacts: string[]; evidence: GoldenEvidence[]; rubric: string[];
   split: 'development' | 'holdout';
-  review: { status: 'pending' | 'approved' | 'rejected'; note: string; reviewedAtMs: number | null };
+  review: { status: 'pending' | 'approved' | 'rejected'; note: string; reviewedAtMs: number | null; author?: 'human' | 'agent' };
   samples: GoldenSample[];
 };
 export type Judgment = { caseId: string; sampleId: string; verdict: Verdict; reason: string; evidence: GoldenEvidence[] };
@@ -22,6 +22,7 @@ export type Calibration = {
   judgeProtocolVersion?: string;
   judgments: Judgment[]; metrics: { total: number; comparable: number; agreement: number | null; falsePasses: number; falseFails: number; uncertain: number };
   ready: boolean; reasons: string[]; createdAtMs: number;
+  labelAuthors?: { human: number; agent: number; unrecorded: number }; referenceAuthority?: 'human' | 'agent_assisted' | 'unrecorded';
 };
 export type GoldenSnapshot = {
   snapshotId: string; suiteId: string; version: number; sourceRevision: number; createdAtMs: number;
@@ -42,6 +43,8 @@ export type GoldenSuite = {
   judgeConfig: ModelConfig; calibration: Calibration | null; snapshot: GoldenSnapshot | null;
   jobs: GoldenJob[]; createdAtMs: number; updatedAtMs: number;
   currentJudgeProtocolVersion?: string;
+  knowledge?: { indexId: string; corpusHash: string; documentCount: number; chunkCount: number; profile: Record<string, unknown> };
+  datasetProvenance?: { kind: string; totalCases: number; selectedCases: number; diagnosticSamples?: string };
 };
 export type GoldenRead = { ok: true; items: GoldenSuite[]; suite: GoldenSuite | null };
 export type GoldenAction = 'create' | 'draft' | 'review_case' | 'label_sample' | 'judge_config' | 'calibrate' | 'freeze' | 'experiment' | 'cancel' | 'resume';
@@ -54,6 +57,7 @@ export type CaseRun = {
   answer: string; status: 'graded' | 'runtime_error';
   judgment: { verdict: Verdict; reason: string; evidence: GoldenEvidence[] };
   requestId: string; sessionId: string; turnId: string;
+  retrieval?: { indexId: string; sourceCount: number; contextChars: number; sources: { sourceId: string; chunkId: string; excerpt?: string }[] };
 };
 export type ExperimentMetrics = { total: number; passed: number; failed: number; uncertain: number; runtimeErrors: number; passRate: number | null };
 export type PhaseReport = {
@@ -69,8 +73,10 @@ export type ExperimentUsage = {
   estimatedCostUsd?: number | null; knownEstimatedCostUsd?: number | null; estimatedPricedCalls?: number; estimateComplete?: boolean;
 };
 export type ExperimentResult = {
+  referenceAuthority?: 'human' | 'agent_assisted' | 'unrecorded';
+  labelAuthors?: { human: number; agent: number; unrecorded: number } | null;
   schemaVersion: 'rag-ime.agent-lab-golden-experiment.v1'; suiteId: string; snapshotId: string;
-  executionMode: 'context_qa'; optimizationScope: 'prompt'; judgeConfig: ModelConfig;
+  executionMode: 'context_qa' | 'knowledge_qa'; optimizationScope: 'prompt'; judgeConfig: ModelConfig;
   baseline: ModelConfig; candidate: ModelConfig; development: PhaseReport; holdout: PhaseReport;
   optimization: { enabled: boolean; maxCandidates: number; selectedCandidateIndex: number; proposals: { candidateIndex: number; modelConfig: ModelConfig; developmentMetrics: ExperimentMetrics; selected: boolean; proposalRequestId: string }[] };
   comparison: { decision: 'improved' | 'no_improvement' | 'inconclusive'; comparable: boolean | number; developmentDelta: number | null; holdoutDelta: number | null; reasons: string[]; sameSnapshot: true; goldenChanged: false; improvementBasis?: 'quality' | 'answer_cost' | 'answer_cost_estimate' | null; groupRegressions?: unknown[] };
@@ -166,7 +172,7 @@ export function isExperimentResult(value: unknown): value is ExperimentResult {
     });
   };
   return result.schemaVersion === 'rag-ime.agent-lab-golden-experiment.v1' && fields(result, ['suiteId', 'snapshotId'])
-    && result.executionMode === 'context_qa' && result.optimizationScope === 'prompt'
+    && ['context_qa', 'knowledge_qa'].includes(String(result.executionMode)) && result.optimizationScope === 'prompt'
     && (result.validationUse === undefined || (Number.isSafeInteger(validation.ordinal) && Number(validation.ordinal) > 0 && typeof validation.reused === 'boolean'
       && number(validation.priorStartedRuns) && number(validation.priorCompletedRuns) && number(validation.startedAtMs)
       && (validation.overlappingQuestionCount === undefined || number(validation.overlappingQuestionCount))))

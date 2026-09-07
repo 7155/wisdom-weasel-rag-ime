@@ -95,6 +95,9 @@ export function GoldenWorkflow({ onClose, startNew = false, initialSuiteId = '' 
       : workflow.mutation.error && isGoldenRejection(workflow.mutation.error) ? <p className="golden-command-error" role="alert">{goldenErrorMessage(workflow.mutation.error, '这次操作未被接受，已重新读取当前版本。请核对后重试。')}</p> : null}
     {workflow.pending?.outcome === 'sending' ? <p className="golden-reading" role="status">正在提交本次操作…</p> : null}
     {visibleJob ? <JobStatus job={visibleJob} stale={workflow.query.isError} disabled={commandBusy} onCancel={() => void submit('cancel', { jobId: visibleJob.jobId })} onResume={() => void resumeJob(visibleJob)} /> : null}
+    {suite?.knowledge ? <p className="golden-note">知识库回答评测 · {suite.knowledge.documentCount.toLocaleString()} 篇文档 / {suite.knowledge.chunkCount.toLocaleString()} 个切片。每题先检索，再把有界证据交给 Pi 回答；参考答案只用于评审。</p> : null}
+    {suite?.calibration?.referenceAuthority === 'agent_assisted' ? <p className="golden-note">本轮包含 Agent 辅助标注，用于验证流程和比较配置；不代表独立人工金标验收。</p> : null}
+    {suite?.datasetProvenance?.kind === 'imported_reference' ? <p className="golden-note">本次从 {suite.datasetProvenance.totalCases} 道原题中选取 {suite.datasetProvenance.selectedCases} 道。原题和参考答案已保留，请核对标准；错误与边界样例是本地构造的校准草稿，需要编辑和标注，不是数据集原始答案。</p> : null}
     <div id={`${id}-panel-0`} className="golden-panel" role="tabpanel" aria-labelledby={`${id}-tab-0`} hidden={step !== 0}>
       {suite ? <SourceSummary suite={suite} disabled={disabled || reviewDirty || calibrationDirty} onDirtyChange={reportSourceDirty} onJudge={(input) => submit('judge_config', input)} onDraft={() => void submit('draft').then((accepted) => { if (accepted) setStep(1); })} /> : <SourceForm key={newGeneration} disabled={commandBusy} onCreate={async (input) => { const receipt = await workflow.submit('create', input); if (receipt) setSelectedSuiteId(receipt.suite.suiteId); }} />}
     </div>
@@ -147,7 +150,7 @@ function SourceSummary({ suite, disabled, onDraft, onJudge, onDirtyChange }: { s
     <div className="golden-sources">{suite.sources.map((source) => <Disclosure className="golden-source-summary" key={source.sourceId} summary={<span><strong>{source.title}</strong><small>{({ document: '文档', history: '历史任务', failure: '失败记录' })[source.kind]} · {source.uri}</small></span>}><p className="golden-preserve-text">{source.text}</p></Disclosure>)}</div>
     <ModelFields label="起草" value={model} onChange={setModel} disabled={disabled} />
     {changed ? <div className="golden-inline-action"><p className="golden-note">先保存本次模型选择，再开始起草。它也作为后续评审的初始设置。</p><Button disabled={disabled || !isRunnableGoldenModel(model)} onClick={() => void onJudge({ judgeConfig: model })}>保存起草模型</Button></div> : null}
-    <footer className="golden-section__footer golden-action-bar"><p className="golden-note">{suite.cases.length ? '保留已审核题目，更新待审草案；更新后需要重新校准。' : '起草使用已配置的 Agent 模型，所有题目先进入待审核状态。'}</p><Button variant="primary" disabled={disabled || changed || !isRunnableGoldenModel(model)} onClick={onDraft}>{suite.cases.length ? '重新起草题目' : '让 Agent 起草题目'}</Button></footer>
+    <footer className="golden-section__footer golden-action-bar">{suite.datasetProvenance?.kind === 'imported_reference' ? <p className="golden-note">原始题目已经导入。请选择“核对题目”继续；此处不会重新生成或覆盖原题。</p> : <><p className="golden-note">{suite.cases.length ? '保留已审核题目，更新待审草案；更新后需要重新校准。' : '起草使用已配置的 Agent 模型，所有题目先进入待审核状态。'}</p><Button variant="primary" disabled={disabled || changed || !isRunnableGoldenModel(model)} onClick={onDraft}>{suite.cases.length ? '重新起草题目' : '让 Agent 起草题目'}</Button></>}</footer>
   </section>;
 }
 function JobStatus({ job, stale, disabled, onCancel, onResume }: { job: GoldenJob; stale: boolean; disabled: boolean; onCancel: () => void; onResume: () => void }) {

@@ -90,6 +90,10 @@ delivering an application, preserve the chosen implementation and verify each
 requested target in its declared environment.
 
 For an application package, read [application delivery](references/apps.md).
+Treat input acknowledgement, real intermediate feedback, visible sources,
+unfinished output and recoverable errors as part of the App's implementation.
+For a new portable App, adapt [the interaction starter](assets/portable-app.html)
+to the domain; do not deliver a submit button that only waits for a final answer.
 Use the current project's `commandGuide` for the live source and command contract.
 The supported portable runtime must fit the actual application; keep unsupported
 Tool/environment requirements explicit instead of replacing them with a mock.

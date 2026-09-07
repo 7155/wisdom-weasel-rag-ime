@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -41,6 +41,50 @@ function mount(transport: MockControlTransport, props: { initialProjectId?: stri
 }
 
 describe('Agent-led Lab project container', () => {
+  it('imports an existing scene as a project without starting its Agent or any trial', async () => {
+    let current: LabProject | null = null; const commands: ProjectCommand[] = [];
+    const historyCollections = [{ sceneId: 'cloudops', title: '云上事故诊断', sourceHash: 'frozen-source', experimentCount: 9,
+      datasetIds: ['incident-validation'], latestEvidenceAtMs: 1 }];
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.projects.get': (request: ControlRequest) => ({ ...read(request.query?.projectId ? current : null, current ? [current] : []), historyCollections }),
+      'agent.eval-lab.projects.command': (request: ControlRequest) => { const command = request.body as ProjectCommand; commands.push(command);
+        current = project({ title: '云上事故诊断', workspace: { artifactOrder: [], primaryArtifactId: '', layout: 'focus' },
+          historyOrigin: { sceneId: 'cloudops', sourceHash: 'frozen-source', experimentCount: 9, importedAtMs: 1, snapshotArtifactId: 'snapshot', snapshotArtifactRevision: 1 } });
+        return { ok: true, project: current, clientRequestId: command.clientRequestId, replayed: false }; },
+    } });
+    mount(transport);
+    fireEvent.click(await screen.findByRole('button', { name: '导入已有实验' }));
+    fireEvent.click(await screen.findByRole('button', { name: '导入为项目' }));
+    expect(await screen.findByRole('heading', { name: '云上事故诊断', level: 1 })).toBeVisible();
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ action: 'import_history', expectedRevision: 0, input: { sceneId: 'cloudops', sourceHash: 'frozen-source' } });
+    expect(transport.requests.every(({ request }) => ['agent.eval-lab.projects.get', 'agent.eval-lab.projects.command'].includes(request.pathId))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '返回 Lab 项目' }));
+    fireEvent.click(screen.getByRole('button', { name: '导入已有实验' }));
+    fireEvent.click(await screen.findByRole('button', { name: '打开已导入项目' }));
+    expect(commands).toHaveLength(1);
+  });
+
+  it('recovers a failed project read at the same revision without replaying commands or losing the draft', async () => {
+    let offline = false; const current = project();
+    const transport = new MockControlTransport({ routes: { 'agent.eval-lab.projects.get': (request: ControlRequest) => {
+      if (request.query?.projectId && offline) throw new Error('Failed to fetch');
+      return read(request.query?.projectId ? current : null, [current]);
+    } } });
+    mount(transport, { initialProjectId: current.projectId });
+    fireEvent.click(await screen.findByRole('button', { name: '材料 0' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '添加材料' })[0]!);
+    const field = await screen.findByRole('textbox', { name: '粘贴材料标题' });
+    fireEvent.change(field, { target: { value: '尚未保存的材料' } });
+    offline = true;
+    await act(async () => { await clients[0]!.invalidateQueries({ queryKey: ['lab-projects'] }); });
+    await screen.findByText('项目服务暂时不可用，请重新读取。');
+    offline = false;
+    await waitFor(() => expect(screen.queryByText('项目服务暂时不可用，请重新读取。')).not.toBeInTheDocument(), { timeout: 4500 });
+    expect(field).toHaveValue('尚未保存的材料');
+    expect(transport.requests.every(({ request }) => request.pathId === 'agent.eval-lab.projects.get')).toBe(true);
+  });
+
   it('starts with a description and real projects, without a universal business form or fixed Golden journey', async () => {
     const transport = new MockControlTransport({ routes: { 'agent.eval-lab.projects.get': read(null, []) } });
     mount(transport, { root: true });

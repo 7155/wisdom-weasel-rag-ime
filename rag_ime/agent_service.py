@@ -292,6 +292,9 @@ class AgentService:
         self._eval_lab_trial_application: AgentLabTrialApplication | None = None
         self._eval_lab_trial_execution_owner = background_job_execution_owner
         self._eval_lab_trial_closed = False
+        self._eval_lab_knowledge_resource = None
+        self._lab_knowledge_client = None
+        self._lab_knowledge_settings = lambda: {}
         self._eval_lab_trial_adapters = (
             self._default_trial_adapters()
             if eval_lab_trial_adapters is None
@@ -1576,11 +1579,26 @@ class AgentService:
                 self.sessions.db_path, sessions=self.sessions, runtime=lambda: self.runtime,
             )
 
-        return {"memory": AgentLabMemoryTrialAdapter(
+        return {"knowledge-resource": self._knowledge_resource(), "memory": AgentLabMemoryTrialAdapter(
             artifact_root, pi_executor_factory=executor,
             abort_session=lambda session_id: self.runtime.abort(session_id),
             production_db=self.sessions.db_path, project=self.project or "personal-agent-workbench",
         )}
+
+    def configure_lab_knowledge(self, *, client, settings_provider) -> None:
+        self._lab_knowledge_client = client
+        self._lab_knowledge_settings = settings_provider
+
+    def _knowledge_resource(self):
+        from .agent_lab_knowledge import AgentLabKnowledgeResource
+        if self._eval_lab_knowledge_resource is None:
+            self._eval_lab_knowledge_resource = AgentLabKnowledgeResource(
+                self.sessions.db_path.expanduser().resolve().parent / "agent-lab-trials" / "knowledge",
+                read_trials=lambda job_id: self._trial_store().read(job_id),
+                settings=lambda: self._lab_knowledge_settings(),
+                knowledge_client=lambda: self._lab_knowledge_client,
+            )
+        return self._eval_lab_knowledge_resource
 
     def _trial_store(self) -> AgentLabTrialStore:
         with self._eval_lab_trial_lock:
@@ -1641,6 +1659,11 @@ class AgentService:
                     self.sessions.db_path, session_application=self.session_application,
                     current_model=self._golden_current_model,
                     read_golden=self.eval_lab_golden, command_golden=self.eval_lab_golden_command,
+                    knowledge=self._knowledge_resource(),
+                    start_knowledge=lambda request_id, spec: self.eval_lab_trial_start({"clientRequestId": request_id, "sceneId": "knowledge-resource", "spec": spec}),
+                    cancel_knowledge=lambda job_id: self.eval_lab_trial_cancel({"jobId": job_id}),
+                    read_experiments=self.eval_lab._experiments_with_source_ledger,
+                    read_trials=self.eval_lab_trials,
                 )
             return self._eval_lab_project_application
 
@@ -1722,6 +1745,7 @@ class AgentService:
                     store=self._golden_store(), complete=executor.complete,
                     completed_result=executor.completed_result,
                     abort=lambda session_id: self.runtime.abort(session_id),
+                    retrieve_knowledge=self._knowledge_resource().answer_sources,
                 )
         return self._eval_lab_golden_application.command(payload)
 

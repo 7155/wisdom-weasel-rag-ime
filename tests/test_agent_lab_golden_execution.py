@@ -137,6 +137,72 @@ class PiDouble:
 
 
 class GoldenExecutionTests(unittest.TestCase):
+    def test_knowledge_answers_use_real_retriever_callback_and_never_receive_reference_corpus(self):
+        store = FakeStore("experiment", {"snapshotId": "snapshot-1", "baseline": MODEL,
+            "candidate": {**MODEL, "model": "candidate"}, "optimizePrompt": False, "maxCandidates": 1})
+        binding = {"indexId": "index-1", "corpusHash": "frozen-corpus"}
+        store.snapshot["knowledge"] = binding
+        store.snapshot["calibration"].update(referenceAuthority="agent_assisted", labelAuthors={"human": 0, "agent": 3, "unrecorded": 0})
+        pi = PiDouble()
+        retrieval_calls = []
+        def retrieve(bound, question):
+            retrieval_calls.append((bound, question))
+            return [{"sourceId": "retrieved-source", "title": "Retrieved", "text": "RETRIEVED-EVIDENCE-ONLY", "chunkId": "chunk-1", "uri": "kb://1"}]
+        app = AgentLabGoldenApplication(store=store, complete=pi, abort=lambda _: None,
+                                        start_workers=False, retrieve_knowledge=retrieve)
+        self.addCleanup(app.close)
+        job = self.run_job(app, store)
+        self.assertEqual(job["state"], "completed")
+        self.assertEqual(job["result"]["executionMode"], "knowledge_qa")
+        self.assertEqual(job["result"]["knowledge"], binding)
+        self.assertEqual(job["result"]["referenceAuthority"], "agent_assisted")
+        self.assertEqual(job["result"]["labelAuthors"]["agent"], 3)
+        answers = [request for request in pi.calls if ":answer:" in request["request_id"]]
+        self.assertEqual(len(answers), 4)
+        self.assertEqual(len(retrieval_calls), 2)
+        for request in answers:
+            data = task_data(request["prompt"])
+            self.assertEqual(data["sources"][0]["text"], "RETRIEVED-EVIDENCE-ONLY")
+            for secret in ("REFERENCE-FACT-SECRET", "RUBRIC-SECRET", "HUMAN-LABEL-SECRET", SOURCES[0]["text"]):
+                self.assertNotIn(secret, request["prompt"])
+        self.assertEqual(job["result"]["development"]["cases"][0]["baseline"]["retrieval"]["sourceCount"], 1)
+
+    def test_missing_knowledge_retrieval_never_falls_back_to_reference_corpus(self):
+        store = FakeStore("experiment", {"snapshotId": "snapshot-1", "baseline": MODEL,
+            "candidate": MODEL, "optimizePrompt": False, "maxCandidates": 1})
+        store.snapshot["knowledge"] = {"indexId": "missing", "corpusHash": "frozen"}
+        pi = PiDouble()
+        app = self.application(store, complete=pi)
+        job = self.run_job(app, store)
+        self.assertEqual(job["state"], "failed")
+        self.assertEqual(pi.calls, [])
+
+    def test_knowledge_recovery_reuses_the_original_evidence_before_recovering_pi(self):
+        store = FakeStore("experiment", {"snapshotId": "snapshot-1", "baseline": MODEL,
+            "candidate": MODEL, "optimizePrompt": False, "maxCandidates": 1})
+        store.snapshot["knowledge"] = {"indexId": "index-1", "corpusHash": "frozen"}
+        pi, seen, interrupted = PiDouble(), set(), False
+        def retrieve(_binding, question):
+            self.assertNotIn(question, seen, "Recovery must not retrieve again for an accepted answer")
+            seen.add(question)
+            return [{"sourceId": "source-1", "text": "Original retrieved packet", "chunkId": "chunk-1"}]
+        def complete(**request):
+            nonlocal interrupted
+            result = pi(**request)
+            if not interrupted and ":answer:" in request["request_id"]:
+                interrupted = True
+                raise RuntimeError("Lost observation after Pi completed")
+            return result
+        app = AgentLabGoldenApplication(store=store, complete=complete, abort=lambda _: None,
+                                        start_workers=False, retrieve_knowledge=retrieve)
+        self.addCleanup(app.close)
+        first = self.run_job(app, store)
+        self.assertEqual(first["state"], "interrupted")
+        self.assertEqual(len(first["result"]["knowledgePackets"]), 1)
+        resumed = self.run_job(app, store)
+        self.assertEqual(resumed["state"], "completed")
+        self.assertEqual(len(seen), 2)
+
     def application(self, store: FakeStore, complete=None, abort=None, *, workers: bool = False) -> AgentLabGoldenApplication:
         app = AgentLabGoldenApplication(store=store, complete=complete or PiDouble(), abort=abort or (lambda session_id: None), start_workers=workers)
         self.addCleanup(app.close)

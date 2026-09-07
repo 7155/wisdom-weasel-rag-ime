@@ -176,6 +176,8 @@ class AgentLabProjectStore:
             for row in conn.execute("SELECT payload_json FROM agent_lab_projects WHERE scope_id=? ORDER BY updated_at_ms DESC,rowid DESC", (self.scope_id,)):
                 item = json.loads(row[0])
                 items.append({key: item[key] for key in ("projectId", "revision", "title", "materialCount", "artifactCount", "guideSessionId", "createdAtMs", "updatedAtMs")})
+                if "historyOrigin" in item:
+                    items[-1]["historyOrigin"] = item["historyOrigin"]
             project = self._public(conn, self._project(conn, project_id)) if project_id else None
             result = {"ok": True, "items": items, "project": project, "supportedViews": sorted(VIEWS)}
             if material_set_id:
@@ -184,10 +186,10 @@ class AgentLabProjectStore:
                 result["artifact"] = self._artifact(conn, project_id, artifact_id, artifact_revision)
             return result
 
-    def command(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def command(self, payload: Mapping[str, Any], *, history_import: Callable | None = None) -> dict[str, Any]:
         payload = _object(payload, {"action", "projectId", "expectedRevision", "clientRequestId", "input"}, "命令")
         action = _text(payload.get("action"), "操作")
-        if action not in {"create", "update_brief", "import_materials", "remove_materials", "publish_artifact", "set_workspace", "bind_execution", "ensure_guide", "prepare_app"}:
+        if action not in {"create", "import_history", "update_brief", "import_materials", "remove_materials", "publish_artifact", "set_workspace", "bind_execution", "ensure_guide", "prepare_app"}:
             raise AgentLabProjectValidationError("不支持此优化项目操作。")
         project_id = _text(payload.get("projectId", ""), "项目标识", optional=True)
         client_id = _text(payload.get("clientRequestId"), "请求标识")
@@ -206,10 +208,28 @@ class AgentLabProjectStore:
                     raise AgentLabProjectConflict("此请求标识已用于不同内容，请保留修改后重新操作。")
                 return {**json.loads(receipt[1]), "replayed": True}
             extra = {}
-            if action == "create":
+            if action in {"create", "import_history"}:
                 if project_id or revision != 0:
                     raise AgentLabProjectValidationError("新项目需要版本 0，且不能指定已有项目。")
-                project = self._create(conn, value)
+                if action == "create":
+                    project = self._create(conn, value)
+                else:
+                    if history_import is None:
+                        raise AgentLabProjectValidationError("已有实验来源尚未连接。")
+                    prepared = history_import(value)
+                    existing = next((json.loads(row[0]) for row in conn.execute(
+                        "SELECT payload_json FROM agent_lab_projects WHERE scope_id=?", (self.scope_id,))
+                        if json.loads(row[0]).get("historyOrigin", {}).get("sceneId") == prepared["sceneId"]), None)
+                    if existing:
+                        project = existing
+                    else:
+                        project = self._create(conn, prepared["project"], ensure_guide=False)
+                        artifacts = [self._publish(conn, project, artifact) for artifact in prepared["artifacts"]]
+                        project["historyOrigin"] = {"sceneId": prepared["sceneId"], "sourceHash": prepared["sourceHash"],
+                            "experimentCount": prepared["experimentCount"], "importedAtMs": _now(),
+                            "snapshotArtifactId": artifacts[-1]["artifactId"], "snapshotArtifactRevision": 1}
+                        self._bind(conn, project, {"adapterId": "scene.trial", "input": {"sceneId": prepared["sceneId"]}})
+                        project["workspace"]["layout"] = "focus"
             else:
                 project = self._project(conn, project_id)
                 if revision != project["revision"]:
@@ -224,7 +244,7 @@ class AgentLabProjectStore:
                          (receipt_key, project["projectId"], request_json, _json(response), _now()))
             return response
 
-    def _create(self, conn: sqlite3.Connection, value: dict[str, Any]) -> dict[str, Any]:
+    def _create(self, conn: sqlite3.Connection, value: dict[str, Any], *, ensure_guide: bool = True) -> dict[str, Any]:
         value = _object(value, {"title", "description", "path", "materials"}, "新项目")
         description = _text(value.get("description"), "项目描述", 30_000)
         now = _now()
@@ -239,7 +259,7 @@ class AgentLabProjectStore:
         self._save_brief(conn, project)
         if "path" in value or "materials" in value:
             self._import(conn, project, {key: value[key] for key in ("path", "materials") if key in value})
-        if self._create_guide is not None:
+        if ensure_guide and self._create_guide is not None:
             self._ensure_guide(conn, project)
         return project
 

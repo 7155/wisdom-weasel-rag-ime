@@ -42,11 +42,12 @@ class AgentLabGoldenPiExecutor:
         self._lock = threading.Lock()
 
     def complete(self, *, request_id: str, model: Mapping[str, object], prompt: str,
-                 on_session: Callable[[str], None], cancelled: Callable[[], bool]) -> dict[str, object]:
+                 on_session: Callable[[str], None], cancelled: Callable[[], bool],
+                 on_progress: Callable[[dict], None] | None = None) -> dict[str, object]:
         with self._lock:
             lock = self._locks.setdefault(request_id, threading.RLock())
         with lock:
-            return self._complete(request_id, model, prompt, on_session, cancelled)
+            return self._complete(request_id, model, prompt, on_session, cancelled, on_progress)
 
     def completed_result(self, request_id: str, model: Mapping[str, object]) -> dict[str, object] | None:
         """Read a settled call for explicit reprocessing, without new admission.
@@ -70,7 +71,8 @@ class AgentLabGoldenPiExecutor:
         return self._result(row) if row["state"] == "completed" else None
 
     def _complete(self, request_id: str, model: Mapping[str, object], prompt: str,
-                  on_session: Callable[[str], None], cancelled: Callable[[], bool]) -> dict[str, object]:
+                  on_session: Callable[[str], None], cancelled: Callable[[], bool],
+                  on_progress: Callable[[dict], None] | None = None) -> dict[str, object]:
         if cancelled():
             raise GoldenPiCallError("任务已停止。", interrupted=False)
         if not request_id or not prompt.strip():
@@ -124,6 +126,8 @@ class AgentLabGoldenPiExecutor:
         if cancelled():
             runtime.abort(session_id)
             return self._terminal_result(self._write(request_id, state="cancelled", error="任务已停止。"))
+        progress = _PublicCallProgress(runtime, session_id, turn_id, on_progress)
+        progress.emit({'stage':'model_wait'})
         try:
             deadline = time.monotonic() + max(1.0, min(3600.0, self.timeout_seconds))
             while True:
@@ -135,13 +139,15 @@ class AgentLabGoldenPiExecutor:
                 if remaining <= 0:
                     raise TimeoutError("Pi Session turn settlement timed out")
                 try:
+                    progress.drain()
                     # Re-enter Pi's exact settlement.get lane at least every
                     # five seconds when an await notification is missed. This
                     # repeats only a read; Session/turn admission stays above.
                     settlement = runtime.await_turn_settled(
                         session_id, turn_id, client_message_id=request_id,
-                        timeout_seconds=min(5.0, remaining),
+                        timeout_seconds=min(1.0 if on_progress else 5.0, remaining),
                     )
+                    progress.drain()
                     break
                 except TimeoutError as exc:
                     # A normal wait expiry says the turn was not settled yet.
@@ -269,6 +275,46 @@ class AgentLabGoldenPiExecutor:
             return self._result(row)
         raise GoldenPiCallError(str(row["error"] or "原任务未完成。"), interrupted=False,
                                 completion=self._completion(row))
+
+
+class _PublicCallProgress:
+    """Read Pi's public event projection; settlement remains the only result."""
+    def __init__(self, runtime, session_id, turn_id, callback):
+        self.hub = getattr(runtime, 'events', None)
+        self.session_id, self.turn_id, self.callback = session_id, turn_id, callback
+        self.cursor, self.blocks, self.partial = '', {}, False
+
+    def emit(self, value):
+        if self.callback:
+            try: self.callback(value)
+            except Exception: pass  # Optional feedback cannot interrupt Pi.
+
+    def drain(self):
+        if not self.callback or self.hub is None: return
+        try:
+            events, gap = self.hub.replay(self.session_id, after_event_id=self.cursor)
+            if gap:
+                self.partial = True
+                self.emit({'streamPartial':True,'text':''})
+            text_changed = False
+            for event in events:
+                self.cursor = event.event_id
+                if event.session_id != self.session_id or event.turn_id != self.turn_id: continue
+                payload = event.payload
+                if event.event_type == 'status_changed' and payload.get('phase') == 'reasoning':
+                    self.emit({'stage':'thinking'})
+                elif event.event_type == 'text_delta' and not self.partial:
+                    if payload.get('replaceBlock'): self.blocks.clear()
+                    key = (str(payload.get('blockId','')), int(payload.get('contentIndex',0)))
+                    prefix = '' if payload.get('replaceContent') else self.blocks.get(key,'')
+                    self.blocks[key] = (prefix + str(payload.get('delta','')))[:100000]
+                    text_changed = True
+            if text_changed:
+                self.emit({'stage':'answering','text':'\n\n'.join(self.blocks.values())[:100000]})
+        except Exception:
+            # A missing public event feed is not a failed model execution.
+            self.partial = True
+            self.emit({'streamPartial':True,'text':''})
 
 
 def _settled_output(value: Mapping[str, object], session_id: str, turn_id: str,

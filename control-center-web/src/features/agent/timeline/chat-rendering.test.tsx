@@ -1432,6 +1432,21 @@ describe('Agent chat rendering', () => {
     expect(reasoning).toHaveTextContent('工作要点 9');
   });
 
+  it('cleans wrappers from stored public summary blocks while retaining the source gate', async () => {
+    const user = userEvent.setup();
+    const blocks: UiAgentBlock[] = [
+      { id: 'public-wrapped', type: 'reasoning_summary', status: 'completed', presentationKind: 'reasoning_summary.v1', summary: '',
+        data: { source: 'provider_reasoning_summary', items: ['<thinking>Checking revision</thinking>'] } },
+      { id: 'private-wrapped', type: 'reasoning_summary', status: 'completed', presentationKind: 'reasoning_summary.v1', summary: '',
+        data: { source: 'private', items: ['<thinking>Do not show</thinking>'] } },
+    ];
+    const { container } = render(<TooltipProvider><AgentBlocks blocks={blocks} /></TooltipProvider>);
+    await user.click(container.querySelector('summary')!);
+    expect(container).toHaveTextContent('Checking revision');
+    expect(container).not.toHaveTextContent('<thinking>');
+    expect(container).not.toHaveTextContent('Do not show');
+  });
+
   it('flattens repeated file receipts to one latest block per logical file', () => {
     const blocks: UiAgentBlock[] = [
       fileBlock('tui-v1', 'tui.py', 'media_tui_version_0001', '1'.repeat(64)),

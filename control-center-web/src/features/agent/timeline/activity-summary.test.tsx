@@ -822,6 +822,22 @@ describe('Agent tool activity details', () => {
     expect(tree.container.querySelector('.fx-pill .paw-conv-planet')).not.toBeInTheDocument();
   });
 
+  it('cleans wrapper tags from stored public summaries in both timeline presentations', () => {
+    const activity: AgentActivityProjection = {
+      id: 'stored-reasoning', turnId: 'turn-stored', kind: 'reasoning_summary', status: 'completed',
+      summary: '<thinking>Preparing app</thinking>',
+      payload: { source: 'provider_reasoning_summary', items: ['<thinking>Preparing app</thinking>'] },
+      createdAtMs: 1, updatedAtMs: 2,
+    };
+    const compact = render(<ReasoningActivitySummary activities={[activity]} />);
+    expect(compact.container.textContent).toContain('Preparing app');
+    expect(compact.container.textContent).not.toContain('<thinking>');
+    cleanup();
+    const steps = render(<FxActivityStack activities={[activity]} />);
+    expect(steps.container.textContent).toContain('Preparing app');
+    expect(steps.container.textContent).not.toContain('<thinking>');
+  });
+
   it('shows the thinking planet while the public reasoning summary is running', () => {
     const reasoning: AgentActivityProjection = {
       id: 'reasoning-planet-feed',

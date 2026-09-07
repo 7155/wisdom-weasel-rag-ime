@@ -440,6 +440,17 @@ class RagBenchmarkSandbox:
                 "queued": int(rebuilt["queued"]),
             }
 
+    def export_search_snapshot(self, owner_session_id: object, run_id: object, *, base_alias: object) -> dict[str, Any]:
+        """Read-only export of the caller-owned ready index for App packaging."""
+        clean_alias = _identifier(base_alias, "base alias")
+        with self._lock:
+            run_path, manifest = self._load_owned_run(owner_session_id, run_id)
+            base = self._base_record(manifest, clean_alias)
+            service = self._service(str(manifest["runId"]), run_path)
+            snapshot = _knowledge_call(service.store.export_search_snapshot, str(base["kbId"]))
+            snapshot["externalDocumentIds"] = _reverse_document_ids(manifest)
+            return snapshot
+
     def rebuild_graph(
         self,
         owner_session_id: object,

@@ -52,6 +52,21 @@ class LabAppTests(unittest.TestCase):
     def command(self, app: dict, action: str, value: dict, client: str):
         return self.apps.command({'appId':app['appId'],'expectedRevision':app['revision'],'action':action,'input':value,'clientRequestId':client})
 
+    def test_per_call_model_is_durable_and_does_not_rewrite_evaluated_version(self):
+        app = self.prepare()
+        selection = {'provider':'openai-codex','model':'gpt-5.6-luna','thinkingLevel':'max'}
+        seen = []
+        runner = AgentLabAppApplication(self.apps,complete=lambda **kwargs:seen.append(kwargs) or {'text':'answer'},abort=lambda _:None,start_workers=False)
+        receipt = self.command(app,'invoke',{'version':1,'actionId':'answer','values':{'question':'day 7'},'model':selection},'selected-model')
+        call, version = self.apps.call_input(receipt['call']['callId'])
+        self.assertEqual(call['model'],selection)
+        self.assertEqual(version['spec']['model'],MODEL)
+        runner.run_call(call['callId'])
+        self.assertEqual(seen[0]['model'],selection)
+        self.assertIn('在第 7 天仍可申请',seen[0]['prompt'])
+        self.assertEqual(self.apps.read({'appId':app['appId']})['version']['contentHash'],version['contentHash'])
+        runner.close()
+
     def test_prepare_freezes_files_without_activation_or_execution(self):
         app = self.prepare()
         self.assertIsNone(app['activeVersion']); self.assertEqual(app['version']['fileCount'],3)
@@ -63,6 +78,45 @@ class LabAppTests(unittest.TestCase):
             self.assertNotIn('from rag_ime',runtime); compile(runtime,'app.py','exec')
             self.assertNotIn(str(self.root),''.join(archive.read(name).decode() for name in archive.namelist()))
         self.assertEqual(self.apps.read({'appId':app['appId']})['calls'],[])
+
+    def test_external_workspace_is_a_frozen_browser_dependency_without_tool_authority(self):
+        path = self.workspace/'app/app.json'; source = json.loads(path.read_text())
+        source['externalWorkspace'] = {'title':'空间工作台','url':'http://127.0.0.1:5173/'}
+        path.write_text(json.dumps(source)); app = self.prepare()
+        self.assertEqual(app['version']['spec']['externalWorkspace'],source['externalWorkspace'])
+        source['externalWorkspace']['url'] = 'https://example.org/workbench'
+        path.write_text(json.dumps(source)); newer = self.prepare('workspace-2',app['appId'])
+        self.assertEqual(newer['latestVersion'],2)
+        archive = self.apps.download({'appId':app['appId'],'version':1,'target':'standalone'})
+        with zipfile.ZipFile(io.BytesIO(base64.b64decode(archive['base64']))) as output:
+            frozen = json.loads(output.read('app.json'))
+            self.assertEqual(frozen['externalWorkspace']['url'],'http://127.0.0.1:5173/')
+            self.assertIn('没有随此包复制',output.read('README.md').decode())
+        self.assertEqual(self.apps.read({'appId':app['appId']})['calls'],[])
+
+    def test_app_identity_is_frozen_and_legacy_apps_keep_their_default(self):
+        legacy = self.prepare()
+        self.command(legacy,'activate',{'version':1},'identity-default')
+        self.assertEqual(self.apps.read({})['items'][0]['installation']['icon']['symbol'], 'assistant')
+        path = self.workspace/'app/app.json'; source = json.loads(path.read_text())
+        source['appearance'] = {'accent':'blue','icon':{'symbol':'analytics','background':'#215d74'}}
+        path.write_text(json.dumps(source)); app = self.prepare('identity-2', legacy['appId'])
+        self.command(app,'activate',{'version':2},'identity-custom')
+        manifest = self.apps.read({})['items'][0]['installation']
+        self.assertEqual(manifest['icon'], source['appearance']['icon'])
+        self.assertEqual(manifest['accent'], 'blue')
+        source['appearance']['icon']['background'] = 'url(https://example.org/image)'
+        path.write_text(json.dumps(source))
+        with self.assertRaises(AgentLabProjectValidationError): freeze_source(self.workspace,'app',MODEL)
+
+    def test_external_workspace_rejects_credentials_and_non_browser_destinations(self):
+        path = self.workspace/'app/app.json'; source = json.loads(path.read_text())
+        for url in ['javascript:alert(1)', 'file:///private/data', 'http://example.org/',
+                    'https://user:password@example.org/', 'https://example.org/?token=secret',
+                    'https://example.org/#secret', 'https://example.org/\"; frame-src *', 'http://127.0.0.1:0/']:
+            with self.subTest(url=url):
+                source['externalWorkspace'] = {'title':'工作台','url':url}; path.write_text(json.dumps(source))
+                with self.assertRaises(AgentLabProjectValidationError): freeze_source(self.workspace,'app',MODEL)
 
     def test_versions_are_immutable_and_activation_can_restore_previous(self):
         app = self.prepare(); app = self.command(app,'activate',{'version':1},'install')['app']

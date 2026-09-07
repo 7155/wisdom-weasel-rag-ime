@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -86,6 +87,39 @@ class GoldenPiTests(unittest.TestCase):
         self.assertNotIn("never expose this", json.dumps(result))
         self.assertEqual(self.complete(), result)
         self.assertEqual(len(self.runtime.calls), 1)
+
+    def test_public_app_progress_follows_exact_turn_without_private_reasoning_or_new_admission(self):
+        updates = []
+        replayed = []
+        def replay(session_id, *, after_event_id=''):
+            replayed.append(after_event_id)
+            if after_event_id: return [], False
+            def event(identity, kind, payload, turn='turn-1'):
+                return SimpleNamespace(event_id=identity, session_id=session_id, turn_id=turn, event_type=kind, payload=payload)
+            return [event('1','text_delta',{'delta':'foreign output'},'another-turn'),
+                    event('2','status_changed',{'phase':'reasoning','private':'never expose this'}),
+                    event('3','text_delta',{'blockId':'answer','delta':'First '}),
+                    event('4','text_delta',{'blockId':'answer','delta':'answer'})], False
+        self.runtime.events = SimpleNamespace(replay=replay)
+        result = self.complete(on_progress=updates.append)
+        self.assertEqual(updates[0]['stage'],'model_wait')
+        self.assertIn({'stage':'thinking'},updates)
+        self.assertEqual(updates[-1],{'stage':'answering','text':'First answer'})
+        self.assertNotIn('never expose this',json.dumps(updates))
+        self.assertNotIn('foreign output',json.dumps(updates))
+        self.assertEqual(result['text'],'{"cases":[]}')
+        self.assertEqual(replayed,['','4'])
+        self.assertEqual(len(self.runtime.calls),1)
+
+    def test_missing_stream_tail_and_broken_feedback_never_settle_or_interrupt_the_turn(self):
+        updates = []
+        self.runtime.events = SimpleNamespace(replay=lambda *a, **kw:([],True))
+        self.assertEqual(self.complete(on_progress=updates.append)['turnId'],'turn-1')
+        self.assertIn({'streamPartial':True,'text':''},updates)
+        def broken(_): raise OSError('projection unavailable')
+        self.assertEqual(self.executor.complete(request_id='second',model=self.model,prompt='second',
+            on_session=lambda _:None,cancelled=lambda:False,on_progress=broken)['turnId'],'turn-1')
+        self.assertEqual(self.runtime.aborts,[])
 
     def test_restart_recovers_original_accepted_turn_without_second_prompt(self):
         self.runtime.fail_lookup = True

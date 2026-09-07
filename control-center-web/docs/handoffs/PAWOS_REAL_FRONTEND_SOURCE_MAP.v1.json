@@ -451,6 +451,7 @@
         "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
         "control-center-web/src/features/eval-lab/index.tsx",
         "control-center-web/src/features/eval-lab/projects/LabProjectWorkbench.tsx",
+        "control-center-web/src/features/eval-lab/projects/LabKnowledge.tsx",
         "control-center-web/src/features/eval-lab/projects/ArtifactSurface.tsx",
         "control-center-web/src/features/eval-lab/projects/ProjectGuide.tsx",
         "control-center-web/src/features/eval-lab/projects/LabAppDelivery.tsx",
@@ -459,16 +460,19 @@
       ],
       "styleOwners": [
         "control-center-web/src/features/eval-lab/eval-lab.css",
-        "control-center-web/src/features/eval-lab/projects/lab-project-workbench.css"
+        "control-center-web/src/features/eval-lab/projects/lab-project-workbench.css",
+        "control-center-web/src/features/eval-lab/projects/lab-knowledge.css"
       ],
       "featureSurfaces": [
         "Agent-led project intake and App-owned Pi conversation",
         "project-defined versioned artifacts and optional Skill templates",
         "dynamic document, table, form, code and isolated HTML surfaces",
         "real material snapshots and optional execution bindings",
+        "project Knowledge corpus and dataset intake, sandbox indexes, retrieval evaluation and Golden binding",
         "existing experiment and Golden workspaces remain available",
         "versioned App preview, PAW activation and rollback, two-target ZIP delivery",
-        "ordinary Pi App execution and independently runnable text-operation applications"
+        "ordinary Pi App execution and independently runnable text-operation applications",
+        "frontend App source preparation, frozen Knowledge retrieval resources and bounded evidence-based answers"
       ],
       "supportingOwners": [
         "control-center-web/src/features/eval-lab/projects/api.ts",

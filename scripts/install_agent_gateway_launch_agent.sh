@@ -416,6 +416,19 @@ fi
 
 DOMAIN="gui/$(id -u)"
 
+# A product update must not stop source candidates on other ports/workspaces.
+stop_stale_gateway_listener() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  local pid process_command
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    process_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    if [[ "$process_command" == *" $WRAPPER "* && "$process_command" == *" agent-gateway "* ]]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done < <(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)
+}
+
 wait_for_gateway_port_release() {
   command -v lsof >/dev/null 2>&1 || return 0
   local attempt
@@ -448,7 +461,7 @@ bootstrap_launch_agent() {
 }
 
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-pkill -f 'sidecar_launch.py.*agent-gateway' >/dev/null 2>&1 || true
+stop_stale_gateway_listener
 wait_for_gateway_port_release
 launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 sleep 0.2

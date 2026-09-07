@@ -5,13 +5,13 @@ import type { GoldenCase, GoldenCommand, GoldenSource, GoldenSuite } from './typ
 import { splitLabel } from './types';
 import { SavedProgress } from './WorkflowGuide';
 
-type Draft = Omit<GoldenCase, 'review' | 'samples'> & { note: string };
+type Draft = Omit<GoldenCase, 'review' | 'samples'> & { note: string; reviewAuthor: 'human' | 'agent' };
 const reviewLabel = { pending: '待审核', approved: '已通过', rejected: '已拒绝' };
 const lines = (text: string) => text.split('\n').map((line) => line.trim()).filter(Boolean);
 const caseDraft = (item: GoldenCase): Draft => ({
   caseId: item.caseId, question: item.question, taskType: item.taskType, answerable: item.answerable,
   requiredFacts: item.requiredFacts, evidence: item.evidence, rubric: item.rubric,
-  split: item.split, note: item.review.note,
+  split: item.split, note: item.review.note, reviewAuthor: item.review.author ?? 'human',
 });
 
 export function CaseReview({ suite, disabled, onReview, onNext, onDraft, onDirtyChange }: {
@@ -100,6 +100,7 @@ function CaseEditor({ value, onChange, sources, disabled, onSubmit, hasNext }: {
         <Disclosure className="golden-disclosure" summary="查看来源原文"><div className="golden-source-reference">{sources.map((source) => <section key={source.sourceId}><h5>{source.title}</h5><small>{source.uri}</small><p>{source.text}</p></section>)}</div></Disclosure>
       </section>
       <Field htmlFor={`${id}-note`} label="审核说明"><TextArea id={`${id}-note`} rows={2} value={value.note} placeholder="记录通过或拒绝的理由" onChange={(event) => onChange({ ...value, note: event.target.value })} /></Field>
+      <Field htmlFor={`${id}-author`} label="审核来源"><select id={`${id}-author`} value={value.reviewAuthor} onChange={(event) => onChange({ ...value, reviewAuthor: event.target.value as Draft['reviewAuthor'] })}><option value="human">用户本人审核</option><option value="agent">Agent 辅助审核</option></select></Field>
     </fieldset>
     <div className="golden-editor-actions"><Button type="submit" variant={hasNext ? 'secondary' : 'primary'} disabled={disabled || !valid}>保存并通过</Button>{hasNext ? <Button variant="primary" disabled={disabled || !valid} onClick={() => void onSubmit('approved', true)}>通过并看下一题</Button> : null}<Button variant="quiet" disabled={disabled || !value.question.trim() || invalidQuote} onClick={() => void onSubmit('rejected')}>保存并拒绝</Button></div>
   </form>;

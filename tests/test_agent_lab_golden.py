@@ -90,6 +90,21 @@ class GoldenStoreTests(unittest.TestCase):
         self.refresh()
         return self.suite["calibration"]
 
+    def test_agent_assisted_labels_remain_distinct_from_human_reference_labels(self) -> None:
+        self.reviewed()
+        for item in copy.deepcopy(self.suite["cases"]):
+            self.command("review_case", {**item, "verdict": "approved", "note": "Agent source review", "reviewAuthor": "agent"})
+        for sample in copy.deepcopy(self.suite["cases"][0]["samples"]):
+            self.command("label_sample", {"caseId": "dev", **sample, "labelAuthor": "agent"})
+        self.assertEqual(self.suite["cases"][0]["review"]["author"], "agent")
+        calibration = self.calibration()
+        self.assertTrue(calibration["ready"])
+        self.assertEqual(calibration["labelAuthors"], {"human": 0, "agent": 3, "unrecorded": 0})
+        self.assertEqual(calibration["referenceAuthority"], "agent_assisted")
+        self.command("freeze")
+        job = self.command("experiment", {"snapshotId": self.suite["snapshot"]["snapshotId"], "baseline": MODEL, "candidate": MODEL})["job"]
+        self.assertEqual(self.store.job_input(job["jobId"])["snapshot"]["calibration"]["referenceAuthority"], "agent_assisted")
+
     def test_create_is_durable_and_duplicate_command_replays_original_receipt(self) -> None:
         payload = self.payload("create", {"title": "另一个 Golden", "scenario": "历史任务", "sources": [SOURCE]}, revision=0, request_id="create-once")
         first = self.store.command(payload)
@@ -306,9 +321,9 @@ class GoldenStoreTests(unittest.TestCase):
     def test_approval_requires_reference_standards_but_rejection_remains_possible(self) -> None:
         self.draft()
         item = self.suite["cases"][0]
-        for patch in ({"requiredFacts": []}, {"rubric": []}, {"evidence": []}):
-            with self.subTest(patch=patch), self.assertRaises(AgentLabGoldenValidationError):
-                self.command("review_case", {**item, **patch, "verdict": "approved", "note": ""})
+        for case_patch in ({"requiredFacts": []}, {"rubric": []}, {"evidence": []}):
+            with self.subTest(patch=case_patch), self.assertRaises(AgentLabGoldenValidationError):
+                self.command("review_case", {**item, **case_patch, "verdict": "approved", "note": ""})
         self.command("review_case", {**item, "requiredFacts": [], "rubric": [], "evidence": [], "verdict": "rejected", "note": "标准不足"})
         self.assertEqual(self.suite["cases"][0]["review"]["status"], "rejected")
 
@@ -400,6 +415,20 @@ class GoldenStoreTests(unittest.TestCase):
         interrupted = self.command('resume',{'jobId':job['jobId']})['job']
         self.assertEqual(interrupted['requestRetries'],resumed['requestRetries'])
 
+    def test_confirmed_cancelled_pi_call_can_be_explicitly_retried_after_host_recovery(self) -> None:
+        for status in ('cancelled', 'aborted'):
+            with self.subTest(status=status):
+                job = self.command('draft')['job']; base = quote(job['jobId'],safe='-_.')+':draft'
+                receipt = {'requestId':base,'sessionId':'stopped-session','turnId':'stopped-turn','stage':'draft','receipt':{'status':status}}
+                self.store.update_job(job['jobId'],{'state':'running'})
+                self.store.update_job(job['jobId'],{'state':'failed','result':{'partial':True,'pendingRequestId':base,'receipts':[receipt]}})
+                self.refresh(); self.assertTrue(self.suite['jobs'][0]['canRetryFailedCall'])
+                resumed = self.command('resume',{'jobId':job['jobId']})['job']
+                self.assertEqual(resumed['requestRetries'][base]['requestId'],base+':retry:1')
+                self.assertEqual(resumed['result']['receipts'],[receipt])
+                self.store.update_job(job['jobId'],{'state':'running'})
+                self.store.update_job(job['jobId'],{'state':'cancelled'})
+
     def test_unknown_or_unbound_failed_receipt_cannot_authorize_a_new_paid_attempt(self) -> None:
         for status in ('accepted','interrupted','completed'):
             with self.subTest(status=status):
@@ -409,6 +438,16 @@ class GoldenStoreTests(unittest.TestCase):
                 self.refresh(); self.assertFalse(self.suite['jobs'][0].get('canRetryFailedCall',False))
                 if status != 'completed':
                     with self.assertRaises(AgentLabGoldenConflict): self.command('resume',{'jobId':job['jobId']})
+
+    def test_bound_unknown_pi_receipt_still_requires_reconciliation(self) -> None:
+        for status in ('accepted', 'interrupted', 'unknown'):
+            with self.subTest(status=status):
+                job = self.command('draft')['job']; base = quote(job['jobId'],safe='-_.')+':draft'
+                self.store.update_job(job['jobId'],{'state':'running'})
+                self.store.update_job(job['jobId'],{'state':'failed','result':{'pendingRequestId':base,
+                    'receipts':[{'requestId':base,'sessionId':'s','turnId':'t','receipt':{'status':status}}]}})
+                self.refresh(); self.assertFalse(self.suite['jobs'][0]['canRetryFailedCall'])
+                with self.assertRaises(AgentLabGoldenConflict): self.command('resume',{'jobId':job['jobId']})
 
 
 if __name__ == "__main__":

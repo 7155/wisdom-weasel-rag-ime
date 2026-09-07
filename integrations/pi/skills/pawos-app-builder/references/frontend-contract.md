@@ -36,6 +36,18 @@ workspace; do not call a Provider directly or create a second event stream.
    logical message on ambiguous send failure; do not clear the Composer until
    the Runtime accepts the message.
 
+Build intermediate feedback into the App contract and its first foreground
+check. Show actual retrieved sources and expandable excerpts when the owning
+Tool returns them, before the final answer. Keep that evidence visible while
+the shared Session workspace projects thinking, Tool activity and streamed
+output. A spinner followed by the final result is insufficient for a multi-step
+job. Do not invent stages, percentages or private reasoning to fill a delay.
+Mark partial output as unfinished; preserve input/evidence on errors and use
+the ordinary Session's recovery and Stop controls. Test a slow operation,
+failure and restoration as well as success. For portable Lab HTML exports,
+use agent-lab-project's portable App template and public progress bridge;
+this native Extension App starter continues to use the shared Session surface.
+
 For a new App, copy `assets/frontend-template/` into the new owner directory and
 adapt mode names, domain copy, first-turn contract, styles, and tests. The
 starter demonstrates the owner fields, embedded Session surface, and stable

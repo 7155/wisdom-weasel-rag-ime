@@ -940,6 +940,21 @@ class PiRuntimeHostManager:
                 or session.get("sessionFile")
                 or ""
             ).strip()
+            if session_file:
+                # Fork bindings store canonical paths, while the Host checks
+                # against its configured directory spelling. A managed root
+                # may be a symlink (for example, sessions on an external disk).
+                # Map only files inside that same physical root back to the
+                # Host's spelling; leave outside paths for its rejection gate.
+                session_root = self.config.session_dir.expanduser()
+                try:
+                    relative = Path(session_file).expanduser().resolve(strict=False).relative_to(
+                        session_root.resolve(strict=False)
+                    )
+                except ValueError:
+                    pass
+                else:
+                    session_file = (session_root / relative).as_posix()
             memory_curation_session = (
                 str(session.get("toolProfileVersion") or "")
                 == MEMORY_CURATION_TOOL_PROFILE
@@ -4301,14 +4316,29 @@ class PiRuntimeHostManager:
                         streamed_message_id != state.stream_pi_message_id
                     )
                     state.stream_pi_message_id = streamed_message_id
+                delta = str(update.get("delta") or "")
+                content_index = as_integer(update.get("contentIndex"))
+                content = raw_message.get("content")
+                current_text = (
+                    str(as_mapping(content[content_index]).get("text") or "")
+                    if isinstance(content, list) and 0 <= content_index < len(content)
+                    else content if isinstance(content, str) else ""
+                )
+                # Pi supplies the cumulative text with every delta. Reproject
+                # raw-tag-prefixed blocks, including split opening tags, so an
+                # internal preamble cannot flash before message_end filters it.
+                replace_content = current_text.lstrip().startswith("<")
+                if replace_content:
+                    delta = visible_message_text("assistant", current_text)
                 self.events.publish(
                     session_id,
                     "text_delta",
                     {
                         "messageId": f"{turn_id}:assistant",
                         "blockId": f"{turn_id}:assistant:text",
-                        "contentIndex": as_integer(update.get("contentIndex")),
-                        "delta": str(update.get("delta") or ""),
+                        "contentIndex": content_index,
+                        "delta": delta,
+                        **({"replaceContent": True} if replace_content else {}),
                         "replaceBlock": replace_block,
 							**(
 								{"sourceLoopId": state.source_loop_id}
@@ -4331,11 +4361,14 @@ class PiRuntimeHostManager:
                 )
             elif update_type == "thinking_end":
                 raw_message = as_mapping(raw.get("message"))
-                summaries = public_reasoning_summaries(raw_message)
+                summaries = public_reasoning_summaries(
+                    raw_message,
+                    completed_content_index=as_integer(update.get("contentIndex")),
+                )
                 if summaries:
                     message_id = pi_message_id(raw_message, turn_id)
-                    content_index = as_integer(update.get("contentIndex"))
-                    reasoning_id = f"reasoning:{message_id}:{content_index}"
+                    # Match the one cumulative summary per durable Pi message.
+                    reasoning_id = f"reasoning:{message_id}:0"
                     self.events.publish(
                         session_id,
                         "reasoning_summary",
@@ -5911,6 +5944,15 @@ def _pi_tool_history_events(
     events: list[tuple[str, str, str, int, dict[str, object], float | None]] = []
     entry_timestamps = _pi_history_entry_timestamps(raw_entries or [])
     entry_ordinals = _pi_history_entry_ordinals(raw_entries or [])
+    # Durable branch projection supplies entry ids to id-less messages. Keep
+    # reasoning identity tied to the original wire message, as in live events,
+    # so a snapshot during the same turn cannot add a second summary card.
+    source_message_ids = {
+        str(entry.get("id")): pi_message_id(as_mapping(entry.get("message")), "history")
+        for value in raw_entries or []
+        for entry in [as_mapping(value)]
+        if entry.get("type") == "message" and entry.get("id")
+    }
     current_turn_id = ""
     activity_order: list[str] = []
     tool_names: dict[str, str] = {}
@@ -5949,7 +5991,8 @@ def _pi_tool_history_events(
         if role == "assistant":
             summaries = public_reasoning_summaries(raw)
             if summaries:
-                reasoning_id = f"reasoning:{message_id}:0"
+                source_message_id = source_message_ids.get(message_id, message_id)
+                reasoning_id = f"reasoning:{source_message_id}:0"
                 events.append(
                     (
                         reasoning_id,
@@ -5958,7 +6001,7 @@ def _pi_tool_history_events(
                         created_at_ms,
                         {
                             "requestId": reasoning_id,
-                            "sourceMessageId": message_id,
+                            "sourceMessageId": source_message_id,
                             "summary": summaries[-1],
                             "items": summaries,
                             "source": "provider_reasoning_summary",

@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import copy
 import hashlib
+import importlib.util
 import json
 import sqlite3
 import threading
@@ -12,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .agent_lab_app_runtime import AppInputError, build_prompt
+from .agent_lab_app_runtime import AppInputError, advance_progress, build_prompt, provided_context, validate_action, validate_model, agent_ui_html
 from .agent_lab_app_sources import export_zip, freeze_source
 from .agent_lab_projects import (AgentLabProjectConflict, AgentLabProjectNotFound,
                                  AgentLabProjectValidationError, _integer, _json, _now, _object, _text)
@@ -20,9 +21,10 @@ from .db import apply_database_migrations, sqlite_connection
 
 
 class AgentLabAppStore:
-    def __init__(self, db_path: str | Path, *, scope_id: str = 'local') -> None:
+    def __init__(self, db_path: str | Path, *, scope_id: str = 'local', freeze_knowledge: Callable | None = None) -> None:
         self.db_path = Path(db_path)
         self.scope_id = scope_id
+        self.freeze_knowledge = freeze_knowledge
         self._lock = threading.RLock()
         self._initialized = False
 
@@ -47,11 +49,15 @@ class AgentLabAppStore:
 
     @staticmethod
     def _public_version(version: dict, *, include_html: bool = True) -> dict:
-        result = {key:value for key,value in version.items() if key not in {'files','sourceDirectory','runtimeSource','exports'}}
-        result['fileCount'] = len(version['files'])
-        result['byteSize'] = sum(len(value.encode()) for value in version['files'].values())
-        if include_html: result['html'] = version['files'][version['spec']['html']]
-        result['sourceFiles'] = [{'path':path,'byteSize':len(value.encode()),'sha256':hashlib.sha256(value.encode()).hexdigest()} for path,value in version['files'].items()]
+        result = {key:value for key,value in version.items() if key not in {'files','uiFiles','resourceFiles','resourceManifest','assetKey','sourceDirectory','runtimeSource','exports'}}
+        files = {**version['files'], **version.get('resourceFiles',{}), **version.get('uiFiles',{})}
+        result['fileCount'] = len(files)
+        result['byteSize'] = sum(len(value.encode()) for value in files.values())
+        if include_html: result['html'] = agent_ui_html(version.get('uiFiles', {}))+version['files'][version['spec']['html']]
+        result['sourceFiles'] = [{'path':path,'byteSize':len(value.encode()),'sha256':hashlib.sha256(value.encode()).hexdigest()} for path,value in files.items()]
+        result['sourceFiles'].extend(version.get('resourceManifest', []))
+        result['fileCount'] = len(result['sourceFiles'])
+        result['byteSize'] = sum(item['byteSize'] for item in result['sourceFiles'])
         return result
 
     def prepare(self, conn: sqlite3.Connection, project: dict, value: dict, default_model: dict[str,str]) -> dict:
@@ -60,7 +66,8 @@ class AgentLabAppStore:
         workspace = project.get('executionWorkspace') or {}
         if workspace.get('kind') != 'managed' or not workspace.get('path'):
             raise AgentLabProjectValidationError('此项目没有可用的托管执行目录。')
-        try: frozen = freeze_source(Path(workspace['path']), directory, default_model)
+        try: frozen = freeze_source(Path(workspace['path']), directory, default_model,
+                                   freeze_knowledge=(lambda value:self.freeze_knowledge(project['projectId'],value)) if self.freeze_knowledge else None)
         except ValueError as exc:
             if isinstance(exc, AgentLabProjectValidationError): raise
             raise AgentLabProjectValidationError(str(exc)) from exc
@@ -79,10 +86,14 @@ class AgentLabAppStore:
         # Freeze the entire distributable once. Later product runner, manifest,
         # or README changes cannot silently rewrite an accepted App version.
         version['exports'] = {}
-        for target in ('paw','standalone'):
-            filename,archive = export_zip(version,target)
-            version['exports'][target] = {'filename':filename,'mimeType':'application/zip',
-                'base64':base64.b64encode(archive).decode(),'byteSize':len(archive),'sha256':hashlib.sha256(archive).hexdigest()}
+        if version.get('resourceFiles'):
+            from .agent_lab_app_assets import freeze_assets
+            freeze_assets(self.db_path, version, export_zip)
+        else:
+            for target in ('paw','standalone'):
+                filename,archive = export_zip(version,target)
+                version['exports'][target] = {'filename':filename,'mimeType':'application/zip',
+                    'base64':base64.b64encode(archive).decode(),'byteSize':len(archive),'sha256':hashlib.sha256(archive).hexdigest()}
         app = {'appId':app_id,'projectId':project['projectId'],'title':frozen['spec']['title'],
                'description':frozen['spec']['description'],'revision':previous['revision']+1 if previous else 1,
                'latestVersion':version_number,'activeVersion':previous['activeVersion'] if previous else None,
@@ -131,10 +142,11 @@ class AgentLabAppStore:
         # Generic desktop identity; it is a Lab-hosted application, not a claim
         # that a compiled native Pi Package has been installed.
         spec = version['spec']; slug = app['appId'].removeprefix('extension:')
+        appearance = spec.get('appearance', {'accent':'green','icon':{'symbol':'assistant','background':'#22876A'}})
         return {'schemaVersion':'pawos.lab-app.v1','id':app['appId'],'version':f"0.{version['version']}.0",
                 'label':spec['title'],'shortLabel':spec['title'][:12],'tagline':spec['description'],
-                'route':f'/extensions/{slug}','presentation':'workspace','accent':'green',
-                'icon':{'symbol':'assistant','background':'#22876A'},'packageId':f'lab-app-{slug}',
+                'route':f'/extensions/{slug}','presentation':'workspace','accent':appearance['accent'],
+                'icon':appearance['icon'],'packageId':f'lab-app-{slug}',
                 'bindingSha256':version['contentHash'],'skillRef':spec['skill'],
                 'skillSha256':hashlib.sha256(version['files'][spec['skill']].encode()).hexdigest(),
                 'verticalSuiteId':app['projectId'],'verticalSuiteRevision':str(version['projectRevision']),
@@ -150,7 +162,12 @@ class AgentLabAppStore:
             self._app(conn,app_id)
             version = self._version(conn,app_id,selected)
         if target not in {'paw','standalone'}: raise AgentLabProjectValidationError('不支持此导出目标。')
-        return {'ok':True,**version['exports'][target],'contentHash':version['contentHash'],
+        exported = version['exports'][target]
+        if version.get('assetKey'):
+            from .agent_lab_app_assets import download_asset
+            try: exported = download_asset(self.db_path, version, target)
+            except (OSError, ValueError) as exc: raise AgentLabProjectValidationError(str(exc)) from exc
+        return {'ok':True,**exported,'contentHash':version['contentHash'],
                 'target':target,'appId':app_id,'version':selected}
 
     def command(self, payload: Mapping[str, Any]) -> dict:
@@ -178,15 +195,17 @@ class AgentLabAppStore:
                 app.update(activeVersion=selected,revision=app['revision']+1,updatedAtMs=_now())
                 conn.execute('UPDATE agent_lab_apps SET active_version=?,revision=?,updated_at_ms=? WHERE app_id=?',(selected,app['revision'],app['updatedAtMs'],app_id))
             elif action == 'invoke':
-                _object(body,{'version','actionId','values'},'应用输入')
+                _object(body,{'version','actionId','values','model'},'应用输入')
                 selected = _integer(body.get('version'),1); version = self._version(conn,app_id,selected)
                 action_id = _text(body.get('actionId'),'应用操作')
-                try: build_prompt(version['spec'],version['files'],action_id,body.get('values'))
+                try:
+                    validate_action(version['spec'],action_id,body.get('values'))
+                    model = validate_model(body.get('model',version['spec']['model']))
                 except AppInputError as exc: raise AgentLabProjectValidationError(str(exc)) from exc
                 self._ensure_capacity(conn,app_id)
                 call_id = f'lab-app-call-{uuid.uuid4().hex}'; now = _now()
-                conn.execute('INSERT INTO agent_lab_app_calls(call_id,app_id,app_version,action_id,input_json,state,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?,?,?)',
-                             (call_id,app_id,selected,action_id,_json(body['values']),'queued',now,now))
+                conn.execute('INSERT INTO agent_lab_app_calls(call_id,app_id,app_version,action_id,input_json,state,created_at_ms,updated_at_ms,model_json) VALUES(?,?,?,?,?,?,?,?,?)',
+                             (call_id,app_id,selected,action_id,_json(body['values']),'queued',now,now,_json(model)))
                 result['call'] = self._call(conn.execute('SELECT * FROM agent_lab_app_calls WHERE call_id=?',(call_id,)).fetchone())
             else:
                 _object(body,{'callId'},'调用控制')
@@ -213,7 +232,9 @@ class AgentLabAppStore:
     def _call(row: sqlite3.Row) -> dict:
         return {'callId':row['call_id'],'appId':row['app_id'],'version':row['app_version'],'actionId':row['action_id'],
                 'input':json.loads(row['input_json']),'state':row['state'],'sessionId':row['session_id'],
+                'model':json.loads(row['model_json']),
                 'result':json.loads(row['result_json']),'error':row['error'],'cancelRequested':bool(row['cancel_requested']),
+                'progress':{**json.loads(row['progress_json']), **({'stage':row['state']} if row['state'] not in {'queued','running'} else {})},
                 'createdAtMs':row['created_at_ms'],'updatedAtMs':row['updated_at_ms']}
 
     def call_input(self, call_id: str) -> tuple[dict,dict]:
@@ -227,9 +248,21 @@ class AgentLabAppStore:
         if set(fields) - {'state','session_id','result_json','error'}: raise ValueError('invalid call fields')
         with sqlite_connection(self.db_path,row_factory=sqlite3.Row) as conn:
             conn.execute('BEGIN IMMEDIATE')
+            if fields.get('state') in {'completed','failed','cancelled','interrupted'}:
+                row = conn.execute('SELECT progress_json FROM agent_lab_app_calls WHERE call_id=?',(call_id,)).fetchone()
+                fields['progress_json'] = _json(advance_progress(json.loads(row[0]),{'stage':fields['state']}))
             conn.execute(f"UPDATE agent_lab_app_calls SET {','.join(f'{key}=?' for key in fields)},updated_at_ms=? WHERE call_id=? AND state NOT IN ('completed','failed','cancelled')",
                          (*fields.values(),_now(),call_id))
             return self._call(conn.execute('SELECT * FROM agent_lab_app_calls WHERE call_id=?',(call_id,)).fetchone())
+
+    def update_progress(self, call_id: str, update: dict) -> None:
+        with sqlite_connection(self.db_path) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute("SELECT progress_json FROM agent_lab_app_calls WHERE call_id=? AND state IN ('queued','running')",(call_id,)).fetchone()
+            if row is not None:
+                progress = advance_progress(json.loads(row[0]),update)
+                conn.execute('UPDATE agent_lab_app_calls SET progress_json=?,updated_at_ms=? WHERE call_id=?',
+                             (_json(progress),progress['updatedAtMs'],call_id))
 
 
 class AgentLabAppApplication:
@@ -237,6 +270,7 @@ class AgentLabAppApplication:
         self.store,self.complete,self.abort = store,complete,abort
         self._pool = ThreadPoolExecutor(max_workers=2,thread_name_prefix='paw-lab-app') if start_workers else None
         self._lock = threading.Lock(); self._active: set[str] = set(); self._closed = False
+        self._knowledge_runtimes: dict[str, tuple[Path, Any]] = {}
         store.initialize()
         with sqlite_connection(store.db_path) as conn:
             conn.execute("UPDATE agent_lab_app_calls SET state='interrupted',error='执行进程已离线，请恢复原调用。',updated_at_ms=? WHERE state IN ('queued','running') AND app_id IN (SELECT app_id FROM agent_lab_apps WHERE scope_id=?)",(_now(),store.scope_id))
@@ -274,9 +308,39 @@ class AgentLabAppApplication:
             self.store.update_call(call_id,state='running')
             def cancelled():
                 return self._closed or self.store.call_input(call_id)[0]['cancelRequested']
-            result = self.complete(request_id=call_id,model=version['spec']['model'],
-                                   prompt=build_prompt(version['spec'],version['files'],call['actionId'],call['input']),
-                                   on_session=lambda session_id:self.store.update_call(call_id,session_id=session_id),cancelled=cancelled)
+            action, values = validate_action(version['spec'],call['actionId'],call['input'])
+            model = call.get('model') or version['spec']['model']
+            def progress(update):
+                # Feedback is optional projection. A transient display write
+                # must not interrupt Pi or change its settlement authority.
+                try: self.store.update_progress(call_id, update)
+                except (OSError, ValueError, sqlite3.Error): pass
+            evidence = None
+            context = provided_context(version['spec'], version['files'])
+            if context:
+                progress({'stage':'context_ready', **context})
+            if version['spec'].get('knowledge'):
+                progress({'stage':'retrieving','model':model})
+                try:
+                    resource_root, runtime = self._knowledge_runtime(version)
+                    evidence = runtime.retrieve(resource_root, version['spec']['knowledge'], values)
+                except (OSError, ValueError, KeyError, sqlite3.Error) as exc:
+                    raise AppInputError('知识库检索未完成；尚未调用回答模型。' + str(exc)[:300]) from exc
+                progress({'stage':'sources_ready','sources':evidence['sources'],
+                          'knowledge':{key:value for key,value in evidence.items() if key != 'sources'}})
+            if action.get('kind') == 'retrieval':
+                result = runtime.retrieval_result(evidence)
+            else:
+                progress({'stage':'model_starting','model':model})
+                result = self.complete(request_id=call_id,model=model,
+                                       prompt=build_prompt(version['spec'],version['files'],call['actionId'],values,
+                                                           knowledge_sources=evidence['sources'] if evidence else None),
+                                       on_session=lambda session_id:self.store.update_call(call_id,session_id=session_id),cancelled=cancelled,
+                                       on_progress=progress)
+                if evidence:
+                    result.update(sources=evidence['sources'],knowledge={key:value for key,value in evidence.items() if key != 'sources'})
+                elif context:
+                    result.update(context)
             if self._closed: self.store.update_call(call_id,state='interrupted',error='应用执行已中断，请恢复原调用。')
             elif cancelled(): self.store.update_call(call_id,state='cancelled',error='应用调用已停止。')
             else: self.store.update_call(call_id,state='completed',result_json=_json(result),error='')
@@ -289,6 +353,27 @@ class AgentLabAppApplication:
                                    result_json=_json(completion or {}))
         finally:
             with self._lock: self._active.discard(call_id)
+
+    def _knowledge_runtime(self, version: dict) -> tuple[Path, Any]:
+        from .agent_lab_app_knowledge_runtime import materialize
+        with self._lock:
+            if version['contentHash'] not in self._knowledge_runtimes:
+                if version.get('assetKey'):
+                    from .agent_lab_app_assets import asset_root
+                    root = asset_root(self.store.db_path, version['assetKey'])
+                    runtime_record = next(row for row in version['resourceManifest'] if row['path'] == 'knowledge_runtime.py')
+                    if hashlib.sha256((root / 'knowledge_runtime.py').read_bytes()).hexdigest() != runtime_record['sha256']:
+                        raise ValueError('冻结的知识库应用运行器发生变化。')
+                else:
+                    root = self.store.db_path.parent / 'lab-app-resources' / version['contentHash']
+                    materialize(root, version['resourceFiles'])
+                spec = importlib.util.spec_from_file_location('paw_app_resources_' + version['contentHash'],root / 'knowledge_runtime.py')
+                runtime = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(runtime)
+                if len(self._knowledge_runtimes) >= 4:
+                    self._knowledge_runtimes.pop(next(iter(self._knowledge_runtimes)))
+                self._knowledge_runtimes[version['contentHash']] = (root,runtime)
+            return self._knowledge_runtimes[version['contentHash']]
 
     def close(self) -> None:
         with self._lock:

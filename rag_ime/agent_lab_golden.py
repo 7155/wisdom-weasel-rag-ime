@@ -240,23 +240,29 @@ def _calibration(suite: dict[str, Any], value: object) -> dict[str, Any]:
     agreement = matches / comparable if comparable else 0.0
     categories = {sample["category"] for sample in expected.values()}
     labels = {sample["humanVerdict"] for sample in expected.values()}
+    label_authors = {author: sum(sample.get("labelAuthor", "unrecorded") == author for sample in expected.values())
+                     for author in ("human", "agent", "unrecorded")}
     reasons = []
     if not {"correct", "incorrect", "boundary"}.issubset(categories):
-        reasons.append("需覆盖正确、错误和边界三类人工标注样本。")
+        reasons.append("需覆盖正确、错误和边界三类已标注样本。")
     if not {"pass", "fail"}.issubset(labels):
-        reasons.append("至少需要一条人工通过和一条人工不通过的样本。")
+        reasons.append("至少需要一条标注通过和一条标注不通过的样本。")
     if false_passes:
-        reasons.append(f"有 {false_passes} 条人工不通过样本被评审误判为通过。")
+        reasons.append(f"有 {false_passes} 条标注不通过样本被评审误判为通过。")
     if unknown_judge:
         reasons.append(f"有 {unknown_judge} 条评审判定仍不确定。")
     if agreement < 0.8:
-        reasons.append("与明确人工标签的一致率需达到 80%。")
+        reasons.append("与明确参考标签的一致率需达到 80%。")
     ready = not reasons
-    reasons.append(f"当前只有 {comparable} 条可比较的人工样本；小样本一致率不能证明泛化能力。")
+    reasons.append(f"当前只有 {comparable} 条可比较的标注样本；小样本一致率不能证明泛化能力。")
+    if label_authors["agent"]:
+        reasons.append("包含 Agent 辅助标注；此结果用于流程与模型对照，不代表独立人工金标验收。")
     return {
         "calibrationId": _id("calibration"), "suiteRevision": suite["revision"],
         "judgeProtocolVersion": GOLDEN_JUDGE_PROTOCOL_VERSION,
         "judgeConfig": copy.deepcopy(suite["judgeConfig"]), "judgments": judgments,
+        "labelAuthors": label_authors,
+        "referenceAuthority": "agent_assisted" if label_authors["agent"] else "human" if not label_authors["unrecorded"] else "unrecorded",
         "metrics": {"total": len(expected), "comparable": comparable, "agreement": agreement,
                     "falsePasses": false_passes, "falseFails": false_fails, "uncertain": uncertain},
         "ready": ready, "reasons": reasons, "createdAtMs": _now(),
@@ -276,7 +282,12 @@ def _can_reprocess_draft(job: Mapping[str, Any]) -> bool:
 
 
 def _retryable_request(job: Mapping[str, Any]) -> str:
-    """Only an exact failed Pi settlement permits another paid attempt."""
+    """An exact unsuccessful terminal Pi settlement permits explicit retry.
+
+    Host recovery can settle its orphaned turn as cancelled/aborted. The Lab
+    job then fails while retaining that receipt. Unknown/interrupted receipts
+    still cannot admit another attempt; completed calls are reused.
+    """
     result = job.get('result')
     if job.get('state') != 'failed' or not isinstance(result, Mapping): return ''
     pending, receipts = result.get('pendingRequestId'), result.get('receipts')
@@ -284,7 +295,7 @@ def _retryable_request(job: Mapping[str, Any]) -> str:
     for record in receipts:
         if (isinstance(record,Mapping) and record.get('requestId') == pending
                 and all(isinstance(record.get(key),str) and record[key] for key in ('sessionId','turnId'))
-                and isinstance(record.get('receipt'),Mapping) and record['receipt'].get('status') == 'failed'):
+                and isinstance(record.get('receipt'),Mapping) and record['receipt'].get('status') in {'failed','cancelled','aborted'}):
             return pending
     return ''
 
@@ -436,6 +447,17 @@ class AgentLabGoldenStore:
             "judgeConfig": copy.deepcopy(self._default_model), "calibration": None, "snapshot": None,
             "createdAtMs": now, "updatedAtMs": now,
         }
+        if "knowledge" in value:
+            knowledge = _object(value["knowledge"], "知识库绑定")
+            if set(knowledge) != {"projectId", "indexId", "corpusHash", "configHash", "profile", "documentCount", "chunkCount"}:
+                raise AgentLabGoldenValidationError("知识库绑定字段无效。")
+            for key in ("projectId", "indexId", "corpusHash", "configHash"):
+                _text(knowledge[key], "知识库绑定标识", limit=240)
+            _object(knowledge["profile"], "检索配置")
+            suite["knowledge"] = copy.deepcopy(knowledge)
+            suite["datasetProvenance"] = _object(value.get("datasetProvenance", {}), "评测集来源")
+            if "importedCases" in value:
+                suite["cases"] = _draft_cases(value["importedCases"], suite["sources"], suite["targetCount"])
         conn.execute("INSERT INTO agent_lab_golden_suites (suite_id, revision, payload_json, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?)",
                      (suite["suiteId"], suite["revision"], _json(suite), now, now))
         return suite
@@ -459,6 +481,7 @@ class AgentLabGoldenStore:
                         raise AgentLabGoldenValidationError("可回答的题目需要必答事实和来源证据，才能审核通过。")
                 reviewed["review"] = {
                     "status": verdict,
+                    "author": _choice(value.get("reviewAuthor", "human"), "审核来源", {"human", "agent"}),
                     "note": _text(value.get("note", ""), "审核备注", optional=True), "reviewedAtMs": _now(),
                 }
                 item.update(reviewed)
@@ -471,6 +494,7 @@ class AgentLabGoldenStore:
                     "answer": _text(value.get("answer"), "样本答案"),
                     "humanVerdict": _choice(value.get("humanVerdict"), "人工标签", {"pass", "fail", "uncertain"}),
                     "humanNote": _text(value.get("humanNote", ""), "标注备注", optional=True),
+                    "labelAuthor": _choice(value.get("labelAuthor", "human"), "标注来源", {"human", "agent"}),
                 })
         suite["revision"] += 1
         suite["calibration"] = None
@@ -482,6 +506,8 @@ class AgentLabGoldenStore:
             raise AgentLabGoldenConflict("此类任务仍在进行中，请等待结果或停止后重试。")
         snapshot = None
         if kind == "draft":
+            if suite.get("datasetProvenance", {}).get("kind") == "imported_reference":
+                raise AgentLabGoldenValidationError("原始评测题已经导入，请直接核对题目；重新起草请建立独立的合成评测集。")
             value = {"model": _model(value.get("model", {}), suite["judgeConfig"])}
         elif kind == "calibrate":
             _model(suite["judgeConfig"], {})
@@ -545,6 +571,9 @@ class AgentLabGoldenStore:
                         "title": suite["title"], "scenario": suite["scenario"],
                         "sources": copy.deepcopy(suite["sources"]), "cases": copy.deepcopy(approved),
                         "calibration": copy.deepcopy(calibration)}
+            for key in ("knowledge", "datasetProvenance"):
+                if key in suite:
+                    snapshot[key] = copy.deepcopy(suite[key])
             conn.execute("INSERT INTO agent_lab_golden_snapshots (snapshot_id, suite_id, version, source_revision, payload_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
                          (snapshot["snapshotId"], suite["suiteId"], version, suite["revision"], _json(snapshot), snapshot["createdAtMs"]))
         suite["snapshot"] = {key: copy.deepcopy(snapshot[key]) for key in _SNAPSHOT_FIELDS}
@@ -708,8 +737,10 @@ class AgentLabGoldenStore:
                 self._save_suite(conn, suite)
             else:
                 snapshot = bound["snapshot"]
+                expected_mode = "knowledge_qa" if snapshot.get("knowledge") else "context_qa"
                 if (result.get("snapshotId") != snapshot["snapshotId"] or result.get("suiteId") != suite["suiteId"]
-                        or result.get("executionMode") != "context_qa" or result.get("optimizationScope") != "prompt"
+                        or result.get("executionMode") != expected_mode or result.get("optimizationScope") != "prompt"
+                        or (snapshot.get("knowledge") and result.get("knowledge") != snapshot["knowledge"])
                         or result.get("judgeProtocolVersion", GOLDEN_JUDGE_PROTOCOL_VERSION) != snapshot["judgeProtocolVersion"]):
                     raise AgentLabGoldenValidationError("实验结果必须绑定本次冻结版本和文档问答 Prompt 范围。")
                 if isinstance(job.get('validationUse'), dict): result['validationUse'] = copy.deepcopy(job['validationUse'])

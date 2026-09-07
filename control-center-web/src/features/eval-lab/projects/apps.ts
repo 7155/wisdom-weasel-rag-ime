@@ -5,16 +5,20 @@ import { object, type JsonValue } from './types';
 import type { ControlTransport } from '@/platform/transport';
 import { projectCommandRejected, projectError } from './api';
 
-export type LabAppAction = { id: string; title: string; prompt: string; inputSchema: Record<string, JsonValue> };
+export type LabAppAction = { id: string; title: string; prompt: string; kind?: 'completion' | 'retrieval'; inputSchema: Record<string, JsonValue> };
 export type LabAppSpec = { title: string; description: string; html: string; skill: string; context: string[];
-  model: { provider: string; model: string; thinkingLevel: string }; actions: LabAppAction[] };
+  model: { provider: string; model: string; thinkingLevel: string }; actions: LabAppAction[];
+  externalWorkspace?: { title: string; url: string; presentation?: 'tabs' | 'split' };
+  appearance?: { accent: string; icon: { symbol: string; background: string }; colorScheme?: 'inherit' | 'light' | 'dark' };
+  knowledge?: { documentCount: number; sourceCount: number; chunkCount: number; profile: { mode: string; topK: number; contextChars: number }; sourceIndexId: string; snapshotSha256: string } };
 export type LabApp = { appId: string; projectId: string; title: string; description: string; revision: number;
   latestVersion: number; activeVersion: number | null; createdAtMs: number; updatedAtMs: number; installation?: unknown };
 export type LabAppVersion = { appId: string; version: number; spec: LabAppSpec; contentHash: string; html: string;
   fileCount: number; byteSize: number; createdAtMs: number; sourceFiles: { path: string; byteSize: number; sha256: string }[] };
-export type LabAppCall = { callId: string; appId: string; version: number; actionId: string; input: Record<string, JsonValue>;
+export type LabAppCall = { callId: string; appId: string; version: number; actionId: string; input: Record<string, JsonValue>; model?: LabAppSpec['model'];
   state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'; sessionId: string;
   result: { text?: string; usage?: Record<string, JsonValue>; receipt?: Record<string, JsonValue> }; error: string;
+  progress?: { stage?: string; events?: { stage: string; atMs: number }[]; text?: string; sources?: JsonValue[]; knowledge?: Record<string, JsonValue>; streamPartial?: boolean; startedAtMs?: number; updatedAtMs?: number };
   cancelRequested: boolean; createdAtMs: number; updatedAtMs: number };
 export type LabAppRead = { ok: true; items: LabApp[]; app: LabApp | null; version?: LabAppVersion; versions?: LabAppVersion[]; calls?: LabAppCall[]; call?: LabAppCall };
 export type LabAppCommand = { appId: string; expectedRevision: number; clientRequestId: string;
@@ -36,13 +40,29 @@ export function parseLabAppRead(raw: unknown, appId = ''): LabAppRead {
     if (version.appId !== appId || !natural(version.version) || typeof version.html !== 'string' || typeof version.contentHash !== 'string'
         || typeof spec.title !== 'string' || !Array.isArray(spec.actions)
         || !spec.actions.every((raw) => { const action = object(raw); return typeof action.id === 'string' && typeof action.title === 'string' && typeof action.prompt === 'string'; })) throw new Error('应用版本未完整返回。');
+    if (spec.externalWorkspace !== undefined) {
+      const workspace = object(spec.externalWorkspace);
+      if (workspace.presentation !== undefined && !['tabs', 'split'].includes(String(workspace.presentation))) throw new Error('应用工作台布局无效。');
+      if (typeof workspace.title !== 'string' || !workspace.title.trim() || workspace.title.length > 100 || !externalWorkspaceUrl(workspace.url)) throw new Error('应用工作台地址未完整返回。');
+    }
   }
   return value as LabAppRead;
 }
+
+/** A browser destination does not grant access to the App invocation bridge. */
+export function externalWorkspaceUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 2000 || /[\s<>"'\\]/u.test(value)) return null;
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash
+      || (url.protocol === 'http:' && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname))) return null;
+    return url.href;
+  } catch { return null; }
+}
 export function useLabApps(projectId = '', appId = '', version?: number) {
   const transport = useControlTransport();
-  return useQuery({ queryKey: ['lab-apps', labConnectionKey(transport), projectId, appId, version ?? 0], retry: false,
-    refetchInterval: 3000, refetchOnWindowFocus: false,
+  return useQuery<LabAppRead>({ queryKey: ['lab-apps', labConnectionKey(transport), projectId, appId, version ?? 0], retry: false,
+    refetchInterval: (query) => query.state.data?.calls?.some((call) => ['queued', 'running'].includes(call.state)) ? 1000 : 3000, refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => parseLabAppRead(await requestLabControl(transport, { pathId: 'agent.eval-lab.apps.get', signal,
       query: { ...(projectId ? { projectId } : {}), ...(appId ? { appId } : {}), ...(version ? { version } : {}) } }), appId),
   });
@@ -84,8 +104,12 @@ function persistAppCommand(transport: ControlTransport, command: LabAppCommand, 
 export async function downloadLabApp(transport: ControlTransport, appId: string, version: number, target: 'paw' | 'standalone'): Promise<void> {
   const value = object(await requestLabControl(transport, { pathId: 'agent.eval-lab.apps.download', query: { appId, version, target } }));
   if (value.ok !== true || value.appId !== appId || value.version !== version || value.target !== target
-      || typeof value.filename !== 'string' || typeof value.base64 !== 'string' || value.base64.length > 4_000_000) throw new Error('应用包未完整返回。');
+      || typeof value.filename !== 'string' || typeof value.base64 !== 'string' || value.base64.length > 128_000_000
+      || !natural(value.byteSize) || typeof value.sha256 !== 'string') throw new Error('应用包未完整返回。');
   const bytes = Uint8Array.from(atob(value.base64), (character) => character.charCodeAt(0));
+  if (bytes.byteLength !== value.byteSize) throw new Error('应用包大小不一致，请重新下载。');
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  if (Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('') !== value.sha256) throw new Error('应用包内容不完整，请重新下载。');
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
   const link = document.createElement('a'); link.href = url; link.download = value.filename; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);

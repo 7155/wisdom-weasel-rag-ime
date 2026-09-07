@@ -31,7 +31,7 @@ export function SceneTrialPanel({ sceneId, onResultChange, onInspectResult, onCr
     </header>
     {trials.query.isPending ? <p role="status">正在读取执行记录…</p> : null}
     {trials.query.isError ? <p className="scene-trial__error" role="alert">暂时无法读取执行状态。已有实验不会因断开连接而重新启动，请刷新核对。</p> : null}
-    {!trials.query.isPending && !trials.query.isError && !trials.registered ? <div className="scene-trial__unavailable"><strong>这个场景尚未连接执行环境。</strong><p>已有报告可供查看；要运行自己的资料问答评测，请先建立评测集。</p>{onCreateEvaluation ? <Button onClick={onCreateEvaluation}>从真实资料新建评测</Button> : null}</div> : null}
+    {!trials.query.isPending && !trials.query.isError && !trials.registered ? <div className="scene-trial__unavailable"><strong>这个场景尚未连接执行环境。</strong><p>重新运行需要连接该场景的数据、工具和评分器。已有实验记录仍可查看。</p>{onCreateEvaluation ? <Button onClick={onCreateEvaluation}>从真实资料新建评测</Button> : null}</div> : null}
     {active && current?.jobId !== active.jobId ? <div className="scene-trial__active">
       <p>{trials.query.isError ? `另一次验证的上次状态：${labels[active.state]}；当前进展尚未确认。` : `另一次验证${labels[active.state]}。`}</p>
       <Button onClick={() => setSelected(active.jobId)} size="small" variant="secondary">查看当前执行</Button>

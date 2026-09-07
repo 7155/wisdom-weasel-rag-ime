@@ -16,13 +16,19 @@ class AgentLabProjectApplication:
     def __init__(self, db_path: str | Path, *, session_application: Any,
                  current_model: Callable[[], dict[str, str]], scope_id: str = "local",
                  read_golden: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
-                 command_golden: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None) -> None:
+                 command_golden: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
+                 knowledge: Any = None, start_knowledge: Callable | None = None,
+                 cancel_knowledge: Callable | None = None, read_experiments: Callable | None = None,
+                 read_trials: Callable | None = None) -> None:
         self.db_path = Path(db_path)
         self.sessions = session_application
         self.current_model = current_model
         self.read_golden = read_golden
         self.command_golden = command_golden
-        self.apps = AgentLabAppStore(self.db_path,scope_id=scope_id)
+        self.knowledge, self.start_knowledge, self.cancel_knowledge = knowledge, start_knowledge, cancel_knowledge
+        self.read_experiments = read_experiments
+        self.read_trials = read_trials
+        self.apps = AgentLabAppStore(self.db_path,scope_id=scope_id,freeze_knowledge=getattr(knowledge, 'app_resources', None))
         self.store = AgentLabProjectStore(self.db_path, scope_id=scope_id,
                                          bind_execution=self._bind, create_guide=self._guide,
                                          prepare_app=lambda conn,project,value:self.apps.prepare(conn,project,value,self.current_model()))
@@ -38,9 +44,22 @@ class AgentLabProjectApplication:
             revision = int(revision)
         result = self.store.read(payload.get("projectId", ""), material_set_id=payload.get("materialSetId", ""),
                                  artifact_id=payload.get("artifactId", ""), artifact_revision=revision)
+        if not payload.get("projectId") and self.read_experiments is not None:
+            from .agent_lab_history import public_history_collections
+            try:
+                result["historyCollections"] = public_history_collections(self.read_experiments())
+            except (OSError, ValueError, sqlite3.Error):
+                result["historyUnavailable"] = True
         result["availableAdapters"] = [{"adapterId": "golden.context_qa", "title": "资料问答评测",
                                         "description": "从选定文本材料建立标准，由现有 Golden/Pi 执行。创建绑定本身不启动模型。",
                                         'input':{'targetCount':'1–100 之间的整数，默认 12','sourceIds':'可选；此项目 document/history/failure 来源的 sourceId 列表','scenario':'可选；本次评测的任务说明'}}]
+        if self.knowledge is not None:
+            result["availableAdapters"].append({"adapterId": "golden.knowledge_qa", "title": "知识库回答评测",
+                "description": "绑定已完成的 Knowledge 索引和可选的原始评测集；回答前真实检索，参考答案只交给评审。",
+                "input": {"indexId": "本项目已完成的索引任务 ID", "datasetId": "可选的原始评测集任务 ID；不传则起草待审核标准",
+                          "targetCount": "2–100，默认 12", "profile": "mode,topK,threshold,rerank,candidateDepth,contextChars"}})
+            if result.get("project"):
+                result["knowledge"] = self.knowledge.read(result["project"]["projectId"])
         if result.get('project'):
             result['commandGuide'] = {
                 'publish_artifact':{'new':'直接提供 title,kind,view,content；不包在 artifact 对象里。','update':'artifactId + expectedArtifactRevision，附要修改的字段；只改内容可只给 content。','views':{'markdown':'content 是正文字符串','html':'content 是自包含 HTML 字符串','code':'content={source,language,filename?}','table':'content={columns:[{key,label}],rows:[{列key:值}],caption?}','form':'content={fields:[{key,label,type,required?,options?}],values:{字段key:值},description?}','json':'任意有效 JSON 内容'},'actions':'可选 [{actionId,label,prompt}]；点击会把项目输入发给当前 Guide。'},
@@ -49,17 +68,86 @@ class AgentLabProjectApplication:
                 'read_app':'op=read，提供 appId，可选 appVersion、appCallId。默认返回本项目应用版本与调用摘要；appCallId 按需读取实际输入、输出、用量和回执。不启动调用。',
                 'prepare_app':{'input':'{directory:相对 executionWorkspace.path 的应用目录, appId?:已有应用标识}',
                     'sourceFile':'app.json','schemaVersion':'paw.lab-app-source.v1','requiredFields':['schemaVersion','title','html','skill','context','actions'],
-                    'fields':{'description':'可选的应用说明','html':'自包含 HTML 文件相对路径','skill':'本应用 SKILL.md 方法文件相对路径','context':'要随应用冻结的文本材料相对路径数组','model':'可选 {provider,model,thinkingLevel}；不提供时冻结当前项目默认模型','actions':'[{id,title,prompt,inputSchema:{type:object,properties:{字段:{type:string|number|integer|boolean,title?,enum?,maxLength?,minimum?,maximum?}},required:[字段]}}]'},
-                    'browserApi':'HTML 调用 await window.pawApp.invoke(actionId, values)，获得 {text,usage,receipt?}。调用失败会 reject Error。应用自己的 HTML 决定输入和结果形式。',
-                    'runtime':'自定义 HTML + 声明的文本模型操作；PAW 通过普通 Pi Session 执行，独立包通过配置的 OpenAI-compatible 服务执行。此封装没有外部业务写入工具，不能声称支持未接入的订单、支付等操作。',
+                    'fields':{'description':'可选的应用说明','html':'自包含 HTML 文件相对路径','skill':'本应用 SKILL.md 方法文件相对路径','context':'要随应用冻结的文本材料相对路径数组','model':'可选 {provider,model,thinkingLevel}；不提供时冻结当前项目默认模型','knowledge':'可选 {indexId,profile?,queryField?}，冻结本项目已完成的 Knowledge 索引。当前支持 lexical 且 rerank=false；原始问题和答案不会进入应用。','actions':'[{id,title,prompt,kind?:completion|retrieval,inputSchema:{type:object,properties:{字段:{type:string|number|integer|boolean,title?,enum?,maxLength?,minimum?,maximum?}},required:[字段]}}]'},
+                    'browserApi':'HTML 调用 await window.pawApp.invoke(actionId, values, {onProgress,signal})，获得 {text,usage,receipt?,sources?,knowledge?}。可选 AbortSignal 请求停止，仍等待原调用回执。capabilities.cancel 表示支持停止；ready() 声明应用自己呈现进度。旧两参数调用仍可用。调用失败会 reject 带 state/requestId 的 Error。',
+                    'interaction':{'required':'生成 App 时同时设计输入确认、运行中、完成、无结果和失败恢复。不能只放 loading 后等待最终答案。采用 agent-lab-project/assets/portable-app.html 的反馈行为并适配领域界面。',
+                        'progress':'onProgress({stage,events?,sources?,knowledge?,text?,streamPartial?,startedAtMs?,updatedAtMs?})；stage: queued/context_ready/retrieving/sources_ready/model_starting/model_wait/thinking/answering/completed/failed/cancelled/interrupted/unconfirmed。events 只记录实际阶段。此回调是公开进度投影，只有 invoke resolve 才能确认完成。',
+                        'sources':'实际召回后立刻展示 sources 的 title/uri/text，可展开原文；knowledge.retrievedChunks 是召回数，sources.length 是采用数。context_ready/sourceKind=provided_context 表示直接提供的应用资料，不能说成召回。回答流更新时保持来源展开状态。',
+                        'conversation':'对话型 App 默认用紧凑消息流、底部输入、可展开过程和引用，不堆等高结果卡片。真实追问需声明可选 conversation 字符串字段，并把已完成前文作为不可信上下文发送；原问题与新问题分开。研究阶段必须来自实际工具或执行器，不能编排假动画。',
+                        'feedback':'按真实 stage 显示检索、连接、等待、思考、输出。只有收到 thinking 才显示思考中。text 标记为尚未完成；streamPartial 时说明过程不完整。不得编造百分比、思考内容、相关度。',
+                        'recovery':'保留输入与证据，运行时防重复点击，中断时停止动画并核对原调用。history 恢复结果不触发新模型调用、不覆盖进行中的结果。',
+                        'acceptance':'PAW 与独立导出各检查慢调用期间来源可见、阶段变化、输出、失败及历史恢复。区分真实模型与受控测试。'},
+                    'runtime':'自定义 HTML + 声明的知识检索或文本模型操作；PAW 通过普通 Pi Session 执行，独立包通过配置的 OpenAI-compatible 服务执行。此封装没有外部业务写入工具，不能声称支持未接入的订单、支付等操作。',
+                    'externalWorkspace':'可选 {title,url}，连接已存在的浏览器工作台。URL 仅支持无凭据的 HTTPS 或本机 HTTP，不含查询参数和片段。工作台在独立页面中运行，与问答共享 App 入口；不会获得问答桥接权限或自动执行。服务源码和登录态不随应用导出，必须另行启动。',
                     'output':'返回 application 与不可变版本；前端“应用交付”可试用、添加至 PAW、导出独立或 PAW 应用包。准备不等于安装或效果验证。'},
             }
         return result
 
     def command(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if isinstance(payload, Mapping) and payload.get("action") == "knowledge":
+            return self._knowledge_command(payload)
+        if isinstance(payload, Mapping) and payload.get("action") == "import_history":
+            from .agent_lab_history import prepare_history_import
+            # Snapshot before entering the project transaction. The callback is
+            # evaluated only after checking the durable original receipt.
+            try:
+                experiments = self.read_experiments() if self.read_experiments else []
+            except (OSError, ValueError, sqlite3.Error):
+                experiments = []
+            return self.store.command(payload, history_import=lambda value: prepare_history_import(value, experiments))
         return self.store.command(payload)
 
+    def _knowledge_command(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        from .agent_lab_knowledge_data import KnowledgeIntakeError
+        from .agent_lab_trials import AgentLabTrialConflict, AgentLabTrialServiceUnavailable
+        from .agent_lab_projects import AgentLabProjectConflict, AgentLabProjectUnavailable
+        if (self.knowledge is None or self.start_knowledge is None or self.cancel_knowledge is None
+                or set(payload) != {"action", "projectId", "expectedRevision", "clientRequestId", "input"}
+                or type(payload["expectedRevision"]) is not int or payload["expectedRevision"] < 1
+                or not isinstance(payload["clientRequestId"], str) or not 1 <= len(payload["clientRequestId"]) <= 240
+                or not isinstance(payload["input"], Mapping)):
+            raise AgentLabProjectValidationError("知识库操作需要当前项目和有效参数。")
+        project = self.store.read(payload["projectId"])["project"]
+        value = dict(payload["input"])
+        try:
+            if value.get("operation") in {"upload_begin", "upload_chunk", "upload_seal"}:
+                result = self.knowledge.upload(project["projectId"], payload["clientRequestId"], value)
+            elif value.get("operation") == "cancel":
+                if set(value) != {"operation", "jobId"} or not any(job["jobId"] == value["jobId"] for job in self.knowledge._jobs(project["projectId"])):
+                    raise AgentLabProjectValidationError("只能停止此项目的知识库任务。")
+                result = self.cancel_knowledge(value["jobId"])
+            else:
+                if "projectId" in value:
+                    raise AgentLabProjectValidationError("知识库操作的项目身份不能由输入替换。")
+                # Resources have immutable job identities, independent of brief
+                # edits. A stale project revision cannot retarget these inputs.
+                result = self.start_knowledge(payload["clientRequestId"], {**value, "projectId": project["projectId"]})
+        except KnowledgeIntakeError as exc:
+            raise AgentLabProjectValidationError(str(exc)) from exc
+        except AgentLabTrialConflict as exc:
+            raise AgentLabProjectConflict("此请求已用于另一项知识库操作。请核对原操作。") from exc
+        except AgentLabTrialServiceUnavailable as exc:
+            raise AgentLabProjectUnavailable() from exc
+        return {"ok": True, "project": project, **({"job": result["job"]} if "job" in result else {"upload": result["upload"]}), "clientRequestId": payload["clientRequestId"],
+                "replayed": bool(result.get("replayed", False))}
+
     def _bind(self, conn: sqlite3.Connection, project: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+        if request["adapterId"] == "scene.trial":
+            from .agent_lab_history import SCENES
+            value = request["input"]
+            if set(value) != {"sceneId"} or value["sceneId"] not in {row[0] for row in SCENES}:
+                raise AgentLabProjectValidationError("请选择已登记的场景。")
+            return {"ownerRef": {"kind": "scene_trial", "id": value["sceneId"]},
+                    "summary": "历史证据已经保留；执行是否可用以 Trial 服务当前登记的环境为准。新运行单独记录。"}
+        if request["adapterId"] == "golden.knowledge_qa" and self.knowledge is not None:
+            from .agent_lab_knowledge_data import KnowledgeIntakeError
+            try:
+                value = self.knowledge.golden_inputs(project, request["input"])
+            except KnowledgeIntakeError as exc:
+                raise AgentLabProjectValidationError(str(exc)) from exc
+            suite = AgentLabGoldenStore(self.db_path, default_model=self.current_model()).create_in_transaction(conn, value)
+            return {"ownerRef": {"kind": "golden_suite", "id": suite["suiteId"]},
+                    "summary": "已冻结知识库索引与检索配置；题目等待核对，尚未调用模型。"}
         if request["adapterId"] != "golden.context_qa":
             raise AgentLabProjectValidationError("此执行适配器尚未接入。项目成果仍可使用自己的结构和展示形式。")
         value = request["input"]
@@ -128,7 +216,7 @@ class AgentLabProjectApplication:
             return observed
         if operation in {"execution_read", "execution_command"}:
             return self._execution(project, operation, value)
-        if operation != "command" or value.get("action") in {"create", "ensure_guide"}:
+        if operation != "command" or value.get("action") in {"create", "import_history", "ensure_guide", "knowledge"}:
             raise AgentLabProjectValidationError("此操作不属于当前项目的成果工作。")
         if "projectId" in value:
             raise AgentLabProjectValidationError("项目身份由当前 Agent 绑定，不能由工具参数替换。")
@@ -150,7 +238,17 @@ class AgentLabProjectApplication:
         binding = next((item for item in project["bindings"] if item["bindingId"] == value.get("bindingId")), None)
         if binding is None:
             raise AgentLabProjectValidationError("执行绑定不属于当前项目。")
-        if binding["adapterId"] != "golden.context_qa" or binding["ownerRef"]["kind"] != "golden_suite":
+        if binding["adapterId"] == "scene.trial" and binding["ownerRef"]["kind"] == "scene_trial":
+            if operation != "execution_read" or self.read_trials is None:
+                raise AgentLabProjectValidationError("请在项目运行页选择本次场景配置并启动验证。")
+            observed = self.read_trials()
+            scene_id = binding["ownerRef"]["id"]
+            return {"ok": True, "binding": binding, "execution": {
+                "schemaVersion": observed["schemaVersion"],
+                "registered": scene_id in observed.get("registeredSceneIds", []),
+                "jobs": [job for job in observed.get("jobs", []) if job.get("sceneId") == scene_id],
+            }}
+        if binding["adapterId"] not in {"golden.context_qa", "golden.knowledge_qa"} or binding["ownerRef"]["kind"] != "golden_suite":
             raise AgentLabProjectValidationError("此绑定的执行适配器尚未接入。")
         suite_id = binding["ownerRef"]["id"]
         if operation == "execution_read" and self.read_golden:
@@ -158,6 +256,15 @@ class AgentLabProjectApplication:
             suite = observed.get("suite")
             if not isinstance(suite, Mapping) or suite.get("suiteId") != suite_id:
                 raise AgentLabProjectValidationError("绑定的执行记录暂未读到。")
+            if binding["adapterId"] == "golden.knowledge_qa":
+                suite = dict(suite)
+                suite["holdoutCaseCount"] = sum(item.get("split") == "holdout" for item in suite.get("cases", []))
+                suite["cases"] = [item for item in suite.get("cases", []) if item.get("split") == "development"]
+                # Frontend standards remain inspectable by the user; the Guide
+                # cannot turn held-out answers or old draft results into tuning
+                # inputs through this execution-read tool.
+                suite["jobs"] = [{key: value for key, value in job.items() if key != "result"} for job in suite.get("jobs", [])]
+                suite["holdoutReferencesVisible"] = False
             # The legacy catalog can include unrelated suites; a project Tool
             # returns only its own binding, never that cross-project catalog.
             return {"ok": True, "binding": binding, "execution": {"ok": True, "suite": suite, "items": [suite]}}

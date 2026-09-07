@@ -1,4 +1,5 @@
-import { BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, TriangleAlert } from 'lucide-react';
+import { AgentRecoveryActions } from '../AgentRecoveryActions';
+import { CircleDashed, GitBranch, PencilLine, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Virtuoso, type ListRange, type VirtuosoHandle } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
@@ -1255,49 +1256,20 @@ export const AgentTurn = memo(function AgentTurn({
                     }}
                   /> : null}
                   {onSwitchModel && !retryUnsafe && latestTurnId === turnId ? (
-                    <>
-                    {safeContinuation ? (
-                      onContinueTurn && latestTurnId === turnId ? (
-                        <Button
-                          size="small"
-                          variant="primary"
-                          leadingIcon={<Play size={14} />}
-                          disabled={turnRecoveryDisabled || retryRequested}
-                          onClick={() => {
-                            if (onContinueTurn(turnId)) {
-                              setRetryRequestedFor(`${turnId}:${turn.status}`);
-                            }
-                          }}
-                        >
-                          {retryRequested ? '已提交继续' : failurePresentation === 'compact' ? '继续问数' : '继续'}
-                        </Button>
-                      ) : null
-                    ) : onRetryTurn ? (
-                      <Button
-                        size="small"
-                        variant="primary"
-                        leadingIcon={<RefreshCcw size={14} />}
-                        disabled={turnRecoveryDisabled || retryRequested}
-                        onClick={() => {
-                          const retryKey = `${turn.id}:${turn.status}`;
-                          const rollback = () => {
-                            setRetryRequestedFor((current) => (
-                              current === retryKey ? '' : current
-                            ));
-                          };
-                          // Mark the request before entering the host callback.
-                          // A synchronous conflict can call rollback before the
-                          // callback returns; the keyed update must not clear a
-                          // newer request.
-                          setRetryRequestedFor(retryKey);
-                          if (!onRetryTurn(turn.id, rollback)) rollback();
-                        }}
-                      >
-                        {retryRequested ? '已提交重试' : '重试本轮'}
-                      </Button>
-                    ) : null}
-                    {failurePresentation === 'default' ? <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button> : null}
-                    </>
+                    <AgentRecoveryActions
+                      disabled={turnRecoveryDisabled} modelDisabled={!modelSelectionAvailable}
+                      submitted={retryRequested} continueTurn={safeContinuation}
+                      label={safeContinuation && failurePresentation === 'compact' ? '继续问数' : undefined}
+                      onSwitchModel={failurePresentation === 'default' ? onSwitchModel : undefined}
+                      onRetry={safeContinuation ? onContinueTurn ? () => {
+                        if (onContinueTurn(turnId)) setRetryRequestedFor(`${turnId}:${turn.status}`);
+                      } : undefined : onRetryTurn ? () => {
+                        const retryKey = `${turn.id}:${turn.status}`;
+                        const rollback = () => setRetryRequestedFor((current) => current === retryKey ? '' : current);
+                        setRetryRequestedFor(retryKey);
+                        if (!onRetryTurn(turn.id, rollback)) rollback();
+                      } : undefined}
+                    />
                   ) : null}
                   </div>
                 ) : null}

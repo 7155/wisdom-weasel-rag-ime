@@ -5,6 +5,29 @@ source checkpoint is not a signed and notarized macOS binary release.
 
 ## Unreleased
 
+## 0.1.0-alpha.1 — 2026-09-07
+
+First tagged PAW source preview. This release does not ship a signed or
+notarized macOS installer.
+
+### Highlights
+
+- PAWOS desktop with persistent Agent Sessions, lightweight Rooms, tools,
+  governed memory, document Knowledge, and Agent Lab.
+- Generic Lab project materials, evaluation history, Knowledge workflows, and
+  versioned Extension App preview/export.
+- Shared Agent model selection, reasoning controls, progress and error recovery
+  for embedded and exported App conversations; local PAW execution preserves
+  the existing Pi Provider/OAuth boundary.
+- Durable App request history, cancellation and reconnect without replaying an
+  uncertain invocation; source-bound exports and document citations.
+- Gateway updates stop only their own stale listener, preserving isolated
+  source candidates on other workspaces and ports.
+- Rewritten project README and separate local-operation documentation; corrected
+  Electron build path and current Pi compatibility reference.
+
+### Earlier development changes included in this source preview
+
 ### Added
 
 - Structured Agent Sessions and lightweight multi-Agent Rooms that compose

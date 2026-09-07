@@ -56,6 +56,23 @@ function experimentResult(): ExperimentResult {
 }
 
 describe('Golden workflow user boundaries', () => {
+  it('keeps the frozen annotation provenance on a historical experiment after calibration changes', () => {
+    const result = { ...experimentResult(), referenceAuthority: 'agent_assisted' as const };
+    render(<GoldenExperiment suite={suite({ jobs: [job('completed', 'experiment', result)] })} disabled={false} onFreeze={vi.fn()} onExperiment={vi.fn(async () => true)} />);
+    expect(screen.getByText(/此实验使用 Agent 辅助标注的冻结标准/)).toBeInTheDocument();
+  });
+
+  it('records an explicit Agent label source without calling it a human label', async () => {
+    const item = goldenCase(); item.review.status = 'approved';
+    const onLabel = vi.fn(async () => true);
+    render(<CalibrationPanel suite={suite({ cases: [item] })} disabled={false} onLabel={onLabel} onJudge={vi.fn(async () => true)} onCalibrate={vi.fn()} onNext={vi.fn()} />);
+    fireEvent.change(screen.getByRole('combobox', { name: '标注来源' }), { target: { value: 'agent' } });
+    expect(screen.getByText(/不计作独立人工金标/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: '通过' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存 Agent 标签' }));
+    await waitFor(() => expect(onLabel).toHaveBeenCalledWith(expect.objectContaining({ labelAuthor: 'agent', humanVerdict: 'pass' })));
+  });
+
   it('reopens the unfinished calibration and selects the first unlabelled sample', async () => {
     const cases = [goldenCase(), goldenCase('case-hold', 'holdout')].map((item) => ({ ...item,
       review: { status: 'approved' as const, note: '', reviewedAtMs: 3000 },

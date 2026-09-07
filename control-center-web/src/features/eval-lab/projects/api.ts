@@ -34,9 +34,11 @@ export function useLabProjects(projectId: string) {
   const prefix = ['lab-projects', connection] as const; const catalogKey = [...prefix, 'catalog'] as const;
   const projectKey = [...prefix, 'project', projectId] as const; const pendingKey = [...prefix, 'command'] as const;
   const catalog = useQuery({ queryKey: catalogKey, queryFn: ({ signal }) => readLabProject(transport, '', '', undefined, signal),
-    retry: false, refetchOnWindowFocus: false, refetchInterval: projectId ? 3000 : false, refetchIntervalInBackground: false });
+    retry: false, refetchOnWindowFocus: false, refetchInterval: (query) => projectId || query.state.status === 'error' ? 3000 : false, refetchIntervalInBackground: false });
   const project = useQuery({ queryKey: projectKey, queryFn: projectId ? ({ signal }) => readLabProject(transport, projectId, '', undefined, signal) : skipToken,
-    retry: false, refetchOnWindowFocus: false });
+    retry: false, refetchOnWindowFocus: false,
+    // A recovered catalog can have the same revision: retry failed reads independently.
+    refetchInterval: (query) => query.state.status === 'error' ? 3000 : false, refetchIntervalInBackground: false });
   const observedRevision = catalog.data?.items.find((item) => item.projectId === projectId)?.revision;
   const savedRevision = project.data?.project?.revision;
   useEffect(() => {
@@ -75,7 +77,8 @@ export function useLabArtifact(projectId: string, artifactId: string, revision?:
   const transport = useControlTransport(); const connection = labConnectionKey(transport);
   return useQuery({ queryKey: ['lab-projects', connection, 'artifact', projectId, artifactId, revision],
     queryFn: projectId && artifactId && revision ? async ({ signal }) => (await readLabProject(transport, projectId, artifactId, revision, signal)).artifact! : skipToken,
-    retry: false, refetchOnWindowFocus: false, staleTime: Infinity });
+    retry: false, refetchOnWindowFocus: false, staleTime: Infinity,
+    refetchInterval: (query) => query.state.status === 'error' ? 3000 : false, refetchIntervalInBackground: false });
 }
 function storageKey(transport: ControlTransport) { return transport.connectionIdentity ? `paw.lab.project-command.v1:${labConnectionKey(transport)}` : ''; }
 function persist(transport: ControlTransport, value: ProjectCommand | null) {

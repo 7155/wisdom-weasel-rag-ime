@@ -1055,6 +1055,33 @@ class PiRuntimeV2Tests(unittest.TestCase):
             all("approvalToken" not in request["params"] for request in package_requests)
         )
 
+    def test_reopens_physical_transcript_through_managed_directory_alias(self) -> None:
+        physical_root = self.root / "external-sessions"
+        physical_root.mkdir()
+        self.runtime.config.session_dir.symlink_to(physical_root, target_is_directory=True)
+        session_id = str(self.first["id"])
+        # An empty fork may not have a transcript file until its first prompt.
+        transcript = physical_root.resolve() / "empty-fork.jsonl"
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-empty-fork",
+            transcript_ref=str(transcript),
+            branch_anchor="first-user",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=0,
+        )
+
+        self.runtime.ensure(session_id)
+
+        requests = [json.loads(line) for line in
+                    (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        opened = next(row["params"] for row in requests if row["method"] == "session.open")
+        self.assertEqual(opened["sessionFile"], str(self.runtime.config.session_dir / transcript.name))
+        self.assertEqual(Path(opened["sessionFile"]).resolve(), transcript)
+
     def test_session_context_resource_settings_reach_pi_session_open(self) -> None:
         session_id = str(self.first["id"])
         self.store.set_runtime_policy(
@@ -3795,6 +3822,49 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("workspace_read", serialized)
         self.assertNotIn("top-secret", serialized)
         self.assertNotIn("/Users/private", serialized)
+
+    def test_thinking_text_wrappers_stay_out_of_history_and_live_text(self) -> None:
+        from rag_ime.pi_runtime_public import visible_message_text, last_assistant_preview
+
+        for text, expected in [
+            ("<thinking>private notes</thinking>Visible answer", "Visible answer"),
+            ("<thinking>unfinished internal notes", ""),
+            ("<think", ""),
+            ("<thinking>one</thinking>\n<thinking>two</thinking>Answer", "Answer"),
+            ("```xml\n<thinking>example</thinking>\n```", "```xml\n<thinking>example</thinking>\n```"),
+            ("Use `<thinking>` as a literal tag.", "Use `<thinking>` as a literal tag."),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(visible_message_text("assistant", text), expected)
+                self.assertEqual(visible_message_text("user", text), text)
+        hidden = {"role": "assistant", "content": [{"type": "text", "text": "<thinking>private notes"}]}
+        self.assertFalse(pi_message_is_public(hidden))
+        self.assertEqual(last_assistant_preview([hidden]), "")
+        self.assertNotIn("private notes", json.dumps(pi_message_payload(hidden, session_id="s", turn_id="t").to_payload()))
+        session_id = str(self.first["id"])
+        cumulative = ""
+        for chunk in ["<thi", "nking>private notes", "</thinking>", "Visible answer"]:
+            cumulative += chunk
+            self.runtime._handle_host_event({
+                "protocolVersion": "2", "event": "agent.event", "sessionId": session_id, "turnId": "wrapped-stream",
+                "payload": {"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": chunk},
+                    "message": {"id": "wrapped-text", "role": "assistant", "content": [{"type": "text", "text": cumulative}]}},
+            })
+        deltas = [event.payload for event in self.events.replay(session_id)[0] if event.event_type == "text_delta" and event.turn_id == "wrapped-stream"]
+        self.assertEqual(deltas[-1]["delta"], "Visible answer")
+        self.assertTrue(deltas[-1]["replaceContent"])
+        self.assertNotIn("private notes", json.dumps(deltas))
+        self.assertNotIn("<thi", json.dumps(deltas))
+
+    def test_public_summary_removes_thinking_wrappers_without_widening_provider_access(self) -> None:
+        raw = {"api": "openai-responses", "content": [
+            {"type": "thinking", "thinking": "**<thinking>Preparing app</thinking>**\n\n<THINKING>Checking revision</THINKING>"},
+            {"type": "redacted_thinking", "thinking": "hidden"},
+        ]}
+        self.assertEqual(public_reasoning_summaries(raw), ["Preparing app"])
+        raw["content"] = [{"type": "thinking", "thinking": "<thinking>\nChecking revision\n</thinking>"}]
+        self.assertEqual(public_reasoning_summaries(raw), ["Checking revision"])
+        self.assertEqual(public_reasoning_summaries({**raw, "api": "anthropic-messages"}), [])
 
     def test_only_openai_response_family_summaries_are_public(self) -> None:
         openai = {

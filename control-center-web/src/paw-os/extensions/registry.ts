@@ -64,7 +64,9 @@ export function registerLabExtensionApps(payload: unknown): Set<PawExtensionAppI
         || manifest.route !== `/extensions/${manifest.id.slice('extension:'.length)}`
         || !['label', 'shortLabel', 'tagline', 'version', 'packageId'].every((key) => typeof manifest[key] === 'string')
         || typeof manifest.bindingSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(manifest.bindingSha256)
-        || !isRecord(manifest.icon) || manifest.icon.symbol !== 'assistant' || manifest.icon.background !== '#22876A') continue;
+        || !['cyan', 'blue', 'violet', 'amber', 'green', 'rose', 'slate'].includes(String(manifest.accent))
+        || !isRecord(manifest.icon) || !['analytics', 'assistant', 'document', 'commerce'].includes(String(manifest.icon.symbol))
+        || typeof manifest.icon.background !== 'string' || !/^#[0-9a-fA-F]{6}$/u.test(manifest.icon.background)) continue;
     const id = manifest.id; const entry = { manifest: manifest as PawExtensionAppManifest,
       ownerDirectory: id.slice('extension:'.length), load: () => import('@/features/eval-lab/projects/LabAppHost') };
     labEntries.set(id, entry); byId.set(id, entry); enabled.add(id);

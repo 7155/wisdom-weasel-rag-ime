@@ -97,6 +97,7 @@ function ExperimentReport({ result, sources }: { result: ExperimentResult; sourc
     inconclusive: '证据不足，暂不能判断改善',
   }[result.comparison.decision];
   return <div className="golden-report">
+    {result.referenceAuthority === 'agent_assisted' ? <p className="golden-note">此实验使用 Agent 辅助标注的冻结标准，不代表独立人工金标验收。该来源记录属于本次实验，后续修改评审配置不会改变它。</p> : null}
     <div className="golden-report__conclusion"><h4>{conclusion}</h4><p>开发题通过率变化 {difference(result.comparison.developmentDelta)}；留出题变化 {difference(result.comparison.holdoutDelta)}。</p>{result.comparison.improvementBasis === 'answer_cost_estimate' ? <p>成本改善依据模型目录估算，实际费用尚未完整提供。</p> : null}{result.comparison.reasons.length ? <ul>{result.comparison.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul> : null}<p className="golden-note">本次使用同一冻结快照，Golden 标准没有改变。结论只覆盖这份题集。</p></div>
     <PhaseResults title="开发题" phase={result.development} />
     {result.validationUse ? <p className="golden-note">{result.validationUse.reused ? `当前留出题中有 ${result.validationUse.overlappingQuestionCount ?? '部分'} 道题已用于此前 ${result.validationUse.priorStartedRuns} 次验证；若根据已有结果继续调整，应使用新的验证材料检查泛化。` : '当前 Lab 未记录这些留出题的先前验证运行；人工预览或外部使用需另行说明。'}</p>
@@ -130,7 +131,7 @@ function CaseComparisons({ title, phase, sources }: { title: string; phase: Phas
 }
 function runVerdict(run: CaseRun) { return run.status === 'runtime_error' ? '运行错误' : verdictLabel[run.judgment.verdict]; }
 function AnswerResult({ label, run, sources }: { label: string; run: CaseRun; sources: GoldenSource[] }) {
-  return <section><h5>{label} · {runVerdict(run)}</h5><p className="golden-preserve-text">{run.answer || '没有返回答案'}</p><h6>评审依据</h6><p>{run.judgment.reason || '未提供判断理由'}</p><EvidenceView evidence={run.judgment.evidence} sources={sources} /></section>;
+  return <section><h5>{label} · {runVerdict(run)}</h5><p className="golden-preserve-text">{run.answer || '没有返回答案'}</p>{run.retrieval ? <details><summary>回答前实际检索 · {run.retrieval.sourceCount} 个片段 / {run.retrieval.contextChars} 字符</summary>{run.retrieval.sources.map((source, index) => <div key={`${source.chunkId}:${index}`}><small>{source.sourceId} · {source.chunkId}</small>{source.excerpt ? <p className="golden-preserve-text">{source.excerpt}</p> : null}</div>)}</details> : null}<h6>评审依据</h6><p>{run.judgment.reason || '未提供判断理由'}</p><EvidenceView evidence={run.judgment.evidence} sources={sources} /></section>;
 }
 function UsageSummary({ usage, title = '实际用量' }: { usage: Partial<ExperimentUsage> | Record<string, unknown>; title?: string }) {
   const metric = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('zh-CN') : '未提供';

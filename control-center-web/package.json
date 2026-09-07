@@ -10,7 +10,8 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/build-portable-agent-ui.mjs && tsc -b && vite build",
+    "build:app-ui": "node scripts/build-portable-agent-ui.mjs",
     "desktop": "electron .",
     "desktop:build": "../scripts/build_paw_os_electron_host.sh build",
     "preview": "vite preview --host 127.0.0.1",

@@ -1,11 +1,11 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-07T09:55:07.723709+00:00",
+  "generatedAt": "2026-09-07T14:32:53.152184+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
     "baseCommit": "f0bcdab577bb5d7f33afec1797bffd23f7946323",
-    "candidateCommitPolicy": "Inventory covers base through the September 7 Agent, memory/capability controls, and truthful Session opening state refinements. Installation and foreground acceptance remain separate."
+    "candidateCommitPolicy": "The first tagged PAW source preview includes the scoped shared Agent/App, Lab and documentation changes. Unrelated dirty Room work and local artifacts remain excluded; installed and signed distribution acceptance are separate."
   },
   "dispositions": {
     "keep_release": "Retain this path change in the source release candidate.",
@@ -23,7 +23,7 @@
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 421
+      "pathCount": 442
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -39,15 +39,15 @@
     },
     "session_room_skill_flow": {
       "description": "Scenario-scoped Pi Skill routing.",
-      "pathCount": 14
+      "pathCount": 16
     },
     "session_runtime": {
       "description": "Authoritative backend Session, Provider, Trace, and durable-message contracts.",
-      "pathCount": 126
+      "pathCount": 135
     },
     "release_scope": {
       "description": "Self-describing candidate inventory.",
-      "pathCount": 1
+      "pathCount": 6
     },
     "product_installation": {
       "description": "Product build, install, and installed evidence selection.",
@@ -59,28 +59,28 @@
     },
     "verification": {
       "description": "Backend and cross-layer regression tests.",
-      "pathCount": 125
+      "pathCount": 130
     }
   },
   "summary": {
-    "pathCount": 948,
+    "pathCount": 990,
     "dispositionCounts": {
-      "keep_release": 947,
+      "keep_release": 989,
       "delete_old_implementation": 1
     },
     "groupCounts": {
+      "release_scope": 6,
       "project_harness": 7,
       "requirement_evidence": 51,
-      "control_center_release_ui": 421,
+      "control_center_release_ui": 442,
       "memory_context_continuity": 30,
       "execution_reliability": 30,
       "evaluation_audit": 134,
-      "session_room_skill_flow": 14,
-      "session_runtime": 126,
-      "release_scope": 1,
+      "session_room_skill_flow": 16,
+      "session_runtime": 135,
       "product_installation": 4,
       "input_adapter": 5,
-      "verification": 125
+      "verification": 130
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -108,15 +108,30 @@
         "selfHostingBoundary": "Pi Sessions authored the change; parent recovery assistance was needed after Runtime failures; unattended operation remains unproven"
       }
     },
-    "integrationCheckpoint": "control-center-web/docs/pawos/INTEGRATION_CLOSEOUT_20260906.md"
+    "integrationCheckpoint": "control-center-web/docs/pawos/INTEGRATION_CLOSEOUT_20260906.md",
+    "sourcePreviewRelease": "v0.1.0-alpha.1; current checks and source commit will be recorded in the GitHub prerelease. Existing historicalReceipts remain historical."
   },
   "items": [
+    {
+      "path": ".gitignore",
+      "disposition": "keep_release",
+      "group": "release_scope",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
+    },
     {
       "path": "AGENTS.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "project_harness",
       "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
+    },
+    {
+      "path": "CHANGELOG.md",
+      "disposition": "keep_release",
+      "group": "release_scope",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
     },
     {
       "path": "CONTEXT.md",
@@ -161,6 +176,13 @@
       "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
+      "path": "README.md",
+      "disposition": "keep_release",
+      "group": "release_scope",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md",
       "status": "modified",
       "disposition": "keep_release",
@@ -196,6 +218,20 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/docs/pawos/LAB_EARTH_ENGINE_BUG_CASES_20260907.md",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_EXISTING_SCENES_MIGRATION_20260907.md",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "control-center-web/docs/pawos/LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md",
       "status": "added",
       "disposition": "keep_release",
@@ -210,11 +246,25 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/docs/pawos/LAB_INTERVIEW_SCENARIOS_20260907.md",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "control-center-web/docs/pawos/LAB_INTERVIEW_WALKTHROUGH_20260906.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "requirement_evidence",
       "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_KNOWLEDGE_FRONTEND_FLOW_20260907.md",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "control-center-web/docs/pawos/LAB_PRODUCTION_FLOW_RESEARCH_20260906.md",
@@ -637,6 +687,20 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/index.html",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/package.json",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/public/app-icon-192.png",
       "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -698,6 +762,13 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/scripts/build-portable-agent-ui.mjs",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "control-center-web/src/app/App.tsx",
@@ -889,6 +960,13 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/src/features/agent/AgentRecoveryActions.tsx",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "control-center-web/src/features/agent/agent-feature.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -950,6 +1028,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/model-picker.css",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "control-center-web/src/features/agent/composer/permission-policy.ts",
@@ -1148,6 +1233,13 @@
       "reason": "Verify truthful conversation memory receipts and bounded existing-topic consolidation."
     },
     {
+      "path": "control-center-web/src/features/agent/timeline/StructuredRenderers.tsx",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/src/features/agent/timeline/activity-summary.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -1174,6 +1266,13 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/public-reasoning-summary.ts",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "control-center-web/src/features/agent/tool-count.test.ts",
@@ -1694,6 +1793,20 @@
       "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
+      "path": "control-center-web/src/features/eval-lab/projects/LabKnowledge.test.tsx",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabKnowledge.tsx",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "control-center-web/src/features/eval-lab/projects/LabProjectWorkbench.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -1713,6 +1826,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/api-recovery.test.tsx",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "control-center-web/src/features/eval-lab/projects/api.ts",
@@ -1736,11 +1856,60 @@
       "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
+      "path": "control-center-web/src/features/eval-lab/projects/knowledge-types.ts",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/lab-knowledge.css",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "control-center-web/src/features/eval-lab/projects/lab-project-workbench.css",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/portable-agent-ui.css",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/portable-agent-ui.test.tsx",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/portable-agent-ui.tsx",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/portable-app-runtime-bridge.test.ts",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/portable-app-template.test.ts",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "control-center-web/src/features/eval-lab/projects/types.ts",
@@ -4361,6 +4530,13 @@
       "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
+      "path": "integrations/pi/skills/agent-lab-project/assets/portable-app.html",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "integrations/pi/skills/agent-lab-project/references/apps.md",
       "status": "added",
       "disposition": "keep_release",
@@ -4380,6 +4556,13 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the bounded Pi Skill routing correction used by the current Session and Room contract."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/references/frontend-contract.md",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
     },
     {
       "path": "integrations/pi/skills/plugin-creator/SKILL.md",
@@ -4529,6 +4712,20 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/agent_lab_app_assets.py",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/agent_lab_app_knowledge_runtime.py",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "rag_ime/agent_lab_app_runtime.py",
       "status": "added",
       "disposition": "keep_release",
@@ -4597,6 +4794,27 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_lab_history.py",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/agent_lab_knowledge.py",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/agent_lab_knowledge_data.py",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "rag_ime/agent_lab_medium.py",
@@ -5054,6 +5272,20 @@
       "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
+      "path": "rag_ime/db/migrations/0197_agent_lab_app_progress.sql",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/db/migrations/0198_agent_lab_app_model.sql",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "rag_ime/debug_server.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -5094,6 +5326,13 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/knowledge_library/store.py",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
     },
     {
       "path": "rag_ime/memory_book_compiler.py",
@@ -5264,6 +5503,13 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/rag_benchmark_sandbox.py",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
+    },
+    {
       "path": "rag_ime/real_memory_rag_evaluation.py",
       "group": "session_runtime",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -5311,6 +5557,20 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
       "disposition": "keep_release"
+    },
+    {
+      "path": "release/README.md",
+      "disposition": "keep_release",
+      "group": "release_scope",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "modified"
+    },
+    {
+      "path": "release/operations.md",
+      "disposition": "keep_release",
+      "group": "release_scope",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "release/release-candidate-scope.json",
@@ -5873,6 +6133,20 @@
       "disposition": "keep_release"
     },
     {
+      "path": "tests/test_agent_gateway_process_cleanup.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "tests/test_agent_lab_app_paw_gateway.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
       "path": "tests/test_agent_lab_app_runtime.py",
       "status": "added",
       "disposition": "keep_release",
@@ -5941,6 +6215,20 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_lab_history.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
+    },
+    {
+      "path": "tests/test_agent_lab_knowledge.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "tests/test_agent_lab_medium.py",
@@ -6571,6 +6859,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_pi_reasoning_projection.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the scoped PAW source preview and shared App execution capability; business plugin payloads remain outside this repository release.",
+      "status": "added"
     },
     {
       "path": "tests/test_pi_runtime.py",

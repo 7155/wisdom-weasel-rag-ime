@@ -137,6 +137,9 @@ export function publicAgentErrorText(
   const payload = errorPayload(value);
   const errorCode = stringValue(payload?.errorCode);
   const message = (value instanceof Error ? value.message : String(value ?? '')).trim();
+  if (/APP_API_(?:BASE_URL|KEY)/u.test(message)) {
+    return '模型连接配置不完整。请连接 PAW 或检查模型服务设置后重试。';
+  }
   if (memoryBootstrapFailureCodePattern.test(errorCode) || memoryBootstrapBudgetPattern.test(message)) {
     return MEMORY_BOOTSTRAP_SKIPPED_TEXT;
   }

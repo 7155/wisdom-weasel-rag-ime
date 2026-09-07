@@ -1,3 +1,4 @@
+import './model-picker.css';
 import { ChevronDown, ChevronRight, LoaderCircle, Search } from 'lucide-react';
 import {
   useEffect,

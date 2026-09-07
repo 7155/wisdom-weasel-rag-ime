@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import threading
 import time
@@ -12,7 +13,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from unittest.mock import patch
 
-from rag_ime.agent_lab_app_runtime import AppInputError, AppRequestStore, create_server
+from rag_ime.agent_lab_app_runtime import AppInputError, AppProviderUnconfirmed, AppRequestStore, create_server, _stream_completion
 from tests.test_agent_lab_apps import write_app
 
 
@@ -66,6 +67,41 @@ class StandaloneRequestTests(unittest.TestCase):
         self.assertFalse(self.store.finish(self.request['requestId'], 'failed', {'message':'late overwrite'}))
         self.assertEqual(other.read(self.request['requestId'])['result']['text'], 'first settlement')
 
+    def test_live_progress_does_not_become_a_result_or_allow_late_or_foreign_writes(self):
+        rid = self.request['requestId']; self.store.claim(self.request)
+        self.store.progress(rid,{'stage':'sources_ready','sources':[{'title':'Actual source'}],'thinking':'private'})
+        self.store.progress(rid,{'stage':'answering','text':'Partial answer'})
+        pending = self.store.read(rid)
+        self.assertIsNone(pending['result']); self.assertEqual(pending['state'],'running')
+        self.assertEqual(pending['progress']['sources'][0]['title'],'Actual source')
+        self.assertNotIn('private',json.dumps(pending))
+        other = AppRequestStore(self.path,'frozen-source-a')
+        other.progress(rid,{'stage':'answering','text':'wrong owner'})
+        self.assertEqual(other.read(rid)['progress']['stage'],'unconfirmed')
+        self.assertEqual(other.read(rid)['progress']['text'],'Partial answer')
+        self.store.finish(rid,'completed',{'text':'Final answer'})
+        self.store.progress(rid,{'stage':'thinking','text':'late overwrite'})
+        final = self.store.read(rid)
+        self.assertEqual(final['progress']['stage'],'completed')
+        self.assertEqual(final['result']['text'],'Final answer')
+
+    def test_stream_shows_public_output_and_requires_completion_before_success(self):
+        frames=[{'choices':[{'delta':{'reasoning_content':'private chain'}}]},
+                {'choices':[{'delta':{'content':'First '}}]},
+                {'choices':[{'delta':{'content':'answer'},'finish_reason':'stop'}]},
+                {'choices':[],'usage':{'total_tokens':20}}]
+        body=b''.join(('data: '+json.dumps(frame)+'\n\n').encode() for frame in frames)
+        updates=[]
+        result=_stream_completion(io.BytesIO(body+b'data: [DONE]\n'),updates.append)
+        self.assertEqual(result['choices'][0]['message']['content'],'First answer')
+        self.assertEqual(result['usage'],{'total_tokens':20})
+        self.assertIn({'stage':'thinking'},updates)
+        self.assertEqual(updates[-1],{'stage':'answering','text':'First answer'})
+        self.assertNotIn('private chain',json.dumps(updates))
+        with self.assertRaises(AppProviderUnconfirmed):
+            _stream_completion(io.BytesIO(b'data: {"choices":[{"delta":{"content":"Partial"}}]}\n'),updates.append)
+        self.assertEqual(updates[-1]['text'],'Partial')
+
     def test_call_limit_is_checked_before_creating_a_receipt(self):
         for _ in range(4): self.store.claim({**self.request,'requestId':str(uuid.uuid4())})
         with self.assertRaises(AppInputError): self.store.claim(self.request)
@@ -101,11 +137,53 @@ class StandaloneRequestTests(unittest.TestCase):
             finally:
                 server.shutdown();server.server_close();worker.join(timeout=3)
 
+    def test_exported_workspace_shell_keeps_service_separate_and_conversation_same_origin(self):
+        root = write_app(Path(self.temp.name)); spec_path = root/'app.json'
+        spec = json.loads(spec_path.read_text()); spec['externalWorkspace'] = {'title':'空间工作台','url':'http://127.0.0.1:5173/'}
+        spec_path.write_text(json.dumps(spec))
+        with patch('rag_ime.agent_lab_app_runtime.provider_complete') as complete:
+            server = create_server(root,'127.0.0.1',0)
+            worker = threading.Thread(target=server.serve_forever,daemon=True); worker.start()
+            base = f'http://127.0.0.1:{server.server_port}'
+            try:
+                with urlopen(base,timeout=3) as response:
+                    page = response.read().decode()
+                    self.assertEqual(response.headers['X-Frame-Options'],'DENY')
+                    self.assertIn('<title>'+spec['title']+'</title>',page)
+                    self.assertIn('src="/conversation"',page)
+                    self.assertIn('data-src="http://127.0.0.1:5173/"',page)
+                    self.assertNotRegex(page,r'window\.pawApp\s*=')
+                with urlopen(base+'/conversation',timeout=3) as response:
+                    self.assertEqual(response.headers['X-Frame-Options'],'SAMEORIGIN')
+                    self.assertRegex(response.read().decode(),r'window\.pawApp\s*=')
+                complete.assert_not_called()
+            finally:
+                server.shutdown(); server.server_close(); worker.join(timeout=3)
+
+    def test_workspace_deployment_override_does_not_modify_frozen_source(self):
+        root = write_app(Path(self.temp.name)); path = root/'app.json'
+        spec = json.loads(path.read_text()); spec['externalWorkspace'] = {'title':'地图','url':'http://127.0.0.1:5173/', 'presentation':'split'}
+        path.write_text(json.dumps(spec)); frozen = path.read_bytes()
+        with patch.dict('os.environ', {'APP_WORKSPACE_URL':'http://127.0.0.1:18875/'}):
+            server = create_server(root,'127.0.0.1',0)
+            worker = threading.Thread(target=server.serve_forever,daemon=True); worker.start()
+            try:
+                with urlopen(f'http://127.0.0.1:{server.server_port}',timeout=3) as response:
+                    page = response.read().decode()
+                    self.assertIn('data-src="http://127.0.0.1:18875/"',page)
+                    self.assertIn('data-presentation="split"',page)
+                self.assertEqual(path.read_bytes(),frozen)
+            finally:
+                server.shutdown(); server.server_close(); worker.join(timeout=3)
+        with patch.dict('os.environ', {'APP_WORKSPACE_URL':'https://user:password@example.com/'}):
+            with self.assertRaises(ValueError): create_server(root,'127.0.0.1',0)
+
     def test_http_browser_reconnect_reads_original_receipt_without_extra_provider_call(self):
         root = write_app(Path(self.temp.name))
         entered, release = threading.Event(), threading.Event()
         calls = []
-        def complete(prompt, _spec):
+        def complete(prompt, _spec, *, on_progress, on_response=None):
+            on_progress({'stage':'thinking'})
             calls.append(prompt); entered.set(); release.wait(3)
             return {'text':'真实回执占位测试','usage':{'total_tokens':9}}
         with patch('rag_ime.agent_lab_app_runtime.provider_complete', side_effect=complete):
@@ -122,6 +200,7 @@ class StandaloneRequestTests(unittest.TestCase):
                 self.assertEqual(submit()[0], 202); self.assertTrue(entered.wait(2))
                 self.assertEqual(submit()[1]['record']['requestId'], request['requestId'])
                 self.assertEqual(read('/api/history')['records'][0]['state'], 'running')
+                self.assertEqual(read('/api/history')['records'][0]['progress']['stage'], 'thinking')
                 self.assertEqual(len(calls), 1)
                 release.set()
                 deadline = time.monotonic()+3
@@ -135,6 +214,45 @@ class StandaloneRequestTests(unittest.TestCase):
                 self.assertEqual(read('/api/history')['records'][0]['input'], request['input'])
             finally:
                 release.set(); server.shutdown(); server.server_close(); worker.join(3)
+
+    def test_http_cancel_preserves_real_context_and_partial_output_without_replaying_or_accepting_late_success(self):
+        root = write_app(Path(self.temp.name))
+        entered, release, ended = threading.Event(), threading.Event(), threading.Event()
+        def complete(_prompt, _spec, *, on_progress, on_response):
+            class Response:
+                def close(self): release.set()
+            on_response(Response())
+            on_progress({'stage':'answering','text':'已经收到的部分回答'})
+            entered.set(); release.wait(3); ended.set()
+            return {'text':'late final answer'}
+        with patch('rag_ime.agent_lab_app_runtime.provider_complete', side_effect=complete) as provider:
+            server = create_server(root, '127.0.0.1', 0)
+            worker = threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+            base = f'http://127.0.0.1:{server.server_port}'
+            request = {**self.request, 'actionId':'answer'}
+            def post(path, value):
+                with urlopen(Request(base+path,data=json.dumps(value).encode(),
+                        headers={'Content-Type':'application/json'},method='POST'),timeout=3) as response:
+                    return json.load(response)['record']
+            try:
+                post('/api/invoke',request);self.assertTrue(entered.wait(2))
+                stopped = post('/api/cancel',{'requestId':request['requestId']})
+                self.assertEqual(stopped['state'],'cancelled')
+                self.assertEqual(stopped['providerOutcome'],'unconfirmed')
+                self.assertEqual(stopped['progress']['text'],'已经收到的部分回答')
+                self.assertEqual(stopped['progress']['sources'][0]['text'],(root/'rules.md').read_text())
+                self.assertEqual(stopped['progress']['knowledge']['sourceKind'],'provided_context')
+                self.assertEqual(len(stopped['progress']['sources']),1)
+                self.assertNotIn('只使用材料，不猜测',json.dumps(stopped,ensure_ascii=False))
+                self.assertTrue(ended.wait(2))
+                self.assertEqual(post('/api/invoke',request)['state'],'cancelled')
+                self.assertEqual(post('/api/cancel',{'requestId':request['requestId']})['state'],'cancelled')
+                self.assertEqual(provider.call_count,1)
+                with urlopen(base+'/api/history',timeout=3) as response:
+                    records=json.load(response)['records']
+                self.assertEqual(len(records),1);self.assertIsNone(records[0]['result'])
+            finally:
+                release.set();server.shutdown();server.server_close();worker.join(3)
 
 
 if __name__ == '__main__': unittest.main()

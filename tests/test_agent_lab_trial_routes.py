@@ -218,7 +218,7 @@ class TrialServiceTests(unittest.TestCase):
                 service.eval_lab_trial_start(self.request())
             listing = service.eval_lab_trials()
             self.assertEqual(listing["jobs"], [])
-            self.assertEqual(listing["registeredSceneIds"], ["memory"])
+            self.assertEqual(listing["registeredSceneIds"], ["knowledge-resource", "memory"])
         finally:
             service.close()
 
@@ -231,7 +231,7 @@ class TrialServiceTests(unittest.TestCase):
                 self.assertIsInstance(adapter, AgentLabMemoryTrialAdapter)
                 for _ in range(3):
                     listing = service.eval_lab_trials()
-                    self.assertEqual(listing["registeredSceneIds"], ["memory"])
+                    self.assertEqual(listing["registeredSceneIds"], ["knowledge-resource", "memory"])
                     self.assertEqual(listing["jobs"], [])
                 prepared = adapter.prepare({}, "lab-trial:admission-only")
                 self.assertEqual(prepared["publicSpec"]["evaluationMode"], "synthetic-fixture")

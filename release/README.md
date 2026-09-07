@@ -34,31 +34,26 @@ context archives are intentionally not included.
 
 ## Checkout And Dependencies
 
-The managed runtime is built from a separate, source-pinned Pi worktree. The
-accepted reference is Pi `0.84.2` at commit
-`06af63eb41e9df4145d2c202d9f26e4756f89adb`; it must be detached, clean, and
-contain the canonical `integrations/rag-ime-runtime-host` tree. Keep the path
-caller-supplied (a common layout is `../.worktrees/pi-084-plugin-runtime-e7c11266`):
-the installer never guesses a neighbouring `../pi` checkout.
+The managed runtime is built from a separate Pi checkout. Its compatibility is
+owned by [`session-runtime-host-contract.json`](../integrations/pi/session-runtime-host-contract.json)
+and `scripts/build_managed_pi_runtime_v2.py`. The required handler baseline is
+`9c3f93c8b1c409e82e14d458510c146088c44561`; a candidate must also contain the
+current contract's methods and source markers. A Pi version number alone is
+not sufficient. Use an explicitly reviewed, clean Pi worktree and keep its path
+caller-supplied; the installer does not guess a neighbouring checkout.
 
 ```bash
-# Run these commands from the PAW checkout root.
-PI_REPO=../pi-source
-PI_WORKTREE=../.worktrees/pi-084-plugin-runtime-e7c11266
-git clone https://github.com/7155/pi.git "$PI_REPO"
-git -C "$PI_REPO" worktree add --detach "$PI_WORKTREE" 06af63eb41e9df4145d2c202d9f26e4756f89adb
+# Run from the PAW checkout root. Set this to the compatible Pi worktree.
+PI_WORKTREE=/path/to/reviewed-pi-worktree
 npm --prefix "$PI_WORKTREE" ci
-
-uv sync --frozen
+uv sync --locked
 pnpm --dir control-center-web install --frozen-lockfile
 ```
 
-The product contract rejects a Pi source tree that predates its minimum handler
-commit or does not contain the required Runtime-host methods and source markers.
-The checkout above is the currently installed and accepted reference. It
-includes the deterministic Goal/Room lifecycle, native coding-tool evidence,
-long-result handles, and the pre-dispatch model-context fence. Do not substitute
-an arbitrary Pi release just because its CLI starts.
+The build command below checks ancestry and the full host contract before
+producing a managed generation. It fails if the supplied Pi source is too old
+or incomplete. The Pi runtime is a separate dependency and is not bundled in a
+PAW source archive.
 
 ## Non-Destructive Build Walkthrough
 
@@ -75,11 +70,12 @@ python3 scripts/build_managed_pi_runtime_v2.py \
   --output build/managed-pi-runtime/release-check \
   --force
 
-codesign --verify --deep --strict build/RagImeControl.app
+codesign --verify --deep --strict build/RagImeControlElectron.app
 codesign --verify --deep --strict build/RagImeVoice.app
 codesign --verify --deep --strict build/RagImeDesktopBridge.app
 ```
 
+The Control Center uses the Electron host in `control-center-web/electron/`.
 The local native apps are ad-hoc signed so macOS can execute and inspect them.
 That signature is suitable for development only.
 
@@ -215,6 +211,13 @@ generations for rollback. It removes only digest-bound generations in the
 accepted retired lineage and refuses a changed dry-run plan.
 
 ## Source Publication And Binary Release
+
+The `v0.1.0-alpha.1` GitHub prerelease is a PAW source preview. Its source
+archives contain the tracked product code, documentation, tests, and public
+fixtures. They do not include user data, installed business plugins, credentials,
+model weights, a prebuilt Pi generation, or a signed macOS installer.
+Repository access follows the repository's existing visibility.
+
 
 Before changing repository visibility, commit all intended source changes and
 run:
