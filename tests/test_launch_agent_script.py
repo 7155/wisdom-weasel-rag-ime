@@ -794,6 +794,41 @@ class LaunchAgentScriptTests(unittest.TestCase):
         )
         self.assertFalse(plist_exists)
 
+    def test_web_only_gateway_update_preserves_a_separately_updated_runtime(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="paw-web-only-runtime-") as tmp:
+            home = Path(tmp)
+            support = home / "support"
+            code = support / "app"
+            (code / "rag_ime").mkdir(parents=True)
+            (code / "examples" / "vertical_agents").mkdir(parents=True)
+            backend = code / "rag_ime" / "__init__.py"
+            backend.write_text("# separately updated installed runtime\n", encoding="utf-8")
+            (code / "sidecar_launch.py").write_text("# installed wrapper\n", encoding="utf-8")
+            marker = code / "rag-ime-install-marker.json"
+            marker.write_text(json.dumps({"component": "sidecar-runtime", "sourceCommit": "b" * 40}), encoding="utf-8")
+            (support / "PiRuntime").mkdir()
+            (support / "PiRuntime" / "current.json").write_text("{}\n", encoding="utf-8")
+            launch_agents = home / "Library" / "LaunchAgents"
+            launch_agents.mkdir(parents=True)
+            gateway_plist = launch_agents / "com.rag-ime.agent-gateway.plist"
+            with gateway_plist.open("wb") as handle:
+                plistlib.dump({"Label": "retained-gateway", "EnvironmentVariables": {}}, handle)
+            before = {path: path.read_bytes() for path in (backend, marker, gateway_plist)}
+            env = {**os.environ, "HOME": str(home), "RAG_IME_APP_SUPPORT_DIR": str(support),
+                   "RAG_IME_PYTHON": sys.executable, "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1"}
+            command = ["bash", str(root / "scripts" / "install_agent_gateway_launch_agent.sh"), "--web-only"]
+            result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Agent Gateway and Pi unchanged", result.stdout)
+            for path, content in before.items():
+                self.assertEqual(path.read_bytes(), content)
+
+            marker.write_text("{}\n", encoding="utf-8")
+            invalid = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertEqual(gateway_plist.read_bytes(), before[gateway_plist])
+
     def test_restart_runtime_script_defaults_to_foreground_rag_profile(self) -> None:
         root = Path(__file__).resolve().parents[1]
         script_text = (root / "scripts" / "restart_rag_ime_runtime.sh").read_text(encoding="utf-8")

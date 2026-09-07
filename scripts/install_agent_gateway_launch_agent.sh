@@ -171,7 +171,7 @@ if ! python3 - \
   "$ROOT/examples/vertical_agents" \
   "$APP_CODE_DIR/examples/vertical_agents" \
   "$ROOT/scripts/sidecar_launch.py" \
-  "$WRAPPER" <<'PY'
+  "$WRAPPER" "$WEB_ONLY" <<'PY'
 import hashlib
 import json
 import sys
@@ -208,13 +208,21 @@ try:
         installed_wrapper,
     ) = map(
         Path,
-        sys.argv[1:],
+        sys.argv[1:8],
     )
+    web_only = sys.argv[8] == "1"
     marker = json.loads(marker_path.read_text(encoding="utf-8"))
     provenance_valid = (
         marker.get("component") == "sidecar-runtime"
         and bool(marker.get("sourceCommit"))
     )
+    # A frontend-only update consumes the installed Runtime through HTTP. It
+    # must not require rolling back a separately updated backend to this checkout.
+    # Validate the installed component, then retain its code, plist and process.
+    if web_only:
+        tree_digest(installed_tree)
+        tree_digest(installed_vertical_agents)
+        raise SystemExit(0 if provenance_valid and installed_wrapper.is_file() else 1)
     runtime_matches = tree_digest(source_tree) == tree_digest(installed_tree)
     vertical_agents_match = (
         tree_digest(source_vertical_agents)
