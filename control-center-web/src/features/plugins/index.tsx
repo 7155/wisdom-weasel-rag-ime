@@ -634,7 +634,7 @@ export function PluginsFeature() {
 
   const packageStatusBadge = (
     <StatusBadge
-      label={packagesError ? '暂时无法读取' : !pluginRuntimeAvailable ? 'Pi 未连接' : `${installedItems.length} 个已安装`}
+      label={packagesError ? '暂时无法读取' : installed.data === undefined ? (installed.isFetching ? '正在读取' : '等待读取') : !pluginRuntimeAvailable ? 'Pi 未连接' : `${installedItems.length} 个已安装`}
       tone={packagesError || !pluginRuntimeAvailable ? 'warning' : 'neutral'}
     />
   );
@@ -1086,7 +1086,7 @@ export function PluginsFeature() {
 
   const hooksStatusBadge = (
     <StatusBadge
-      label={lifecycle.error ? '状态不可用' : `${lifecyclePolicies.filter((item) => item.enabled === true).length}/${lifecyclePolicies.length} 已启用`}
+      label={lifecycle.error ? '状态不可用' : lifecycle.data === undefined ? (lifecycle.isFetching ? '正在读取' : '等待读取') : `${lifecyclePolicies.filter((item) => item.enabled === true).length}/${lifecyclePolicies.length} 已启用`}
       tone={lifecycle.error ? 'warning' : 'neutral'}
     />
   );

@@ -69,6 +69,38 @@ describe('PluginsFeature', () => {
     expect(screen.getByRole('article', { name: 'Third Party Package' })).toHaveTextContent('Author supplied description.');
   });
 
+  it('waits for each inventory before showing a zero count and accepts a real empty result', async () => {
+    let resolvePackages!: (value: unknown) => void;
+    let resolveHooks!: (value: unknown) => void;
+    const packages = new Promise((resolve) => { resolvePackages = resolve; });
+    const hooks = new Promise((resolve) => { resolveHooks = resolve; });
+    renderPlugins({ 'agent.extensions.list': () => packages, 'agent.lifecycleHooks.get': () => hooks }, '/plugins', true);
+    const installed = await screen.findByRole('region', { name: '插件安装与更新' });
+    const lifecycle = screen.getByRole('region', { name: '自动整理与提醒' });
+    expect(installed).toHaveTextContent('正在读取');
+    expect(installed).not.toHaveTextContent('0 个已安装');
+    expect(lifecycle).toHaveTextContent('正在读取');
+    expect(lifecycle).not.toHaveTextContent('0/0 已启用');
+    await act(async () => { resolvePackages({ ok: true, runtimeAvailable: true, items: [] }); });
+    expect(await within(installed).findByText('0 个已安装')).toBeVisible();
+    expect(lifecycle).not.toHaveTextContent('0/0 已启用');
+    await act(async () => { resolveHooks({ ok: true, policies: [], recentEvents: [] }); });
+    expect(await within(lifecycle).findByText('0/0 已启用')).toBeVisible();
+  });
+
+  it('reports unavailable inventories without fabricating empty counts', async () => {
+    renderPlugins({
+      'agent.extensions.list': () => { throw new Error('inventory unavailable'); },
+      'agent.lifecycleHooks.get': () => { throw new Error('hooks unavailable'); },
+    }, '/plugins', true);
+    const installed = await screen.findByRole('region', { name: '插件安装与更新' });
+    const lifecycle = screen.getByRole('region', { name: '自动整理与提醒' });
+    expect(await within(installed).findByText('暂时无法读取')).toBeVisible();
+    expect(await within(lifecycle).findByText('状态不可用')).toBeVisible();
+    expect(installed).not.toHaveTextContent('0 个已安装');
+    expect(lifecycle).not.toHaveTextContent('0/0 已启用');
+  });
+
   it('searches displayed capability names and ranks them ahead of description matches', async () => {
     const user = userEvent.setup();
     renderPlugins({ 'agent.tools.list': capabilityCatalog([
@@ -157,6 +189,8 @@ describe('PluginsFeature', () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(transport.requests).toHaveLength(0);
+    expect(within(screen.getByRole('region', { name: '插件安装与更新' })).getByText('等待读取')).toBeVisible();
+    expect(within(screen.getByRole('region', { name: '自动整理与提醒' })).getByText('等待读取')).toBeVisible();
   });
 
   it('keeps the setting scope and precedence visible above the capability list', async () => {
