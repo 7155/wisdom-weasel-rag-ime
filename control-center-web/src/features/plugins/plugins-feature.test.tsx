@@ -61,10 +61,9 @@ describe('PluginsFeature', () => {
 
   it('distinguishes a missing Room context from a disabled or offline feature', async () => {
     const user = userEvent.setup();
-    const room = tool({ id: 'room_partner', displayName: 'Room 伙伴协作', description: 'Room 工作协作' });
+    const room = tool({ id: 'room_partner', displayName: 'Room 伙伴协作', description: 'Room 工作协作', alwaysAvailable: true });
     renderPlugins({ 'agent.tools.list': capabilityCatalog([{
       ...room,
-      alwaysAvailable: true,
       status: 'offline',
       disclosure: { ...room.disclosure, effective: 'disabled' as const, state: 'hidden' as const, reason: 'room_context_required' },
       reasons: ['room_context_required'],
@@ -1222,8 +1221,8 @@ function tool(overrides: Record<string, unknown>) {
     authorization: { state: 'not_applicable' as const, reason: 'session_context_required' },
     disclosure: {
       preference: 'inherit' as const,
-      effective: 'enabled' as const,
-      state: 'disclosed' as const,
+      effective: 'enabled' as 'enabled' | 'disabled',
+      state: 'disclosed' as 'disclosed' | 'hidden',
       reason: 'inherited_built_in_default',
     },
     effectiveScope: 'built_in_default' as const,
