@@ -34,6 +34,7 @@ class AgentMemoryContextService:
         runtime_provider: Callable[[], Any],
         observation_callback: Callable[[dict[str, object]], None] | None = None,
         memory_enabled_provider: Callable[[], bool] | None = None,
+        session_memory_enabled_provider: Callable[[str], bool] | None = None,
     ) -> None:
         self.sessions = sessions
         self.memory_bootstrap = memory_bootstrap
@@ -41,6 +42,7 @@ class AgentMemoryContextService:
         self.task_context = task_context
         self._runtime_provider = runtime_provider
         self._observation_callback = observation_callback
+        self._session_memory_enabled_provider = session_memory_enabled_provider
         sessions_db_path = getattr(sessions, "db_path", "")
         self._memory_enabled_provider = memory_enabled_provider or (
             lambda: memory_enabled_from_settings(sessions_db_path)
@@ -78,7 +80,7 @@ class AgentMemoryContextService:
         query_text: str,
     ) -> dict[str, object]:
         session_id = str(session.get("id") or "")
-        if not self._memory_enabled():
+        if not self._memory_enabled(session_id):
             # Keep the persisted memory/context rows untouched. Prompt
             # delivery filters any already-active memory item while disabled,
             # so re-enabling the switch can reuse the same durable evidence.
@@ -190,7 +192,7 @@ class AgentMemoryContextService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         session_id = str(payload.get("sessionId") or "")
-        if not self._memory_enabled():
+        if not self._memory_enabled(session_id):
             return _memory_disabled_refresh(session_id)
         try:
             return self._refresh(payload)
@@ -449,7 +451,7 @@ class AgentMemoryContextService:
         Session recovery protocol.
         """
 
-        if not self._memory_enabled():
+        if not self._memory_enabled(session_id):
             return ""
 
         materialized = self.context_runtime.materialize(
@@ -464,9 +466,12 @@ class AgentMemoryContextService:
         ]
         return render_provider_context_items(items)
 
-    def _memory_enabled(self) -> bool:
+    def _memory_enabled(self, session_id: str) -> bool:
         try:
-            return bool(self._memory_enabled_provider())
+            return bool(self._memory_enabled_provider()) and (
+                self._session_memory_enabled_provider is None
+                or bool(self._session_memory_enabled_provider(session_id))
+            )
         except Exception:
             # The setting reader itself is fail-closed for an existing DB.
             # Keep this guard for injected providers so a broken policy

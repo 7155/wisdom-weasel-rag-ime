@@ -133,7 +133,7 @@ describe('ToolPicker conversation capability presentation', () => {
     const dialog = screen.getByRole('dialog', { name: '当前对话工具' });
 
     const memoryRow = within(dialog).getByRole('button', { name: /^记忆召回/ }).closest('article')!;
-    expect(memoryRow).toHaveTextContent('控制当前对话的自动个人记忆装配，也允许 Agent 显式调用记忆工具。');
+    expect(memoryRow).toHaveTextContent('控制本对话的自动记忆自举、压缩后召回和记忆工具查询，从下一轮生效。');
     expect(memoryRow).toHaveTextContent('已启用');
     expect(memoryRow).toHaveTextContent('产品内置默认');
 

@@ -989,6 +989,20 @@ class ControlToolGatewayTests(unittest.TestCase):
         restored = self.gateway.execute(self._call("recent", limit=1))["result"]
         self.assertEqual(restored["count"], 1)
 
+    def test_session_memory_switch_blocks_stale_calls_and_restores(self) -> None:
+        session_id = str(self.session["id"])
+        self.store.set_disclosure_preferences(session_id, {"tool:memory": "disabled"})
+        self.assertNotIn("memory", {item["name"] for item in self.gateway.runtime_manifests(self.session)})
+        memory = next(item for item in self.gateway.manifests(session_id=session_id)["items"] if item["id"] == "memory")
+        self.assertEqual(memory["disclosure"]["effective"], "disabled")
+        self.assertEqual(memory["effectiveOperations"], [])
+        with self.assertRaisesRegex(ValueError, "memory tool is disabled"):
+            self.gateway.execute(self._call("recent", query="当前对话已关闭"))
+        self.assertEqual(self.management.memory_requests, [])
+        self.store.set_disclosure_preferences(session_id, {})
+        restored = self.gateway.execute(self._call("recent", limit=1))["result"]
+        self.assertEqual(restored["count"], 1)
+
     def test_overview_tool_describes_the_agent_product_before_input_sources(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
         overview = next(item for item in manifests if item["name"] == "overview")

@@ -105,7 +105,7 @@ truth, Memory requires provenance and evaluation, native adapters require foregr
 evidence, and distribution requires current release gates.
 
 The [2026-09-06 memory continuity result](eval/memory-topic-selfboot/RESULT.md)
-adds Book reuse, automatic topic aggregation and summaries. Pi development
+adds Book reuse, automatic topic aggregation, conversation switches and summaries. Development
 required Session recovery; unattended self-hosting remains unproven.
 
 [Source integration](control-center-web/docs/pawos/INTEGRATION_CLOSEOUT_20260906.md); installation acceptance remains separate.

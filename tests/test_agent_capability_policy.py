@@ -260,7 +260,7 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.assertEqual(memory["disclosure"]["state"], "disclosed")
         self.assertEqual(memory["authorization"]["state"], "denied")
 
-    def test_unrestricted_profiles_disclose_tools_skills_and_extensions(self) -> None:
+    def test_unrestricted_profiles_honor_explicit_session_tool_choices(self) -> None:
         for profile, execution_mode in (
             (FULL_ACCESS_TOOL_PROFILE, "per_action"),
             (DANGEROUS_AUTO_APPROVE_TOOL_PROFILE, "full_trust"),
@@ -299,11 +299,18 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
                     "extension:session-review",
                 ):
                     disclosure = by_id[canonical_id]["disclosure"]
-                    self.assertEqual(disclosure["state"], "disclosed")
+                    is_tool = canonical_id.startswith("tool:")
+                    self.assertEqual(disclosure["state"], "hidden" if is_tool else "disclosed")
                     self.assertEqual(
                         disclosure["reason"],
-                        "unrestricted_session_profile",
+                        "session_preference" if is_tool else "unrestricted_session_profile",
                     )
+                self.policy.update_session(session_id, {"capabilityDisclosurePreferences": {}})
+                restored = self._gateway().manifests(session_id=session_id)["items"]
+                for item in restored:
+                    if item["canonicalId"] in {"tool:memory", "skill:quality-gate", "extension:session-review"}:
+                        self.assertEqual(item["disclosure"]["effective"], "enabled")
+                        self.assertEqual(item["disclosure"]["reason"], "unrestricted_session_profile")
 
     def test_busy_mutation_is_rejected_without_retiring_runtime(self) -> None:
         session = self.sessions.create(title="busy")
@@ -585,12 +592,12 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
                 for item in catalog["items"]
                 if item["canonicalId"] == "tool:overview"
             )
-            self.assertEqual(overview["disclosure"]["effective"], "enabled")
+            self.assertEqual(overview["disclosure"]["effective"], "disabled")
             self.assertEqual(
                 overview["disclosure"]["reason"],
-                "unrestricted_session_profile",
+                "session_preference",
             )
-            self.assertIn(
+            self.assertNotIn(
                 "overview",
                 {
                     str(item["name"])

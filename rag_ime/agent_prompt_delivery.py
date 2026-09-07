@@ -45,11 +45,13 @@ class AgentPromptDeliveryService:
             Callable[[Mapping[str, object]], str] | None
         ) = None,
         memory_enabled_provider: Callable[[], bool] | None = None,
+        session_memory_enabled_provider: Callable[[str], bool] | None = None,
     ) -> None:
         self.sessions = sessions
         self.context_runtime = context_runtime
         self._runtime_provider = runtime_provider
         self.runtime_tool_manifest = runtime_tool_manifest
+        self._session_memory_enabled_provider = session_memory_enabled_provider
         self.room_public_recovery_context = (
             room_public_recovery_context
         )
@@ -272,10 +274,10 @@ class AgentPromptDeliveryService:
             session_id,
             delivery_id=delivery_id,
         )
-        if self._memory_enabled():
+        if self._memory_enabled(session_id):
             return materialized
         # Do not inject a previously materialized memory pack after the
-        # master switch is turned off.  The durable context rows are retained
+        # master or conversation switch is off. The durable rows are retained
         # (and can be reused when re-enabled); only this turn's projection is
         # filtered out.
         items = [
@@ -297,9 +299,12 @@ class AgentPromptDeliveryService:
             "charCount": len(prompt),
         }
 
-    def _memory_enabled(self) -> bool:
+    def _memory_enabled(self, session_id: str) -> bool:
         try:
-            return bool(self._memory_enabled_provider())
+            return bool(self._memory_enabled_provider()) and (
+                self._session_memory_enabled_provider is None
+                or bool(self._session_memory_enabled_provider(session_id))
+            )
         except Exception:
             return False
 

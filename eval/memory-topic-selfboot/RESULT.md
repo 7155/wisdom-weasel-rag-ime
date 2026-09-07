@@ -135,3 +135,27 @@ Replaying the frozen production decisions locally yields 15 valid groups coverin
 regressions cover independent group application, unchanged Atoms, retained
 incompatible Books, model scope fields, and failure receipts. This replay is
 diagnostic evidence; production application still requires the governed Runtime.
+
+The repaired production run applied 15 groups: active topics changed from 86 to
+55, while all 636 Atom IDs, protected fact/source fields and 293 active/approved
+memories remained unchanged. Each target retained the exact union of current
+members from its original Book and merged sources; 31 source Books retained
+their superseded history. Four incompatible groups stayed unchanged with
+member-scope warnings. This is local Runtime evidence from build 1443, not a
+public distribution claim.
+
+## Conversation memory switch — 2026-09-07
+
+The composer Tool picker already offered a Memory switch, but unrestricted
+profiles overrode explicit Session choices and bootstrap only checked the global
+Memory setting. The current-conversation tool preference now takes precedence
+over unrestricted defaults. Memory bootstrap, compaction recall, provider context
+and explicit Tool execution resolve that same preference. Turning it off filters
+an existing memory pack without deleting it; restoring the default can reuse the
+same pack. Global Memory controls, per-Tool permissions and required Pi tools
+remain their own boundaries. The picker describes the exact behavior.
+
+Verification passed 29 focused backend tests and three Tool picker tests,
+including the enabled/disabled/default round trip in a full-trust Session,
+compaction, retained context and rejected stale memory calls. Installed switch
+acceptance requires a fresh foreground toggle after this source update.

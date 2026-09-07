@@ -4023,6 +4023,67 @@ class AgentServiceTests(unittest.TestCase):
                 self.assertEqual(result["followUpKey"], "")
                 self.assertEqual(result["message"], "")
 
+    def test_session_memory_switch_controls_bootstrap_compaction_and_existing_context(self) -> None:
+        session = self.service.sessions.create(
+            title="Session memory switch", mode="coordinator", execution_mode="full_trust",
+            tool_profile_version="control-center-auto-approve-v1", workspace_roots=[str(self.root)],
+        )
+        session_id = str(session["id"])
+        real_build = self.service.memory_bootstrap.build
+        marker = "SESSION_MEMORY_SWITCH_FACT"
+
+        def build_memory(*args, **kwargs):
+            spec = real_build(*args, **kwargs)
+            spec["payload"]["items"] = [{
+                "rank": 1, "sourceType": "memory_atom", "sourceId": "atom:session-switch",
+                "title": "测试记忆", "text": marker, "score": 1.0, "confidence": 1.0,
+                "lanes": ["bm25_raw"], "rawScores": {}, "tags": [],
+                "ownerKind": "user", "ownerId": "default", "evidenceEventIds": [1],
+            }]
+            return spec
+
+        count = 0
+        def accepted(*_args, **_kwargs):
+            nonlocal count
+            count += 1
+            return {"accepted": True, "turnId": f"turn:memory-switch:{count}",
+                    "piEntryId": f"entry:memory-switch:{count}", "response": {"success": True}}
+
+        with patch.object(self.service.runtime, "prompt", side_effect=accepted) as prompt, \
+             patch.object(self.service.memory_bootstrap, "build", side_effect=build_memory) as build:
+            self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "disabled"})
+            disabled = self.service.prompt(session_id, {"message": "首轮关闭"})
+            self.assertEqual(disabled["memoryBootstrap"]["status"], "disabled")
+            self.assertEqual(disabled["contextItemsDelivered"], 0)
+            build.assert_not_called()
+
+            self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
+            enabled = self.service.prompt(session_id, {"message": "开启记忆"})
+            self.assertEqual(enabled["contextItemsDelivered"], 1)
+            item_id = enabled["memoryBootstrap"]["itemId"]
+            self.assertEqual(build.call_count, 1)
+
+            self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "disabled"})
+            refresh = self.service.memory_context_application.refresh({"sessionId": session_id, "trigger": "compaction"})
+            self.assertFalse(refresh["memoryEnabled"])
+            self.assertEqual(self.service.memory_context_application.provider_context(session_id), "")
+            disabled_again = self.service.prompt(session_id, {"message": "已有记忆后再次关闭"})
+            self.assertEqual(disabled_again["contextItemsDelivered"], 0)
+            self.assertEqual(build.call_count, 1)
+            trace = self.service.context_trace(session_id, disabled_again["contextTraceId"])
+            node = next(node for node in trace["nodes"] if node["stage"] == "memory_recall")
+            self.assertEqual(node["metadata"]["recallStatus"], "disabled")
+            self.assertEqual(self.service.context_runtime.active_item(session_id, source_kind="memory_bootstrap")["itemId"], item_id)
+
+            self.service.sessions.set_disclosure_preferences(session_id, {})
+            restored = self.service.prompt(session_id, {"message": "恢复跟随默认"})
+            self.assertEqual(restored["memoryBootstrap"]["itemId"], item_id)
+            self.assertEqual(restored["contextItemsDelivered"], 1)
+            self.assertEqual(build.call_count, 1)
+            contexts = [json.loads(call.args[1][len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]).get("sessionContext", "") for call in prompt.call_args_list]
+            self.assertEqual([marker in context for context in contexts], [False, True, False, True])
+            self.assertTrue(self.service.memory_enabled(), "Session switch must not change the global setting")
+
     def test_new_session_reuses_one_query_aware_bootstrap_until_compaction(self) -> None:
         created = self.service.create_session({"title": "个人上下文"})
         session = created["session"]

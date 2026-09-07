@@ -17,6 +17,7 @@ from pathlib import Path
 from threading import RLock
 
 from .db import sqlite_connection
+from .agent_capability_catalog import capability_disclosure_enabled
 from .agent_configuration import (
     AgentConfigurationStore,
     AgentControlEventHub,
@@ -543,6 +544,7 @@ class AgentService:
                 runtime_provider=lambda: self.runtime,
                 observation_callback=self.observations.enqueue_memory_recall_record,
                 memory_enabled_provider=self.memory_enabled,
+                session_memory_enabled_provider=self._session_memory_disclosed,
             )
         )
         self.memory_evidence_application = (
@@ -568,6 +570,7 @@ class AgentService:
                     self._execution_policy_prompt_for_session
                 ),
                 memory_enabled_provider=self.memory_enabled,
+                session_memory_enabled_provider=self._session_memory_disclosed,
             )
         )
         self.prompt_application = AgentPromptApplicationService(
@@ -1442,6 +1445,13 @@ class AgentService:
         """Resolve the live memory master switch for the next Runtime call."""
 
         return memory_enabled_from_settings(self.db_path)
+
+    def _session_memory_disclosed(self, session_id: str) -> bool:
+        return capability_disclosure_enabled(
+            "tool:memory",
+            session=self.sessions.get(session_id),
+            configuration_store=self.configuration_store,
+        )
 
     def runtime_status(self) -> dict[str, object]:
         payload = self.runtime.runtime_status()

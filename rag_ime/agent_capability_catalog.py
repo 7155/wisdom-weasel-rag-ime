@@ -11,6 +11,25 @@ _DISCLOSURE_VALUES = frozenset({"inherit", "enabled", "disabled"})
 _CAPABILITY_KINDS = frozenset({"tool", "skill", "extension"})
 
 
+def capability_disclosure_enabled(
+    canonical_id: str,
+    *,
+    session: Mapping[str, object],
+    configuration_store: object | None,
+) -> bool:
+    """Resolve the same use preference as the conversation capability card."""
+    global_preferences, _project_id, project_preferences = _configuration_preferences(
+        configuration_store, session=session,
+    )
+    return _capability_disclosure(
+        canonical_id,
+        session=session,
+        global_preferences=global_preferences,
+        project_preferences=project_preferences,
+        session_preferences=_preferences(session.get("capabilityDisclosurePreferences")),
+    )["effective"] == "enabled"
+
+
 def build_capability_catalog(
     *,
     tool_manifests: Sequence[Mapping[str, object]],
@@ -539,8 +558,18 @@ def _capability_disclosure(
         project_preferences=project_preferences,
         session_preferences=session_preferences,
     )
-    if session is None or not unrestricted_workspace_policy_active(session):
+    if (
+        session is None
+        or not unrestricted_workspace_policy_active(session)
+        or (
+            canonical_id.startswith("tool:")
+            and session_preferences.get(canonical_id, "inherit") != "inherit"
+        )
+    ):
         return disclosure
+    # An unrestricted profile supplies the default; an explicit tool choice
+    # in this conversation must still take effect. Permission to use a tool
+    # does not require the user to keep that capability enabled.
     return {
         "preference": "inherit",
         "effective": "enabled",

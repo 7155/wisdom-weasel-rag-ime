@@ -154,14 +154,15 @@ implementation choices or live status.
 ## D-014 — Explicit Agent Permission Profiles Are System-Wide
 
 - **Status:** accepted
-- **Decision:** ordinary Sessions expose exact Read Only (`read_only`), Full
+- **Decision:** Sessions retain Read Only (`read_only`), Full
   Access (`per_action`), Workspace Managed (`workspace_managed`), and Full Auto
   (`full_trust`) profiles. Read Only blocks effects; Workspace Managed needs a
   confirmed project; both full-system modes expose `/` and all available
-  Tools/Skills, with per-action versus automatic effect approval.
+  Tools/Skills by default, with per-action versus automatic effect approval.
+  Conversation Tool switches override defaults next turn, preserving permissions.
 - **Why:** saved permissions must stay visible and exact.
-- **Consequence:** creation, Settings, persistence, and Runtime preserve the
-  selected profile and confirmation. Schemas, applicability, atomicity, actual
+- **Consequence:** creation, Settings, persistence, and Runtime preserve
+  selected profiles and confirmations. Schemas, applicability, atomicity,
   availability, TCC, and Unix permissions remain boundaries.
 
 ## D-015 — Experience Leads Runtime Tradeoffs

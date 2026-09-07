@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import unquote, urlsplit
 
-from .agent_capability_catalog import build_capability_catalog
+from .agent_capability_catalog import build_capability_catalog, capability_disclosure_enabled
 from .agent_governed_memory_tools import (
     AgentRoleBookToolAdapter,
     MemoryGovernanceProposalStore,
@@ -3209,9 +3209,14 @@ class ControlToolGateway:
                 manifests.append(dict(structured_manifest))
         return manifests
 
-    def _memory_enabled(self) -> bool:
+    def _memory_enabled(self, session: Mapping[str, object] | None = None) -> bool:
         try:
-            return bool(self._memory_enabled_provider())
+            return bool(self._memory_enabled_provider()) and (
+                session is None
+                or capability_disclosure_enabled(
+                    "tool:memory", session=session, configuration_store=self.configuration_store,
+                )
+            )
         except Exception:
             return False
 
@@ -3380,7 +3385,7 @@ class ControlToolGateway:
                         spec=spec,
                     )
                 ]
-                if str(spec["id"]) == "memory" and not self._memory_enabled():
+                if str(spec["id"]) == "memory" and not self._memory_enabled(session):
                     # Keep the public capability card available so the UI can
                     # explain that Memory is off, but expose no executable
                     # operation to a model/runtime manifest.
@@ -3431,8 +3436,8 @@ class ControlToolGateway:
         tool = str(request["tool"])
         raw_args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
         tool, args = _normalize_runtime_tool_call(tool, raw_args)
-        if tool == "memory" and not self._memory_enabled():
-            raise ValueError("memory tool is disabled by settings.memory.enabled")
+        if tool == "memory" and not self._memory_enabled(session):
+            raise ValueError("memory tool is disabled for this session or by settings.memory.enabled")
         if tool == "structured_output":
             submit = getattr(self.delegation, "submit_structured_output", None)
             if not callable(submit):
@@ -3495,12 +3500,12 @@ class ControlToolGateway:
         operation: str,
     ) -> dict[str, object]:
         session_id = str(session["id"])
-        if tool == "memory" and not self._memory_enabled():
-            raise ValueError("memory tool is disabled by settings.memory.enabled")
         # Re-read immediately before authorization/approval so a waiting Room
         # Dispatch cannot apply a mutation after its workspace lease becomes
         # read-only.
         session = self.sessions.get(session_id)
+        if tool == "memory" and not self._memory_enabled(session):
+            raise ValueError("memory tool is disabled for this session or by settings.memory.enabled")
         # A live Room dispatch is the runtime confirmation boundary for the
         # Room-only unrestricted overlay. Keep it in-memory for this Tool
         # call as well, so a legacy/old row created before migration 0164 does
@@ -4405,9 +4410,9 @@ class ControlToolGateway:
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
         session_id = str(approval.get("sessionId") or "")
-        if tool == "memory" and not self._memory_enabled():
-            raise ValueError("memory tool is disabled by settings.memory.enabled")
         live_session = self.sessions.get(session_id)
+        if tool == "memory" and not self._memory_enabled(live_session):
+            raise ValueError("memory tool is disabled for this session or by settings.memory.enabled")
         if read_only_policy_active(live_session) and read_only_blocks_effect(
             tool,
             operation,
@@ -4631,8 +4636,8 @@ class ControlToolGateway:
                 risk_level=risk_level, ttl_ms=60_000,
             )
             return {"summary": description, "approvalRequired": True, "approvalId": approval["approvalId"], "approval": approval}
-        if tool == "memory" and not self._memory_enabled():
-            raise ValueError("memory tool is disabled by settings.memory.enabled")
+        if tool == "memory" and not self._memory_enabled(self.sessions.get(session_id)):
+            raise ValueError("memory tool is disabled for this session or by settings.memory.enabled")
         if (tool, operation) == ("workspace_job", "start"):
             return self._prepare_background_job_start(
                 session_id=session_id,
