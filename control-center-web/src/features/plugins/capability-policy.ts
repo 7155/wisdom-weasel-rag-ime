@@ -108,8 +108,14 @@ export function parseCapabilityCatalog(value: unknown): CapabilityCatalog | null
 export function requireCapabilityCatalog(value: unknown): CapabilityCatalog {
   const catalog = parseCapabilityCatalog(value);
   if (!catalog) {
-    const observed = text(record(value).schemaVersion) || '未声明版本';
-    throw new Error(`能力目录版本不匹配：当前前端需要 rag-ime.capability-catalog.v1，后端返回 ${observed}。不会按旧目录猜测披露状态或发送修改。`);
+    const root = record(value);
+    if (root.ok === false) throw new Error('服务未能返回能力目录。请重试。');
+    const observed = text(root.schemaVersion);
+    if (!observed) throw new Error('能力目录缺少版本信息，暂时无法读取。请重试。');
+    if (observed !== 'rag-ime.capability-catalog.v1') {
+      throw new Error(`能力目录版本不兼容：当前界面需要 rag-ime.capability-catalog.v1，服务返回 ${observed}。请刷新 PAW 后重试。`);
+    }
+    throw new Error('能力目录数据不完整或格式异常，暂时无法读取功能状态。请重试。');
   }
   return catalog;
 }

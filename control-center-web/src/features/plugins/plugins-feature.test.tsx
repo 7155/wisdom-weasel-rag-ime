@@ -12,6 +12,7 @@ import { controlRoute, type ControlPathId } from '@/platform/routes';
 import type { ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import { PluginsFeature } from '.';
+import { requireCapabilityCatalog } from './capability-policy';
 
 afterEach(() => {
   cleanup();
@@ -19,6 +20,42 @@ afterEach(() => {
 });
 
 describe('PluginsFeature', () => {
+  it.each([
+    { response: { schemaVersion: 'rag-ime.capability-catalog.v1', ok: true }, message: '能力目录数据不完整或格式异常' },
+    { response: { schemaVersion: 'rag-ime.control-tool-list.v1', ok: true }, message: '能力目录版本不兼容' },
+    { response: { ok: true }, message: '能力目录缺少版本信息' },
+    { response: { ok: false }, message: '服务未能返回能力目录' },
+  ])('identifies the actual catalog failure: $message', ({ response, message }) => {
+    expect(() => requireCapabilityCatalog(response)).toThrow(message);
+  });
+
+  it.each(['invalid data', 'network'])('restores the same search after retrying a catalog %s failure', async (failure) => {
+    const user = userEvent.setup();
+    let reads = 0;
+    const items = [tool({ id: 'memory', displayName: '记忆与工具书', description: '读取记忆' })];
+    const valid = capabilityCatalog(items);
+    const transport = renderPlugins({ 'agent.tools.list': () => {
+      reads += 1;
+      if (reads === 2) {
+        if (failure === 'network') throw new Error('连接已断开，请重试。');
+        return { ...valid, items: [{ ...items[0], description: undefined }] };
+      }
+      return valid;
+    } }, '/plugins?view=capabilities', true);
+    const search = await screen.findByRole('textbox', { name: '搜索' });
+    await user.type(search, '记忆');
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(failure === 'network' ? '连接已断开' : '能力目录数据不完整或格式异常');
+    expect(alert).not.toHaveTextContent('版本不匹配');
+    expect(screen.queryByRole('button', { name: /记忆与工具书/ })).not.toBeInTheDocument();
+    await user.click(within(alert).getByRole('button', { name: '重试' }));
+    expect(await screen.findByRole('button', { name: /记忆与工具书/ })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: '搜索' })).toHaveValue('记忆');
+    expect(reads).toBe(3);
+    expect(transport.requests.every(({ request }) => controlRoute(request.pathId).method === 'GET')).toBe(true);
+  });
+
   it('explains the actual Room operations and retains canonical names in technical details', async () => {
     const user = userEvent.setup();
     const operations = ['list', 'add_participant', 'remove_participant', 'delegate', 'delegate_batch', 'retry', 'accept', 'return', 'collect', 'wait', 'post', 'peer_list', 'peer_send', 'peer_ask', 'peer_reply'];
@@ -562,7 +599,7 @@ describe('PluginsFeature', () => {
       },
     });
 
-    expect(await screen.findByText(/后端返回 rag-ime\.control-tool-list\.v1/)).toBeVisible();
+    expect(await screen.findByText(/服务返回 rag-ime\.control-tool-list\.v1/)).toBeVisible();
     expect(screen.queryByRole('button', { name: /旧工具/ })).not.toBeInTheDocument();
     const before = transport.requests.filter((call) => call.request.pathId === 'agent.tools.list').length;
     await user.click(screen.getByRole('button', { name: '重试' }));
