@@ -190,6 +190,7 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
     ? persistedReturnWindowId
     : null;
   const initialDockAppIds = snapshot?.dockAppIds ? [...snapshot.dockAppIds] : [...pawDockAppIds];
+  let fittedViewport = pawWindowArea();
   const store = createStore<PawDesktopState>((set, get) => ({
     windows: initialWindows,
     stack: initialStack,
@@ -501,14 +502,25 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
     },
     fitWindowsToViewport() {
       const viewport = pawWindowArea();
+      const previousViewport = fittedViewport;
+      fittedViewport = viewport;
+      const fit = (bounds: PawWindowBounds) => {
+        // A smaller desktop must not push previously visible content outside.
+        // Keep manual partial placement recoverable instead of undoing the drag.
+        const wasInside = bounds.x >= previousViewport.x
+          && bounds.x + bounds.width <= previousViewport.x + previousViewport.width;
+        return viewport.width < previousViewport.width && wasInside
+          ? fitPawWindowBounds(bounds, viewport)
+          : fitReachablePawWindowBounds(bounds, viewport);
+      };
       set((state) => {
         let changed = false;
         const windows = Object.fromEntries(Object.entries(state.windows).map(([windowId, node]) => {
           const bounds = node.placement
             ? placementBounds(node.placement)
-            : fitReachablePawWindowBounds(node.bounds, viewport);
+            : fit(node.bounds);
           const restoreBounds = node.restoreBounds
-            ? fitReachablePawWindowBounds(node.restoreBounds, viewport)
+            ? fit(node.restoreBounds)
             : undefined;
           if (sameBounds(bounds, node.bounds)
             && ((!restoreBounds && !node.restoreBounds) || (restoreBounds && node.restoreBounds && sameBounds(restoreBounds, node.restoreBounds)))) {

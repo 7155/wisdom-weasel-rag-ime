@@ -4,6 +4,56 @@ import { pawExtensionApps } from '../extensions/registry';
 import { createPawDesktopStore, pawFocusWindowLayerSize, pawWindowArea, pawWindowLayerSize } from './desktop-store';
 
 describe('PAWOS desktop store', () => {
+  it('keeps previously visible windows fully inside a narrower viewport', () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    try {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+      const store = createPawDesktopStore('app-center');
+      store.getState().commitBounds('app-center', { x: 109, y: 80, width: 775, height: 500 });
+      store.getState().openApp('files');
+      store.getState().commitBounds('files', { x: 31, y: 70, width: 930, height: 500 });
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 840 });
+      store.getState().fitWindowsToViewport();
+      expect(store.getState().windows['app-center']!.bounds).toEqual({ x: 57, y: 80, width: 775, height: 500 });
+      expect(store.getState().windows.files!.bounds).toEqual({ x: 8, y: 70, width: 824, height: 500 });
+      const state = store.getState();
+      store.getState().fitWindowsToViewport();
+      expect(store.getState()).toBe(state);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+    }
+  });
+
+  it('preserves intentionally partial windows while fitting maximized restore bounds on shrink', () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    try {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+      const store = createPawDesktopStore('app-center');
+      store.getState().commitBounds('app-center', { x: 109, y: 80, width: 775, height: 500 });
+      store.getState().toggleMaximize('app-center');
+      store.getState().openApp('files');
+      store.getState().commitBounds('files', { x: -240, y: 70, width: 600, height: 500 });
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 840 });
+      store.getState().fitWindowsToViewport();
+      expect(store.getState().windows.files!.bounds.x).toBe(-240);
+      expect(store.getState().windows['app-center']!.placement).toBe('maximized');
+      store.getState().toggleMaximize('app-center');
+      expect(store.getState().windows['app-center']!.bounds).toEqual({ x: 57, y: 80, width: 775, height: 500 });
+      // Fitting an unchanged viewport must not undo a deliberate subsequent drag.
+      store.getState().commitBounds('app-center', { x: 700, y: 80, width: 775, height: 500 });
+      store.getState().fitWindowsToViewport();
+      expect(store.getState().windows['app-center']!.bounds.x).toBe(700);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+    }
+  });
+
   it('pins and unpins Dock Apps without changing their window lifecycle', () => {
     const store = createPawDesktopStore('agent');
 
