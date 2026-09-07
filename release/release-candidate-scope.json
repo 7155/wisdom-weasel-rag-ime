@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-07T03:43:09.952083+00:00",
+  "generatedAt": "2026-09-07T04:16:07.785188+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -23,7 +23,7 @@
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 411
+      "pathCount": 412
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -63,15 +63,15 @@
     }
   },
   "summary": {
-    "pathCount": 938,
+    "pathCount": 939,
     "dispositionCounts": {
-      "keep_release": 937,
+      "keep_release": 938,
       "delete_old_implementation": 1
     },
     "groupCounts": {
       "project_harness": 7,
       "requirement_evidence": 51,
-      "control_center_release_ui": 411,
+      "control_center_release_ui": 412,
       "memory_context_continuity": 30,
       "execution_reliability": 30,
       "evaluation_audit": 134,
@@ -2616,6 +2616,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawStarfield.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain immersive starfield keyboard containment, focus restoration, and Session/Room compatibility regressions."
     },
     {
       "path": "control-center-web/src/paw-os/apps/PawStarfield.tsx",
