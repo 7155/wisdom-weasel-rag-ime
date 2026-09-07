@@ -1454,7 +1454,7 @@ describe('Agent experience', () => {
     const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
     const capabilitySection = capabilityToggle.closest('section')!;
     await user.click(capabilityToggle);
-    expect(within(capabilitySection).getByRole('alert')).toHaveTextContent('后端返回 rag-ime.control-tool-list.v1');
+    expect(within(capabilitySection).getByRole('alert')).toHaveTextContent('服务返回 rag-ime.control-tool-list.v1');
     expect(within(capabilitySection).queryByText('旧输入工具')).not.toBeInTheDocument();
 
     const before = transport.requests.filter((call) => call.pathId === 'agent.tools.list').length;
@@ -1843,7 +1843,7 @@ describe('Agent experience', () => {
     expect(within(detail).getByText(/返回给\s*研究员/u)).toBeVisible();
     expect(within(workspace).getByRole('link', { name: '打开子 Agent 设置' }))
       .toHaveAttribute('href', '#/configuration?section=subagents');
-    expect(within(workspace).getByText('启动与模板配置')).toBeVisible();
+    expect(within(workspace).getByText('配置新的子 Agent')).toBeVisible();
   });
 
   it('keeps every tool step from the current turn available in the status panel', () => {
@@ -4348,10 +4348,10 @@ describe('Agent experience', () => {
     await user.click(trigger);
     expect(screen.getByRole('button', { name: /^控制中心概览/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^受控命令/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^记忆召回/ })).toHaveTextContent(
-      '控制当前对话的自动个人记忆装配，也允许 Agent 显式调用记忆工具。',
+    expect(screen.getByRole('button', { name: /^记忆召回/ }).closest('article')).toHaveTextContent(
+      '把相关记忆加入对话，并允许 Agent 查询记忆。关闭后从下一轮停止使用；不会删除已保存的记忆。',
     );
-    expect(screen.getByRole('button', { name: /^知识库 \/ Agent RAG/ })).toHaveTextContent(
+    expect(screen.getByRole('button', { name: /^知识库 \/ Agent RAG/ }).closest('article')).toHaveTextContent(
       '启用后，Agent 可按当前问题反复检索已允许的知识库。',
     );
     await user.click(screen.getByRole('combobox', { name: '知识库 / Agent RAG的当前对话使用' }));

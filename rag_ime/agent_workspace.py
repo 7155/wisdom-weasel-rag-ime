@@ -4444,9 +4444,7 @@ class WorkspaceHarness:
         if process.returncode is not None:
             return True
         try:
-            return os.waitid(
-                os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT,
-            ) is not None
+            return _child_exit_observed_without_reaping(process.pid)
         except ChildProcessError:
             return True
 
@@ -4459,7 +4457,7 @@ class WorkspaceHarness:
             if process.returncode is not None:
                 return
             try:
-                os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                _child_exit_observed_without_reaping(process.pid)
             except ChildProcessError:
                 return
             try:
@@ -4481,6 +4479,39 @@ class WorkspaceHarness:
             process.wait(timeout=0.5)
         except subprocess.TimeoutExpired:
             pass
+
+
+def _child_exit_observed_without_reaping(pid: int) -> bool:
+    waitid = getattr(os, "waitid", None)
+    if callable(waitid):
+        return waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    if sys.platform != "darwin":
+        raise RuntimeError("non-reaping child observation is unavailable")
+
+    # Python 3.12 on macOS omits os.waitid. Use the same Darwin system call,
+    # preserving ECHILD and WNOWAIT instead of reaping the leader with waitpid.
+    # Layout and flags follow the macOS SDK's sys/signal.h and sys/wait.h.
+    import ctypes
+    import errno
+
+    class SigInfo(ctypes.Structure):
+        _fields_ = [
+            ("si_signo", ctypes.c_int), ("si_errno", ctypes.c_int),
+            ("si_code", ctypes.c_int), ("si_pid", ctypes.c_int),
+            ("si_uid", ctypes.c_uint), ("si_status", ctypes.c_int),
+            ("si_addr", ctypes.c_void_p), ("si_value", ctypes.c_void_p),
+            ("si_band", ctypes.c_long), ("padding", ctypes.c_ulong * 7),
+        ]
+
+    native_waitid = ctypes.CDLL(None, use_errno=True).waitid
+    native_waitid.argtypes = [ctypes.c_int, ctypes.c_uint, ctypes.POINTER(SigInfo), ctypes.c_int]
+    native_waitid.restype = ctypes.c_int
+    info = SigInfo()
+    while native_waitid(1, pid, ctypes.byref(info), 0x04 | 0x01 | 0x20) != 0:
+        error = ctypes.get_errno()
+        if error != errno.EINTR:
+            raise OSError(error, os.strerror(error))
+    return info.si_pid != 0
 
 
 def _lsp_references_evidence_digest(value: Mapping[str, object]) -> str:

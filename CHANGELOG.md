@@ -21,6 +21,8 @@ notarized macOS installer.
   the existing Pi Provider/OAuth boundary.
 - Durable App request history, cancellation and reconnect without replaying an
   uncertain invocation; source-bound exports and document citations.
+- Restored background cancellation and process-group cleanup on macOS Python
+  3.12 with non-reaping child observation; retained protection against PID reuse.
 - Gateway updates stop only their own stale listener, preserving isolated
   source candidates on other workspaces and ports.
 - Rewritten project README and separate local-operation documentation; corrected

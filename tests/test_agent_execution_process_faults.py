@@ -105,6 +105,30 @@ class WorkspaceProcessFaultTests(unittest.TestCase):
             self.harness._terminate_group(process)
         killpg.assert_not_called()
 
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin waitid compatibility")
+    def test_native_observation_without_python_waitid_keeps_child_waitable(self) -> None:
+        from rag_ime.agent_workspace import _child_exit_observed_without_reaping
+
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"],
+                                   start_new_session=True)
+        try:
+            with patch("rag_ime.agent_workspace.os.waitid", None, create=True):
+                self.assertFalse(_child_exit_observed_without_reaping(process.pid))
+                os.killpg(process.pid, signal.SIGTERM)
+                deadline = time.monotonic() + 3
+                while not _child_exit_observed_without_reaping(process.pid):
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.01)
+                self.assertIsNone(process.returncode)
+                self.assertTrue(_child_exit_observed_without_reaping(process.pid))
+                self.assertEqual(process.wait(timeout=2), -signal.SIGTERM)
+                with self.assertRaises(ChildProcessError):
+                    _child_exit_observed_without_reaping(process.pid)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=2)
+
     def test_timeout_reaps_descendant_even_when_group_leader_exits_on_term(self) -> None:
         prepared = self._prepared()
         self.assertTrue(prepared.unrestricted)
