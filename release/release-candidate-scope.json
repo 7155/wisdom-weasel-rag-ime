@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-07T04:16:07.785188+00:00",
+  "generatedAt": "2026-09-07T06:14:07.445121+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -23,7 +23,7 @@
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 412
+      "pathCount": 413
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -63,15 +63,15 @@
     }
   },
   "summary": {
-    "pathCount": 939,
+    "pathCount": 940,
     "dispositionCounts": {
-      "keep_release": 938,
+      "keep_release": 939,
       "delete_old_implementation": 1
     },
     "groupCounts": {
       "project_harness": 7,
       "requirement_evidence": 51,
-      "control_center_release_ui": 412,
+      "control_center_release_ui": 413,
       "memory_context_continuity": 30,
       "execution_reliability": 30,
       "evaluation_audit": 134,
@@ -1299,6 +1299,13 @@
       "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/configuration/scenario-skill-routing.test.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Verify searchable scene skill selection, preserved canonical saves, and on-demand original instruction reads.",
+      "status": "modified",
       "disposition": "keep_release"
     },
     {
