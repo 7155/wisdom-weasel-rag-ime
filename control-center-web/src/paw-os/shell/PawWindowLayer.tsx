@@ -938,7 +938,13 @@ export function openDesktopRoute(api: ReturnType<typeof usePawDesktopApi>, route
       return;
     }
   }
-  api.getState().openApp(app.id, { initialRoute: normalized, title: app.label });
+  const windowId = api.getState().openApp(app.id, { initialRoute: normalized, title: app.label });
+  if (windowId && app.id !== 'agent') {
+    // The hash is the reload/deep-link entry point. Keep it aligned with
+    // explicit App page navigation without opening another history entry or
+    // dispatching hashchange back through the desktop window router.
+    window.history.replaceState(window.history.state, '', `${window.location.search}#${normalized}`);
+  }
 }
 
 export function PawWindowFrame({ active, appId, bounds, children, collaborationRole, deferPointerInteractionUntilFocused = false, flowState, focusFrame, focusLocked = false, frameMode = 'window', onBoundsCommit, onClose, onDetach, onFocus, onMinimize, onOpenFromOverview, onSnap, onToggleMaximize, overview = false, overviewFrame, placement, subtitle, targetKind, title, windowChrome, windowId, zIndex }: {

@@ -24,6 +24,8 @@ vi.mock('../apps/PawRoomFocusParticipants', () => ({
   >{node.title}</button>)}</nav>,
 }));
 
+const initialBrowserUrl = window.location.href;
+
 const appProcessRenders = vi.hoisted(() => new Map<string, number>());
 vi.mock('../apps/PawApps', () => ({
   PawAppProcess: ({ appId }: { appId: string }) => {
@@ -35,10 +37,26 @@ vi.mock('../apps/PawApps', () => ({
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  window.history.replaceState(null, '', initialBrowserUrl);
   appProcessRenders.clear();
 });
 
 describe('PAWOS compositor window frame', () => {
+  it('keeps App Center page navigation and refresh aligned without adding history entries', () => {
+    window.history.replaceState(null, '', '?frontend=paw-os#/plugins?view=capabilities');
+    const historyLength = window.history.length;
+    const store = createPawDesktopStore('app-center', '/plugins?view=capabilities');
+
+    openDesktopRoute(store, '/plugins?view=scenes');
+
+    expect(store.getState().windows['app-center']?.initialRoute).toBe('/plugins?view=scenes');
+    expect(window.location.hash).toBe('#/plugins?view=scenes');
+    expect(window.location.search).toBe('?frontend=paw-os');
+    expect(window.history.length).toBe(historyLength);
+    const restored = createPawDesktopStore('app-center', window.location.hash.slice(1), store.getState());
+    expect(restored.getState().windows['app-center']?.initialRoute).toBe('/plugins?view=scenes');
+  });
+
   it('does not bind Room flow to an unrelated Agent when the exact Room main is absent', () => {
     const projection = createRoomProjection('room-a');
     const windows = {
@@ -53,8 +71,10 @@ describe('PAWOS compositor window frame', () => {
     const extension = pawExtensionApps[0]!;
     const store = createPawDesktopStore();
 
+    const originalUrl = window.location.href;
     openDesktopRoute(store, extension.route);
     expect(store.getState().windows[extension.id]).toBeUndefined();
+    expect(window.location.href).toBe(originalUrl);
 
     store.getState().setExtensionAppGate('ready', new Set([extension.id]));
     openDesktopRoute(store, extension.route);
