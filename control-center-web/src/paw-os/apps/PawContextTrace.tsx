@@ -431,6 +431,7 @@ export function PawContextTrace({
           <SessionEventTrace
             assemblyAvailable={Boolean(context)}
             counts={traceCounts}
+            context={context?.turnId === selectedTurnId ? context : undefined}
             debugTurn={visibleTurns.find((turn) => turn.turnId === selectedTurnId)}
             filter={filter}
             onFilterChange={setFilter}
@@ -821,6 +822,7 @@ function summarizeCache(context: DebugContextRecord | undefined): { read: string
 
 function SessionEventTrace({
   assemblyAvailable,
+  context,
   counts,
   debugTurn,
   filter,
@@ -831,6 +833,7 @@ function SessionEventTrace({
   turns,
 }: {
   assemblyAvailable: boolean;
+  context?: DebugContextRecord;
   counts: Record<TraceFilter, number>;
   debugTurn?: DebugTurnSummary;
   filter: TraceFilter;
@@ -868,6 +871,7 @@ function SessionEventTrace({
         ))}
       </nav>
       <div className="paw-agent-trace-v1__turns">
+        {context ? <TurnContextEvidence context={context} key={`${context.sessionId}:${context.turnId}`} /> : null}
         {filteredTurns.map((turn) => (
           <article className="paw-agent-trace-v1__turn" data-status={turn.status} key={turn.id}>
             <header>
@@ -905,6 +909,70 @@ function SessionEventTrace({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** The event projection has no model input. Keep the retained debug capture
+ * alongside it, with a separate selector for each actual model call. */
+function TurnContextEvidence({ context }: { context: DebugContextRecord }) {
+  const [selectedIndex, setSelectedIndex] = useState(context.modelCalls[0]?.index);
+  const call = context.modelCalls.find((item) => item.index === selectedIndex) ?? context.modelCalls[0];
+  const provider = call?.providerContext;
+  const exactSystem = typeof provider?.systemPrompt === 'string';
+  const exactTools = Array.isArray(provider?.tools);
+  const system = exactSystem ? provider.systemPrompt as string : context.systemPrompt;
+  const messages = Array.isArray(provider?.messages) ? provider.messages : call?.contextMessages;
+  const tools = exactTools ? provider.tools : context.toolSchemas;
+  return (
+    <section aria-label="本轮完整内容" className="an-turn-context" role="region">
+      <Disclosure className="an-turn-context__disclosure" defaultOpen summary={<>
+        <h2>本轮完整内容</h2><span>{context.modelCalls.length} 次模型调用</span><span aria-hidden="true" className="an-disclosure-caret">›</span>
+      </>}>
+      <header className="an-turn-context__header">
+        <p>系统提示词、上下文、工具与模型请求原文</p>
+        {context.modelCalls.length ? (
+          <label>模型调用
+            <select aria-label="模型调用" onChange={(event) => setSelectedIndex(Number(event.target.value))} value={call?.index}>
+              {context.modelCalls.map((item, ordinal) => <option key={item.index} value={item.index}>第 {ordinal + 1} / {context.modelCalls.length} 次 · {formatTime(item.capturedAtMs)}</option>)}
+            </select>
+          </label>
+        ) : null}
+      </header>
+      {!call ? <p className="agent-trace-evidence-note">本轮未捕获逐次模型调用；以下为整轮保留记录。</p>
+        : !exactSystem || !exactTools ? <p className="agent-trace-evidence-note">历史快照：缺失的系统提示词或工具定义使用整轮保留记录，不能证明本次请求的精确内容。</p> : null}
+      <div key={call?.index ?? 'turn'}>
+        <TurnEvidenceField label="系统提示词" value={system || (exactSystem ? '本次调用的系统提示词为空。' : '未捕获系统提示词。')} kind="text" defaultOpen />
+        <TurnEvidenceField label="本轮输入原文" value={context.prompt || '未捕获本轮输入。'} kind="text" />
+        <TurnEvidenceField label="完整上下文消息" value={messages ?? '未捕获本次调用的上下文消息。'} />
+        <TurnEvidenceField label="工具定义" value={tools} />
+        {call ? <>
+          <TurnEvidenceField label="模型服务请求与回执" value={call.providerExchanges.length ? call.providerExchanges : '未捕获模型服务请求与回执。'} />
+          <TurnEvidenceField label="模型回复" value={call.assistantMessage ?? '未捕获本次模型回复。'} />
+          <TurnEvidenceField label="上下文增量" value={call.contextDelta} />
+          <TurnEvidenceField label="本次工具执行" value={context.toolExecutions.filter((tool) => tool.modelCallIndex === call.index)} />
+        </> : null}
+        <TurnEvidenceField label="整轮完整捕获记录" value={context.raw} />
+      </div>
+      </Disclosure>
+    </section>
+  );
+}
+
+function TurnEvidenceField({ label, value, kind = 'json', defaultOpen = false }: {
+  label: string;
+  value: unknown;
+  kind?: 'text' | 'json';
+  defaultOpen?: boolean;
+}) {
+  // Reuse the event evidence policy for credential fields without truncating
+  // prompt text, context bodies or tool results.
+  const content = formatEvidenceValue(kind === 'text' ? value : safeTraceEvidence(value));
+  return (
+    <Disclosure className="an-turn-context__field" contentClassName="an-turn-context__body" defaultOpen={defaultOpen} summary={<>
+      <strong>{label}</strong><span>{formatNumber(content.length)} 字符</span><span aria-hidden="true" className="an-disclosure-caret">›</span>
+    </>}>
+      <AssemblyEvidence evidence={{ label, value: content, kind }} />
+    </Disclosure>
   );
 }
 

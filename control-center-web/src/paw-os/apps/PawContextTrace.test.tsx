@@ -22,6 +22,94 @@ afterEach(() => {
 });
 
 describe('PawContextTrace evidence access', () => {
+  it('shows complete per-call input in the Turn event view and copies the full system prompt', async () => {
+    const user = userEvent.setup();
+    const response = debugContextResponse();
+    const first = response.context.modelCalls[0];
+    const longSystem = '第一调用系统提示词\n' + '完整内容'.repeat(3000) + '\n原文末尾';
+    response.context.modelCalls = [
+      { ...first, index: 1, providerContext: { systemPrompt: longSystem, messages: [{ role: 'user', content: '第一调用消息' }], tools: [{ name: 'first_tool' }] } },
+      { ...first, index: 2, providerContext: { systemPrompt: '第二调用系统提示词', messages: [{ role: 'user', content: '第二调用消息' }], tools: [] }, providerExchanges: [{ index: 0, capturedAtMs: 180, status: 200, headers: {}, payload: { input: '第二次请求原文' } }] },
+    ];
+    const transport = new MockControlTransport({ routes: {
+      'agent.session.debugContext.get': response,
+      'agent.session.contextTraces.list': { items: [] },
+    } });
+    render(<ControlTransportProvider transport={transport}><PawContextTrace active sessionId="session-a" /></ControlTransportProvider>);
+    const full = await screen.findByRole('region', { name: '本轮完整内容' });
+    expect(screen.getByRole('tab', { name: '事件流' })).toHaveAttribute('aria-selected', 'true');
+    const system = within(full).getByRole('region', { name: '系统提示词，可滚动原文' });
+    expect(system.textContent).toBe(longSystem);
+    await user.click(within(full).getByRole('button', { name: '复制系统提示词' }));
+    await expect(navigator.clipboard.readText()).resolves.toBe(longSystem);
+    await user.selectOptions(within(full).getByRole('combobox', { name: '模型调用' }), '2');
+    expect(within(full).getByRole('region', { name: '系统提示词，可滚动原文' }).textContent).toBe('第二调用系统提示词');
+    expect(within(full).queryByText('真实系统提示')).not.toBeInTheDocument();
+    const messages = within(full).getByText('完整上下文消息', { selector: 'strong' }).closest('details')!;
+    await user.click(messages.querySelector('summary')!);
+    expect(within(messages).getByRole('region', { name: '完整上下文消息，可滚动原文' })).toHaveTextContent('第二调用消息');
+    const request = within(full).getByText('模型服务请求与回执', { selector: 'strong' }).closest('details')!;
+    await user.click(request.querySelector('summary')!);
+    expect(within(request).getByRole('region', { name: '模型服务请求与回执，可滚动原文' })).toHaveTextContent('第二次请求原文');
+  });
+
+  it('preserves explicitly empty per-call input and redacts credential fields in the full capture', async () => {
+    const user = userEvent.setup();
+    const response = debugContextResponse();
+    response.context.modelCalls[0].providerContext = { systemPrompt: '', messages: [], tools: [] };
+    const transport = new MockControlTransport({ routes: {
+      'agent.session.debugContext.get': response,
+      'agent.session.contextTraces.list': { items: [] },
+    } });
+    render(<ControlTransportProvider transport={transport}><PawContextTrace active sessionId="session-a" /></ControlTransportProvider>);
+    const full = await screen.findByRole('region', { name: '本轮完整内容' });
+    expect(within(full).getByRole('region', { name: '系统提示词，可滚动原文' })).toHaveTextContent('本次调用的系统提示词为空。');
+    expect(within(full).queryByText('真实系统提示')).not.toBeInTheDocument();
+    const raw = within(full).getByText('整轮完整捕获记录', { selector: 'strong' }).closest('details')!;
+    await user.click(raw.querySelector('summary')!);
+    const evidence = within(raw).getByRole('region', { name: '整轮完整捕获记录，可滚动原文' });
+    expect(evidence).toHaveTextContent('[已隐藏敏感字段]');
+    expect(evidence).not.toHaveTextContent('Bearer hidden');
+    expect(evidence).toHaveTextContent('tool-sensitive');
+  });
+
+  it('collapses and reopens the complete Turn panel and its individual prompt section', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'agent.session.debugContext.get': debugContextResponse(),
+      'agent.session.contextTraces.list': { items: [] },
+    } });
+    render(<ControlTransportProvider transport={transport}><PawContextTrace active sessionId="session-a" /></ControlTransportProvider>);
+    const full = await screen.findByRole('region', { name: '本轮完整内容' });
+    const panelSummary = within(full).getByRole('heading', { name: '本轮完整内容' }).closest('summary')!;
+    const promptSummary = within(full).getByText('系统提示词', { selector: 'summary strong' }).closest('summary')!;
+    await user.click(promptSummary);
+    expect(promptSummary).toHaveAttribute('aria-expanded', 'false');
+    expect(within(full).queryByRole('region', { name: '系统提示词，可滚动原文' })).not.toBeInTheDocument();
+    await user.click(promptSummary);
+    expect(within(full).getByRole('region', { name: '系统提示词，可滚动原文' })).toBeInTheDocument();
+    await user.click(panelSummary);
+    expect(panelSummary).toHaveAttribute('aria-expanded', 'false');
+    expect(within(full).queryByRole('region', { name: '系统提示词，可滚动原文' })).not.toBeInTheDocument();
+    await user.click(panelSummary);
+    expect(panelSummary).toHaveAttribute('aria-expanded', 'true');
+    expect(within(full).getByRole('region', { name: '系统提示词，可滚动原文' })).toBeInTheDocument();
+  });
+
+  it('labels turn-level historical fallback and keeps absent model calls truthful', async () => {
+    const response = debugContextResponse();
+    response.context.modelCalls = [];
+    const transport = new MockControlTransport({ routes: {
+      'agent.session.debugContext.get': response,
+      'agent.session.contextTraces.list': { items: [] },
+    } });
+    render(<ControlTransportProvider transport={transport}><PawContextTrace active sessionId="session-a" /></ControlTransportProvider>);
+    const full = await screen.findByRole('region', { name: '本轮完整内容' });
+    expect(within(full).getByText('本轮未捕获逐次模型调用；以下为整轮保留记录。')).toBeInTheDocument();
+    expect(within(full).getByRole('region', { name: '系统提示词，可滚动原文' })).toHaveTextContent('真实系统提示');
+    expect(within(full).queryByRole('combobox', { name: '模型调用' })).not.toBeInTheDocument();
+  });
+
   it('places unsequenced prompts between event receipts without mixing timestamps and sequence IDs', () => {
     const message = (id: string, role: string, createdAtMs: number, timelineSequence?: number) => ({
       id, role, createdAtMs, timelineSequence, status: 'completed', blocks: [], attachments: [],
@@ -910,7 +998,7 @@ function debugContextResponse() {
         updatedAtMs: 190,
         completedAtMs: 190,
         contextMessages: [{ role: 'user', content: '检查真实上下文' }],
-        providerContext: { messages: [{ role: 'user', content: '检查真实上下文' }] },
+        providerContext: { messages: [{ role: 'user', content: '检查真实上下文' }] } as Record<string, unknown>,
         contextDelta: { commonPrefixMessages: 0, removedMessageCount: 0, addedMessageCount: 1, addedMessages: [] },
         providerExchanges: [{ index: 0, capturedAtMs: 115, status: 200, headers: {}, payload: {} }],
         assistantMessage: { role: 'assistant', content: '完成' },
