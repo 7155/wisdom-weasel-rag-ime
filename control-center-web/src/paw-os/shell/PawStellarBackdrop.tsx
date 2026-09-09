@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useMotionValueEvent, useSpring } from 'motion/react';
 import nebula from '../assets/stellar/nebula.png';
-import ringedPlanet from '../assets/stellar/ringed-planet.png';
+import { PawStopMotionPlanet } from './PawStopMotionPlanet';
+import { createStellarStopMotion } from './stellar-stop-motion';
 import { usePawWorkDirectory } from './PawWorkDirectory';
 import { projectStellarAgents, type StellarAgentProjection } from './stellar-agent-projection';
 import { StellarAgentField } from './StellarAgentField';
@@ -41,6 +42,8 @@ export function PawStellarBackdrop({ agents }: { agents?: StellarAgentProjection
     if (!scene || !desktop || !root) return;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
     const pointer = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const sky = scene.querySelector<HTMLImageElement>('.paw-stellar-scene__nebula');
+    const stopMotion = sky ? createStellarStopMotion(sky) : undefined;
     let enabled = false;
     const reconcile = () => {
       enabled = root.dataset.pawVisual === 'stellar'
@@ -52,6 +55,7 @@ export function PawStellarBackdrop({ agents }: { agents?: StellarAgentProjection
         && !desktop.hasAttribute('data-collaboration-focus')
         && !desktop.hasAttribute('data-overview');
       scene.dataset.stellarPaused = String(!enabled);
+      stopMotion?.setEnabled(enabled);
       if (!enabled) { x.jump(0); y.jump(0); }
     };
     const move = (event: PointerEvent) => {
@@ -73,6 +77,7 @@ export function PawStellarBackdrop({ agents }: { agents?: StellarAgentProjection
     desktop.addEventListener('pointerleave', rest);
     reconcile();
     return () => {
+      stopMotion?.dispose();
       observer.disconnect();
       reduced.removeEventListener?.('change', reconcile);
       pointer.removeEventListener?.('change', reconcile);
@@ -90,7 +95,7 @@ export function PawStellarBackdrop({ agents }: { agents?: StellarAgentProjection
       </div>
       <div className="paw-stellar-scene__daylight" />
       <div className="paw-stellar-scene__planet-plane" ref={planetRef}>
-        <img alt="" className="paw-stellar-scene__planet" decoding="async" draggable={false} src={ringedPlanet} />
+        <PawStopMotionPlanet />
         {agents ? <StellarAgentField projection={agents} /> : null}
       </div>
       <div className="paw-stellar-scene__near" ref={nearRef}>
