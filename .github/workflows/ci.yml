@@ -31,6 +31,8 @@ jobs:
         run: python -m compileall -q rag_ime scripts tests
       - name: Check package boundaries
         run: python scripts/check_import_boundaries.py
+      - name: Check Agent Lab and data owner boundaries
+        run: python scripts/check_owner_boundaries.py
       - name: Check route ownership
         run: python scripts/check_route_ownership.py
       - name: Lint correctness rules
@@ -61,6 +63,29 @@ jobs:
         run: |
           find scripts -type f -name '*.sh' -print0 \
             | xargs -0 -n1 bash -n
+
+  web-architecture:
+    name: Web architecture and Lab host contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install locked Web dependencies
+        run: |
+          corepack enable && corepack prepare pnpm@11.9.0 --activate
+          pnpm --dir control-center-web install --frozen-lockfile
+      - name: Type-check Web contracts
+        run: pnpm --dir control-center-web typecheck
+      - name: Check host registration and existing Lab delivery
+        run: >-
+          pnpm --dir control-center-web exec vitest run
+          src/paw-os/extensions/host-registry.test.ts
+          src/paw-os/extensions/registry-hosts.test.ts
+          src/features/eval-lab/projects/LabAppDelivery.test.tsx
+          --maxWorkers=1 --testTimeout=60000
 
   macos:
     name: Native control and Squirrel release

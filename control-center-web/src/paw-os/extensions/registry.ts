@@ -1,9 +1,15 @@
+import { createExtensionHostRegistry } from './host-registry';
 import type {
   PawExtensionAppId,
   PawExtensionAppManifest,
   PawExtensionAppModule,
 } from './types';
 export type { PawExtensionAppId } from './types';
+
+const extensionHosts = createExtensionHostRegistry<PawExtensionAppModule>();
+
+/** Product bootstrap binds view implementations; inventory still owns activation. */
+export const registerPawExtensionHost = extensionHosts.register;
 
 const manifestModules = import.meta.glob('../../../extension-apps/*/pawos-app.json', {
   eager: true,
@@ -68,7 +74,7 @@ export function registerLabExtensionApps(payload: unknown): Set<PawExtensionAppI
         || !isRecord(manifest.icon) || !['analytics', 'assistant', 'document', 'commerce'].includes(String(manifest.icon.symbol))
         || typeof manifest.icon.background !== 'string' || !/^#[0-9a-fA-F]{6}$/u.test(manifest.icon.background)) continue;
     const id = manifest.id; const entry = { manifest: manifest as PawExtensionAppManifest,
-      ownerDirectory: id.slice('extension:'.length), load: () => import('@/features/eval-lab/projects/LabAppHost') };
+      ownerDirectory: id.slice('extension:'.length), load: () => extensionHosts.load('lab-html') };
     labEntries.set(id, entry); byId.set(id, entry); enabled.add(id);
   }
   for (const id of labEntries.keys()) {
@@ -96,7 +102,7 @@ export function extensionAppForPackage(packageId: string): PawExtensionAppManife
 
 export async function loadPawExtensionApp(id: PawExtensionAppId): Promise<PawExtensionAppModule> {
   const app = byId.get(id);
-  if (!app && isLabExtensionAppId(id)) return import('@/features/eval-lab/projects/LabAppHost');
+  if (!app && isLabExtensionAppId(id)) return extensionHosts.load('lab-html');
   if (!app) throw new Error(`Unknown PAWOS Extension App: ${id}`);
   const module = await app.load();
   if (typeof module.default !== 'function') {

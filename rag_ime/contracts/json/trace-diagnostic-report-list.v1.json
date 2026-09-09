@@ -12,11 +12,64 @@
     "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/item"}}
   },
   "$defs": {
+    "optimizationIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "scopeMode",
+        "focusAreas",
+        "objective"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "improve",
+            "distill"
+          ]
+        },
+        "scopeMode": {
+          "enum": [
+            "all",
+            "selected"
+          ]
+        },
+        "focusAreas": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "enum": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ],
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2000
+        }
+      }
+    },
     "item": {
       "type": "object",
       "additionalProperties": false,
       "required": ["reportId", "revision", "status", "title", "diagnosticSessionId", "targetKeys", "targets", "traceIds", "failureReason", "createdAtMs", "updatedAtMs"],
       "properties": {
+        "intent": {
+          "$ref": "#/$defs/optimizationIntent"
+        },
+        "optimizationProjectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
         "reportId": {"type": "string", "pattern": "^trace-report:[a-f0-9]{32}$"},
         "revision": {"type": "integer", "minimum": 1},
         "status": {"enum": ["generating", "completed", "failed"]},

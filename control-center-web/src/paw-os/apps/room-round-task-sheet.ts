@@ -34,6 +34,8 @@ export interface RoomRoundTaskRow {
   assigned: boolean;
   state: RoomRoundRowState;
   task: string;
+  /** Full current assignment, retained for explicit disclosure. */
+  taskBody?: string;
   latestProgress: string;
   blockerReason?: string;
   blockerNextStep?: string;
@@ -43,7 +45,9 @@ export interface RoomRoundTaskRow {
   /** Full public moderator prose, including a still-streaming report. This
    * carries content only and never confers final-result status. */
   report?: string;
-  /** Explicit kind of the moderator assistant RoomPost represented by `result`, when present. */
+  /** Exact typed moderator publication for a completed current Room turn. */
+  finalMessageId?: string;
+  /** Explicit kind of the latest public moderator assistant RoomPost. */
   postKind?: RoomMessageProjection['postKind'];
   evidenceRefs: string[];
   history: RoomRoundRowEvent[];
@@ -143,7 +147,10 @@ function roundRow({
   ));
   const currentActivities = lanes.flatMap((lane) => lane.activities);
   const activities = historicalLanes.flatMap((lane) => lane.activities);
-  const currentMessages = assistantMessagesForLanes(lanes, projection);
+  const currentMessages = assistantMessagesForLanes(lanes, projection).filter((message) => (
+    message.turnId === turnId
+    && (!message.rootId || message.rootId === turnId || message.rootId === turn.rootId)
+  ));
   const messages = assistantMessagesForLanes(historicalLanes, projection);
   const historyTurnIds = historyTurns.map((historyTurn) => historyTurn.id);
   const roundWorkItems = (room.workItems ?? []).filter((work) => (
@@ -169,14 +176,14 @@ function roundRow({
   const latestCompletedMessage = orderedCurrentMessages
     .find((message) => message.status === 'completed' && Boolean(message.text.trim()));
   const isModerator = participant.id === room.moderatorParticipantId;
-  const coordinatorResultMessage = isModerator
+  const coordinatorResultMessage = isModerator && turn.status === 'completed'
     ? orderedCurrentMessages.find((message) => (
       message.status === 'completed'
       && message.postKind === 'result'
       && Boolean(message.text.trim())
     ))
     : undefined;
-  const resultMessage = coordinatorResultMessage ?? latestCompletedMessage;
+  const resultMessage = isModerator ? coordinatorResultMessage : latestCompletedMessage;
   const workResult = [...currentWorkItems]
     .reverse()
     .map((work) => work.resultSummary.trim())
@@ -209,7 +216,17 @@ function roundRow({
      exist; suppress only the explicit facilitator-accountability bookkeeping
      case above. */
   const assigned = workItems.length > 0 || (eventAssigned && !delegatedAccountabilityOnly);
-  const state = rowState(turn, participant.id, lanes, currentActivities, currentMessages, currentWorkItems);
+  const participantState = rowState(turn, participant.id, lanes, currentActivities, currentMessages, currentWorkItems);
+  // A completed facilitator step does not complete the Room's current answer.
+  // Keep explicit blockers/failures actionable while the Room is live; once the
+  // current Room turn ends, its terminal verdict owns the coordinator surface.
+  const state = isModerator && eventAssigned
+    ? turn.status === 'running' && participantState === 'completed'
+      ? 'running'
+      : ['completed', 'failed', 'aborted'].includes(turn.status)
+        ? turn.status
+        : participantState
+    : participantState;
   const completedProgress = compactMarkdown(
     workResult
       || resultMessage?.text.trim()
@@ -227,6 +244,7 @@ function roundRow({
     assigned,
     state,
     task: compactMarkdown(task),
+    taskBody: task.replace(/\r\n?/gu, '\n'),
     latestProgress: state === 'blocked' && blockerReason
       ? blockerReason
       : state === 'completed'
@@ -235,11 +253,12 @@ function roundRow({
     ...(blockerReason ? { blockerReason } : {}),
     ...(blockerNextStep ? { blockerNextStep } : {}),
     ...(blockedWorkItemId ? { blockedWorkItemId } : {}),
-    ...(isModerator && resultMessage?.postKind ? { postKind: resultMessage.postKind } : {}),
+    ...(isModerator && latestPublicMessage?.postKind ? { postKind: latestPublicMessage.postKind } : {}),
     ...(isModerator && latestPublicMessage
       ? { report: latestPublicMessage.text.trim().replace(/\r\n?/gu, '\n') }
       : {}),
-    ...(resultMessage?.text.trim() || workResult
+    ...(coordinatorResultMessage ? { finalMessageId: coordinatorResultMessage.id } : {}),
+    ...(resultMessage?.text.trim() || (!isModerator && workResult)
       // Result surfaces are the answer, not a list preview. Keep the complete
       // Markdown; only task/progress summaries above have a compact budget.
       ? { result: (resultMessage?.text.trim() || workResult || '').replace(/\r\n?/gu, '\n') }
@@ -384,6 +403,21 @@ function assistantMessagesForLanes(
   return unique(lanes.flatMap((lane) => lane.messageIds))
     .map((messageId) => projection.messagesById[messageId])
     .filter((message): message is RoomMessageProjection => Boolean(message && message.role === 'assistant'))
+    .flatMap((message) => {
+      // The flattened Room message may come from an older snapshot. When its
+      // typed blocks are available, only actual public answer text may enter
+      // reply/result surfaces; progress, reasoning and Tool receipts keep their
+      // own activity projection. A private block never becomes a public reply.
+      if (!message.message) return message.text.trim() ? [message] : [];
+      const publicText = message.message.blocks
+        .filter((block) => (block.type === 'text' || block.type === 'code')
+          && block.visibility !== 'private_session'
+          && !['reasoning_summary', 'tool_call', 'tool_result', 'status', 'progress'].includes(block.presentationKind))
+        .map((block) => text(block.data.text) || text(block.data.code))
+        .filter(Boolean)
+        .join('\n\n');
+      return publicText ? [{ ...message, text: publicText }] : [];
+    })
     .sort(compareRoomMessages);
 }
 

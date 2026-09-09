@@ -22,7 +22,7 @@ transports, reducers, App registry, settings, Runtime projections, installed
 receipts, and foreground behavior remain authoritative.
 
 This Skill is the product-level router. It does not own feature state or execute
-an alternative Session loop. React OS combines host context, dynamic
+an alternative Session loop. PAWOS combines host context, dynamic
 capability discovery, and specialized workflows through PAW’s existing owners.
 
 ## Route First
@@ -59,15 +59,12 @@ product source, live projection, user requirement, or authoritative receipt.
 When the Session is bound to the PAW source checkout, use this order and stop
 as soon as the request is grounded:
 
-1. root `AGENTS.md`, then root `PROJECT.md` and the relevant active entry in
-   root `OUTCOMES.md`;
-2. `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` as the canonical PAWOS
-   requirement index. Follow only the relevant stable-ID volume, its correction
-   links, and the exact **Continue reading / editing** target at the end when a
-   requirement crosses a split boundary; do not treat one volume as the whole
-   ledger;
-3. only the relevant entries in root `CONTEXT.md`, `DECISIONS.md`, and
-   `ARCHITECTURE.md`;
+1. root `AGENTS.md`, `README.md`, and `CONTRIBUTING.md` for public project
+   context and contribution guidance;
+2. the user's current request and relevant local development records, if
+   present under `docs/project/` or `control-center-web/docs/pawos/`;
+3. local requirement volumes and decision records only when needed. They are
+   ignored development material, not prerequisites for a public checkout;
 4. the current App registry, nearest feature owner, typed transport/reducer,
    tests, and Runtime projection for the requested surface;
 5. installed status, health, or foreground evidence only when the request

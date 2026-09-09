@@ -1,37 +1,54 @@
 import { ArrowUpRight, Download, FileSearch, ShieldCheck } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/primitives';
 import type { TraceDiagnosticReportV1 } from '@/contracts/generated/trace-diagnostic-report.v1';
+import { usePawOsAppActive } from '@/features/paw-os/surface-context';
 import { buildTraceDiagnosticReportHtml } from './html-export';
-import { buildTraceAuditReportModel, type TraceAuditEvidence, type TraceAuditFinding, type TraceAuditReportModel, type TraceAuditTimelineItem } from './report-model';
+import { buildTraceOptimizationReadingModel } from './optimization-report-model';
+import { TraceOptimizationReportContent, type TraceOptimizationReportActions } from './optimization-report-content';
+import { buildTraceAuditReportModel, type TraceAuditEvidence, type TraceAuditReportModel, type TraceAuditTimelineItem } from './report-model';
 
-export function TraceDiagnosticReportDocument({ onOpenDiagnosticSession, onOpenTarget, onOpenTrace, report }: {
+export function TraceDiagnosticReportDocument({ onOpenDiagnosticSession, onOpenTarget, onOpenTrace, report, ...actions }: {
   onOpenDiagnosticSession: () => void;
   onOpenTarget: (target: TraceDiagnosticReportV1['targets'][number]) => void;
   onOpenTrace?: (traceId: string) => void;
   report: TraceDiagnosticReportV1;
-}) {
+} & TraceOptimizationReportActions) {
   const model = buildTraceAuditReportModel(report);
+  const reading = buildTraceOptimizationReadingModel(report);
   const exportHref = useTraceDiagnosticHtmlUrl(report);
+  const appActive = usePawOsAppActive();
   const [selectedEvidenceId, setSelectedEvidenceId] = useState('');
+  const evidenceNavigation = useRef<(() => void) | null>(null);
+  const suppressEvidenceFocusRestore = useRef(false);
   const selectedEvidence = model.evidence.find((item) => item.evidenceId === selectedEvidenceId) ?? null;
   const selectedEvidenceTarget = report.targets.find((target) => target.targetKey === selectedEvidence?.targetKey) ?? null;
-  const openEvidence = (evidenceId: string) => setSelectedEvidenceId(evidenceId);
-  const usesSettlement = [model.plainConclusion, ...model.findings.map((item) => item.conclusion)].some((value) => value.toLowerCase().includes('settlement'));
+  const openEvidence = (evidenceId: string) => {
+    evidenceNavigation.current = null;
+    suppressEvidenceFocusRestore.current = false;
+    setSelectedEvidenceId(evidenceId);
+  };
+  const closeEvidenceAndNavigate = (navigate: () => void) => {
+    evidenceNavigation.current = navigate;
+    setSelectedEvidenceId('');
+  };
+  useEffect(() => {
+    if (appActive !== false) return;
+    suppressEvidenceFocusRestore.current = true;
+    setSelectedEvidenceId('');
+  }, [appActive]);
 
   return <>
     <section aria-label="Trace 诊断网页报告" className="trace-audit" data-status={model.status} data-testid="trace-agent-web-report" data-tone={model.verdict.tone}>
       <header className="trace-audit__masthead">
-        <div className="trace-audit__identity"><p className="trace-audit__document-type">PAW Trace Diagnostic · 工程审计报告</p><h2>{model.title}</h2><p className="trace-audit__lede">先看结论和影响，再看五层归因、事实与下一步；工程明细统一收在附录。</p></div>
+        <div className="trace-audit__identity"><h2>{model.title}</h2></div>
         <dl className="trace-audit__document-meta"><Meta label="报告状态" value={model.statusLabel} /><Meta label="报告修订" value={`Revision ${model.revision}`} /><Meta label="更新时间" value={model.updatedAtLabel} /></dl>
       </header>
 
-      <div className="trace-audit__scan-layer">
-        <section aria-labelledby="trace-audit-tldr-title" className="trace-audit__tldr" data-tone={model.verdict.tone}>
-          <div className="trace-audit__states" aria-label="事故、诊断与修复状态">{model.stateBadges.map((badge) => <div data-tone={badge.tone} key={badge.key}><span>{badge.label}</span><strong>{badge.value}</strong></div>)}</div>
-          <div className="trace-audit__tldr-copy"><h3 id="trace-audit-tldr-title">{model.plainConclusion}</h3><p>{model.impact}</p><p className="trace-audit__glossary">{usesSettlement ? <span>settlement（会话结算）</span> : null}<span>回执（阶段完成凭证）</span><span>冻结（不可变快照）</span></p></div>
-        </section>
+      <TraceOptimizationReportContent model={model} reading={reading} onOpenEvidence={openEvidence} {...actions} />
 
+      <details className="trace-audit__appendix"><summary><span><strong>证据详情与技术附录</strong><small>原记录、诊断归因、时间线、版本和评分</small></span><span className="trace-audit__details-affordance">展开明细</span></summary><div className="trace-audit__appendix-body">
+        <AppendixSection id="states" title="诊断与修复记录"><dl className="trace-reading__scope">{model.stateBadges.map((badge) => <div key={badge.key}><dt>{badge.label}</dt><dd>{badge.value}</dd></div>)}</dl></AppendixSection>
         <ScanSection className="trace-audit__attribution" description={model.failureAttribution.summary} id="failure-attribution" title="问题出在哪一层">
           <ol className="trace-audit__attribution-list" data-primary-layer={model.failureAttribution.primaryLayer}>{model.failureAttribution.layers.map((item) => <li aria-label={`${item.label}：${item.verdictLabel}`} data-layer={item.layer} data-verdict={item.verdict} key={item.layer}><div className="trace-audit__attribution-label"><strong>{item.label}</strong><span>{item.verdictLabel}</span></div><p>{item.explanation}</p><EvidenceIds aliases={model.evidenceAliases} onOpen={openEvidence} values={item.evidenceIds} /></li>)}</ol>
         </ScanSection>
@@ -44,16 +61,10 @@ export function TraceDiagnosticReportDocument({ onOpenDiagnosticSession, onOpenT
           <ol className="trace-audit__actions">{model.actions.map((action) => <li data-tone={action.tone} key={action.step}><span aria-hidden="true">{action.step}</span><div><strong>{action.title}</strong><p>{action.description}</p></div><small>{action.state}</small></li>)}</ol>
         </ScanSection>
 
-        <ScanSection className="trace-audit__findings-section" description={model.summary} id="findings" title="进一步诊断依据">
-          <div className="trace-audit__findings">{model.findings.length ? model.findings.map((finding) => <Finding aliases={model.evidenceAliases} finding={finding} key={finding.findingId} onOpenEvidence={openEvidence} />) : <p className="trace-audit__empty">没有结构化发现；这不等同于已经证明系统没有问题。</p>}</div>
-        </ScanSection>
-
         <ScanSection className="trace-audit__cause-chain" description="只连接报告明确提供的因果关系；没有从错误字符串补写中间环节。" id="cause-chain" title="发生过程（证据链）">
           <ol className="trace-audit__cause-nodes">{model.causeChain.map((node, index) => <li data-state={node.state} key={`${node.evidenceId || 'gap'}:${index}`}><div className="trace-audit__cause-node"><span>{node.stateLabel}</span><strong>{node.label}</strong>{node.detail ? <p>{node.detail}</p> : null}{node.evidenceIds.length ? <EvidenceIds aliases={model.evidenceAliases} onOpen={openEvidence} values={node.evidenceIds} /> : null}</div>{index < model.causeChain.length - 1 ? <div aria-label={`${node.relationAfter || '关联'}，${node.relationConfidence || '置信度未知'}`} className="trace-audit__cause-connector"><span>{node.relationAfter || '关联待验证'}</span><small>{node.relationConfidence || '置信度未知'}</small></div> : null}</li>)}</ol>
         </ScanSection>
-      </div>
 
-      <details className="trace-audit__appendix"><summary><span><strong>技术附录</strong><small>扫描指标、时间线、环境、八维评分、Evidence、需求与修复对照</small></span><span className="trace-audit__details-affordance">展开明细</span></summary><div className="trace-audit__appendix-body">
         <AppendixSection id="verdict" title="原始审计判决"><div className="trace-audit__verdict"><strong>{model.verdict.title}</strong><p>{model.verdict.detail}</p>{model.failureReason ? <p><strong>报告失败原因：</strong>{model.failureReason}</p> : null}</div></AppendixSection>
         <AppendixSection id="scope" title="冻结诊断范围"><div className="trace-audit__targets">{model.targets.map((target) => <article data-source-available={target.sourceAvailable} key={target.targetKey}><div><strong>{target.title}</strong><span>{target.kindLabel} · {target.id}</span></div><span>{target.sourceAvailable ? '源快照可用' : '源快照不可用'}</span></article>)}</div></AppendixSection>
         <AppendixSection id="requirements" title="用户需求完成矩阵 · 需求矩阵">{model.requirements.length ? <div className="trace-audit__requirements">{model.requirements.map((requirement) => <article data-status={requirement.status} key={requirement.requirementId}><div><strong>{requirement.statement}</strong><span>{requirement.owner} · {requirement.authorityLabel}</span><p>{requirement.note}</p></div><span>{requirement.statusLabel}</span><EvidenceIds aliases={model.evidenceAliases} full onOpen={openEvidence} values={requirement.evidenceIds} /></article>)}</div> : <p className="trace-audit__empty">{model.requirementsSourceLabel}；不能从聚合数量倒推出逐条完成情况。</p>}</AppendixSection>
@@ -71,7 +82,24 @@ export function TraceDiagnosticReportDocument({ onOpenDiagnosticSession, onOpenT
       <footer className="trace-audit__provenance"><div><strong>报告身份</strong><span>{model.reportId}</span></div><div><strong>冻结检查摘要</strong><span>{model.inspectionSha256}</span></div><p>网页报告只读取持久化报告投影；诊断 Agent 对话保留过程，但不替代报告 authority。</p></footer>
     </section>
 
-    <Dialog open={Boolean(selectedEvidenceId)} onOpenChange={(open) => { if (!open) setSelectedEvidenceId(''); }}><DialogContent className="trace-audit__evidence-dialog"><DialogHeader><DialogTitle>Evidence 详情</DialogTitle><DialogDescription>只读取报告冻结时保存的公开脱敏投影，不回查当前 Runtime。</DialogDescription></DialogHeader>{selectedEvidence ? <EvidenceDetail evidence={selectedEvidence} /> : <p className="trace-audit__evidence-missing" role="alert">未在冻结快照中找到 {selectedEvidenceId}，因此没有尝试读取未知原始数据。</p>}{selectedEvidence ? <div className="trace-audit__evidence-dialog-actions">{selectedEvidence.traceId && onOpenTrace ? <Button leadingIcon={<FileSearch size={16} />} onClick={() => onOpenTrace(selectedEvidence.traceId)} size="small">打开 Trace</Button> : null}{selectedEvidenceTarget ? <Button leadingIcon={<ArrowUpRight size={16} />} onClick={() => onOpenTarget(selectedEvidenceTarget)} size="small" variant="quiet">打开原对象</Button> : null}</div> : null}</DialogContent></Dialog>
+    <Dialog open={Boolean(selectedEvidenceId) && appActive !== false} onOpenChange={(open) => { if (!open) setSelectedEvidenceId(''); }}>
+      <DialogContent className="trace-audit__evidence-dialog" onCloseAutoFocus={(event) => {
+        const navigate = evidenceNavigation.current;
+        evidenceNavigation.current = null;
+        if (navigate || suppressEvidenceFocusRestore.current || appActive === false) event.preventDefault();
+        suppressEvidenceFocusRestore.current = false;
+        // The body portal and its focus trap must be gone before another
+        // PAW window takes focus. Ordinary dismissal still restores the opener.
+        navigate?.();
+      }}>
+        <DialogHeader><DialogTitle>Evidence 详情</DialogTitle><DialogDescription>只读取报告冻结时保存的公开脱敏投影，不回查当前 Runtime。</DialogDescription></DialogHeader>
+        {selectedEvidence ? <EvidenceDetail evidence={selectedEvidence} /> : <p className="trace-audit__evidence-missing" role="alert">未在冻结快照中找到 {selectedEvidenceId}，因此没有尝试读取未知原始数据。</p>}
+        {selectedEvidence ? <div className="trace-audit__evidence-dialog-actions">
+          {selectedEvidence.traceId && onOpenTrace ? <Button leadingIcon={<FileSearch size={16} />} onClick={() => closeEvidenceAndNavigate(() => onOpenTrace(selectedEvidence.traceId))} size="small">打开 Trace</Button> : null}
+          {selectedEvidenceTarget ? <Button leadingIcon={<ArrowUpRight size={16} />} onClick={() => closeEvidenceAndNavigate(() => onOpenTarget(selectedEvidenceTarget))} size="small" variant="quiet">打开原对象</Button> : null}
+        </div> : null}
+      </DialogContent>
+    </Dialog>
   </>;
 }
 
@@ -80,8 +108,6 @@ function AppendixSection({ children, id, title }: { children: ReactNode; id: str
 
 function EvidenceIds({ aliases, full = false, onOpen, values }: { aliases: Record<string, string>; full?: boolean; onOpen: (evidenceId: string) => void; values: string[] }) { return values.length ? <div className="trace-audit__evidence-ids">{values.map((value) => <button aria-label={`查看证据 ${value}`} key={value} onClick={() => onOpen(value)} type="button"><code>{full ? `[${aliases[value] ?? '?'}] ${value}` : `[${aliases[value] ?? '?'}]`}</code></button>)}</div> : <span className="trace-audit__evidence-empty">无冻结证据引用</span>; }
 
-function Finding({ aliases, finding, onOpenEvidence }: { aliases: Record<string, string>; finding: TraceAuditFinding; onOpenEvidence: (evidenceId: string) => void }) { return <details className="trace-audit__finding" data-severity={finding.severity} open={['critical', 'high'].includes(finding.severity)}><summary><span className="trace-audit__finding-index">{finding.severityLabel}</span><span><strong>{finding.questionTitle}</strong><small>{finding.dimensionLabel}</small></span><span className="trace-audit__details-affordance">查看五段证据</span></summary><div className="trace-audit__finding-body"><FindingField title="事实" value={finding.observation} /><FindingField title="假设" value={finding.hypothesis} /><FindingField title="结论" value={finding.conclusion} /><FindingField title="候选修复" value={finding.candidateRepair} /><FindingField title="验证要求" value={finding.verification} /><section className="trace-audit__evidence"><h4>证据引用</h4><EvidenceIds aliases={aliases} onOpen={onOpenEvidence} values={finding.evidenceIds} /></section></div></details>; }
-function FindingField({ title, value }: { title: string; value: string }) { return <section><h4>{title}</h4><p>{value}</p></section>; }
 function TimelineList({ aliases, items, onOpenEvidence }: { aliases: Record<string, string>; items: TraceAuditTimelineItem[]; onOpenEvidence: (evidenceId: string) => void }) { return <ol className="trace-audit__timeline">{items.map((item) => <li key={`${item.evidenceId}:${item.sequence}`}><time>{item.createdAtLabel}</time><div><span>{item.targetLabel} · {item.kind}</span><strong>{item.summary}</strong></div><EvidenceIds aliases={aliases} full onOpen={onOpenEvidence} values={[item.evidenceId]} /></li>)}</ol>; }
 function RepairState({ model }: { model: TraceAuditReportModel }) { const repair = model.repairLifecycle; return <article className="trace-audit__repair-state" data-state={repair.authorizationState}><div><span>修复交接</span><strong>{repair.authorizationStateLabel}</strong><p>{repair.writeAuthorityLabel}</p></div><dl><Meta label="Finding" value={repair.findingId || '尚未选择'} mono /><Meta label="来源对象" value={repair.sourceScope || '尚未冻结'} mono /><Meta label="失败引用" value={repair.failureRef || '尚未冻结'} mono /><Meta label="修复 Session" value={repair.repairSessionId || '尚未创建'} mono /><Meta label="授权回执" value={repair.authorizationId || '尚未记录'} mono /><Meta label="授权时间" value={repair.authorizedAtLabel} /></dl></article>; }
 
@@ -101,4 +127,6 @@ function Comparison({ model, onOpenTrace }: { model: TraceAuditReportModel; onOp
 function EvidenceDetail({ evidence }: { evidence: TraceAuditEvidence }) { return <div className="trace-audit__evidence-detail"><p>{evidence.summary}</p><dl><Meta label="短引用" value={`[${evidence.alias}]`} mono /><Meta label="Evidence ID" value={evidence.evidenceId} mono /><Meta label="来源类型" value={evidence.sourceKind} /><Meta label="Source ref" value={evidence.sourceRef} mono /><Meta label="诊断对象" value={evidence.targetLabel} /><Meta label="Trace" value={evidence.traceId || '未绑定'} mono /><Meta label="状态" value={evidence.status} /><Meta label="时间" value={evidence.createdAtLabel} /></dl></div>; }
 function Meta({ label, mono = false, value }: { label: string; mono?: boolean; value: string }) { return <div><dt>{label}</dt><dd data-mono={mono}>{value}</dd></div>; }
 function MetaAction({ label, onClick, value }: { label: string; onClick?: () => void; value: string }) { return <div><dt>{label}</dt><dd data-mono="true">{onClick ? <button className="trace-audit__reference-link" onClick={onClick} type="button">{value}</button> : value}</dd></div>; }
-function useTraceDiagnosticHtmlUrl(report: TraceDiagnosticReportV1): string { const [url, setUrl] = useState(''); useEffect(() => { if (typeof URL.createObjectURL !== 'function') return undefined; const next = URL.createObjectURL(new Blob([buildTraceDiagnosticReportHtml(report)], { type: 'text/html;charset=utf-8' })); setUrl(next); return () => URL.revokeObjectURL(next); }, [report]); return url; }
+function useTraceDiagnosticHtmlUrl(report: TraceDiagnosticReportV1): string { const [url, setUrl] = useState(''); useEffect(() => { if (typeof URL.createObjectURL !== 'function') return undefined; const next = URL.createObjectURL(new Blob([buildTraceDiagnosticReportHtml(report, { appUrl: currentAppReportUrl(report.reportId) })], { type: 'text/html;charset=utf-8' })); setUrl(next); return () => URL.revokeObjectURL(next); }, [report]); return url; }
+
+function currentAppReportUrl(reportId: string): string { if (typeof window === "undefined") return ""; const url = new URL(window.location.href); if (!["http:", "https:"].includes(url.protocol)) return ""; url.hash = `/trace-agent?reportId=${encodeURIComponent(reportId)}`; return url.href; }

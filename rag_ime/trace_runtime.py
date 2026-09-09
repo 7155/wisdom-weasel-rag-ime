@@ -665,11 +665,39 @@ def project_public_span_metrics(
     return result
 
 
+def _public_optimization_execution(value: object) -> Mapping[str, object]:
+    """Closed, metadata-only marker emitted by a registered execution owner."""
+    expected = {"candidateId", "role", "comparisonContractSha256", "controls", "loadedVersions"}
+    if not isinstance(value, Mapping) or not expected <= set(value) or set(value) - expected - {"fixedContextFingerprints"}:
+        raise TraceContractError("optimization execution marker is incomplete")
+    candidate = _safe_public_identifier(value["candidateId"], "candidateId")
+    if value["role"] not in {"baseline", "candidate"}:
+        raise TraceContractError("optimization execution role is invalid")
+    digest = value["comparisonContractSha256"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise TraceContractError("optimization contract fingerprint is invalid")
+    controls, versions = value["controls"], value["loadedVersions"]
+    required_controls = {"inputState", "evaluator", "qualityPolicy", "permissions", "environment"}
+    if not isinstance(controls, Mapping) or not required_controls <= set(controls) or len(controls) > 32:
+        raise TraceContractError("optimization controls are incomplete")
+    if not isinstance(versions, Mapping) or set(versions) != {"tool", "skill", "prompt", "workflow", "model"}:
+        raise TraceContractError("optimization loaded versions are incomplete")
+    safe_controls = {_safe_public_identifier(key, "control key"): _safe_public_identifier(item, "control identity") for key, item in controls.items()}
+    safe_versions = {key: _safe_public_identifier(item, "loaded version identity") for key, item in versions.items()}
+    result = {"candidateId": candidate, "role": value["role"], "comparisonContractSha256": digest, "controls": _FrozenDict(safe_controls), "loadedVersions": _FrozenDict(safe_versions)}
+    if "fixedContextFingerprints" in value:
+        fixed = value["fixedContextFingerprints"]
+        if not isinstance(fixed, Mapping) or len(fixed) > 32:
+            raise TraceContractError("optimization fixed context metadata is invalid")
+        result["fixedContextFingerprints"] = _FrozenDict({_safe_public_identifier(key, "fixed context key"): _safe_public_identifier(item, "fixed context identity") for key, item in fixed.items()})
+    return _FrozenDict(result)
+
+
 def project_public_span_attributes(
     value: object,
     *,
     strict: bool,
-) -> dict[str, str | int | bool]:
+) -> dict[str, object]:
     """Return the closed public metadata projection for one span."""
 
     if not isinstance(value, Mapping):
@@ -678,11 +706,18 @@ def project_public_span_attributes(
         return {}
     if len(value) > _MAX_PUBLIC_SPAN_FIELDS and strict:
         raise TraceContractError("span attributes exceed the public field limit")
-    result: dict[str, str | int | bool] = {}
+    result: dict[str, object] = {}
     for raw_key, raw_value in list(value.items())[:_MAX_PUBLIC_SPAN_FIELDS]:
         if not isinstance(raw_key, str):
             if strict:
                 raise TraceContractError(f"unsupported public span attribute: {raw_key}")
+            continue
+        if raw_key == "traceOptimization":
+            try:
+                result[raw_key] = _public_optimization_execution(raw_value)
+            except TraceContractError:
+                if strict:
+                    raise
             continue
         if raw_key in _PUBLIC_SPAN_BOOLEAN_ATTRIBUTES:
             valid = isinstance(raw_value, bool)

@@ -10,9 +10,42 @@ import { PawOsFilesApp } from './PawOsFilesApp';
 import { PawWindowFrame } from '@/paw-os/shell/PawWindowLayer';
 import filesCss from './paw-os-files-app.css?raw';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); window.localStorage.clear(); });
 
 describe('PawOsFilesApp', () => {
+  it.each([false, true])('keeps the selected file and directory state through manual collapse (narrow: %s)', async (narrowWindow) => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, activeSessionId: 'session-work', items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }] },
+      'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [{ path: '/workspace/paw/guide.md', name: 'guide.md', kind: 'file' }] },
+      'agent.session.workspace.read': { ok: true, path: '/workspace/paw/guide.md', content: '# Saved preview', byteSize: 15, truncated: false },
+    } });
+    renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 guide.md' }));
+    expect(await screen.findByRole('heading', { name: 'Saved preview' })).toBeInTheDocument();
+    const reads = transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read').length;
+    const narrow = narrowWindow ? applyNarrowLayout() : null;
+    try {
+      if (narrow) {
+        act(() => { window.dispatchEvent(new Event('resize')); });
+        await user.click(screen.getByRole('button', { name: '展开文件目录' }));
+        expect(screen.getByRole('treeitem', { name: '打开文件 guide.md' })).toHaveAttribute('data-selected', 'true');
+      }
+      await user.click(screen.getByRole('button', { name: '收起文件目录' }));
+      expect(screen.queryByRole('tree', { name: '项目文件' })).not.toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Saved preview' })).toBeVisible();
+      const toggle = screen.getByRole('button', { name: '展开文件目录' });
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toHaveAttribute('hidden');
+      await user.click(toggle);
+      expect(screen.getByRole('treeitem', { name: '打开文件 guide.md' })).toHaveAttribute('data-selected', 'true');
+      expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read')).toHaveLength(reads);
+      if (narrow) {
+        await user.click(screen.getByRole('treeitem', { name: '打开文件 guide.md' }));
+        expect(screen.getByRole('heading', { name: 'Saved preview' })).toBeVisible();
+      }
+    } finally { narrow?.remove(); }
+  });
   it('distinguishes a failed workspace read from an empty directory and recovers in place', async () => {
     const user = userEvent.setup();
     let offline = true;
@@ -1565,6 +1598,9 @@ function applyNarrowLayout(): HTMLStyleElement {
   emulation.textContent = `
     .paw-files-app__workspace:not([data-file-open]) .paw-files-preview { display: none; }
     .paw-files-app__workspace[data-file-open] .paw-files-tree { display: none; }
+    .paw-files-app__workspace[data-tree-revealed]:not([data-sidebar-collapsed='true']) .paw-files-tree { display: flex; }
+    .paw-files-app__workspace[data-tree-revealed]:not([data-sidebar-collapsed='true']) .paw-files-preview { display: none; }
+    .paw-files-app__workspace[data-sidebar-collapsed='true'] .paw-files-preview { display: flex; }
     .paw-files-preview__back { display: inline-flex; }
   `;
   document.head.append(emulation);

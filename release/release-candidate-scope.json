@@ -1,11 +1,11 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-07T23:58:44.832114+00:00",
+  "generatedAt": "2026-09-09T13:14:08.541212+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
     "baseCommit": "55fc923944ffcee72a2c90b04a891c1106485227",
-    "candidateCommitPolicy": "Source maintenance after v0.1.0-alpha.1: organize Agent Lab and shared Agent UI owners, consolidate references, and name the current frontend React OS. Preserve unrelated Room changes, existing runtime identifiers and frozen evidence. Installed and signed distribution acceptance remain separate."
+    "candidateCommitPolicy": "Current PAW source checkpoint: Room frontend and Trace optimization, product host boundaries, user-selected icons and stellar motion, public documentation cleanup. Separate Lab candidate work and unpublished experiments remain outside this source checkpoint; native and quality acceptance are recorded separately."
   },
   "dispositions": {
     "keep_release": "Retain this source maintenance change.",
@@ -13,6 +13,10 @@
     "other_work_not_in_release": "Leave outside this candidate."
   },
   "groups": {
+    "brand_stellar": {
+      "description": "User-selected branding and bounded stellar visual behavior.",
+      "pathCount": 39
+    },
     "lab_backend": {
       "description": "Agent Lab package, resource resolution and service consumers.",
       "pathCount": 65
@@ -21,46 +25,98 @@
       "description": "Operator scripts that import Lab owners or record current source paths.",
       "pathCount": 12
     },
+    "local_docs": {
+      "description": "Stop tracking local development records and their dedicated checks; preserve local files.",
+      "pathCount": 122
+    },
+    "owner_boundaries": {
+      "description": "Product extension host assembly and module dependency checks.",
+      "pathCount": 7
+    },
     "portable_agent_ui": {
       "description": "Shared Agent controls and their standalone bundle entry.",
       "pathCount": 8
     },
+    "product_integration": {
+      "description": "Integrate current product source and public contribution guidance.",
+      "pathCount": 36
+    },
+    "public_showcase": {
+      "description": "Public synthetic-data screenshots and usage documentation.",
+      "pathCount": 20
+    },
     "react_os_docs": {
       "description": "Current React OS naming, architecture and development entrypoints.",
-      "pathCount": 17
+      "pathCount": 5
     },
     "references_history": {
       "description": "Lossless reference archives, attribution and dated acceptance records.",
-      "pathCount": 12
+      "pathCount": 8
     },
     "release_scope": {
       "description": "Current source maintenance candidate inventory.",
       "pathCount": 1
     },
+    "room_frontend": {
+      "description": "Room partner windows, readable replies, sidebars and responsive layout.",
+      "pathCount": 18
+    },
+    "trace_optimization": {
+      "description": "Trace diagnosis and bounded optimization source, contracts and executable regressions.",
+      "pathCount": 59
+    },
     "verification": {
-      "description": "Existing executable regressions updated for the owning package.",
-      "pathCount": 30
+      "description": "Regression checks for the included product changes.",
+      "pathCount": 48
     }
   },
   "summary": {
-    "pathCount": 145,
+    "pathCount": 448,
     "dispositionCounts": {
-      "keep_release": 108,
-      "delete_old_implementation": 37
+      "delete_old_implementation": 157,
+      "keep_release": 291
     },
     "groupCounts": {
-      "react_os_docs": 17,
-      "references_history": 12,
+      "local_docs": 122,
+      "product_integration": 36,
+      "react_os_docs": 5,
+      "brand_stellar": 39,
+      "public_showcase": 20,
+      "references_history": 8,
       "portable_agent_ui": 8,
+      "owner_boundaries": 7,
+      "trace_optimization": 59,
+      "verification": 48,
+      "room_frontend": 18,
       "lab_backend": 65,
       "release_scope": 1,
-      "lab_tools": 12,
-      "verification": 30
+      "lab_tools": 12
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
   },
   "items": [
+    {
+      "path": ".agents/agent-lab-status-review.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": ".gitignore",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
     {
       "path": "AGENTS.md",
       "status": "modified",
@@ -70,10 +126,10 @@
     },
     {
       "path": "ARCHITECTURE.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "CHANGELOG.md",
@@ -84,31 +140,59 @@
     },
     {
       "path": "CONTEXT.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "CONTRIBUTING.md",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
     },
     {
       "path": "DECISIONS.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "DESIGN.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "OUTCOMES.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "PAW_ROOM_MULTI_AGENT_BLACKBOX_ACCEPTANCE_20260825.md",
       "status": "deleted",
       "disposition": "delete_old_implementation",
-      "group": "references_history",
-      "reason": "Relocate to eval/room-blackbox/ACCEPTANCE_20260825.md without retaining a duplicate implementation."
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "PRODUCT.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "PROJECT.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "README.md",
@@ -118,67 +202,788 @@
       "reason": "Current React OS naming, architecture and development entrypoints."
     },
     {
-      "path": "control-center-web/CLOUD_MODEL.md",
+      "path": "assets/brand/README.md",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "assets/brand/paw-macos-icon-v2.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "assets/brand/paw-macos-icon-v2.svg",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "assets/brand/paw-os-icon.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "assets/showcase/README.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/manifest.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-agent-trace.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-agent.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-app-center.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-browser.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-desktop.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-files.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-input.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-knowledge.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-lab.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-memory.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-monitor.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-project.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-room-collaboration.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-room-results.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-settings.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-terminal.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "assets/showcase/current/pawos-trace-agent.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
+      "path": "control-center-web/CLOUD_MODEL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "control-center-web/PAWOS_FRONTEND_CONTINUATION.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/README.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/handoffs/PAWOS_FUNCTION_INTERFACE_GUIDE.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "control-center-web/docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.v1.json",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
-      "path": "control-center-web/docs/history/design-qa-20260714.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "references_history",
-      "reason": "Own the source previously located at design-qa.md; preserve runtime behavior and attribution."
+      "path": "control-center-web/docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTIONS.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/handoffs/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/handoffs/README_FOR_WEB_MODEL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/APP_OPTIMIZATION_20260905.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/EVOLUTION_REPORT_DESIGN.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/HOLOGRAPHIC_MAP_REVIEW_20260906.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/INTEGRATION_CLOSEOUT_20260906.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_EARTH_ENGINE_BUG_CASES_20260907.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_EXISTING_SCENES_MIGRATION_20260907.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "control-center-web/docs/pawos/LAB_GOLDEN_WORKFLOW_20260905.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_INTERVIEW_SCENARIOS_20260907.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_INTERVIEW_WALKTHROUGH_20260906.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_KNOWLEDGE_FRONTEND_FLOW_20260907.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "control-center-web/docs/pawos/LAB_PRODUCTION_FLOW_RESEARCH_20260906.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "control-center-web/docs/pawos/LAB_PRODUCT_DESIGN.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAINTED_GALAXY_CONTINUATION_20260906.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_FRONTEND_HISTORY.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_ISLAND_SETTINGS_DESIGN.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_RELIABILITY_CONTINUATION_20260905.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENT_STATUS.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_SHOWCASE.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_TRACE_EVAL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/README.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/ROOM_EXPERIENCE_20260905.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/STELLAR_BROWSER_CONTINUATION_20260905.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/STELLAR_MEMORY_TOPIC_PAGES_20260905.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/prototypes/lab-workbench/README.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/prototypes/lab-workbench/index.html",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/prototypes/lab-workbench/workbench.css",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/prototypes/lab-workbench/workbench.js",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_PRODUCT_CONTRACT.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_001_030.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_031_060.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_061_090.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_091_120.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_121_150.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_151_180.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_181_181.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_182_182.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_183_187.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_188_188.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_189_191.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_192_194.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_195_195.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_196_205.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_206_206.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_207_207.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_208_208.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_209_209.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_210_211.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_212_212.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_213_213.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_214_214.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_215_220.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_221_222.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_223_224.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_225_225.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_226_235.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_236_236.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_237_239.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_240_241.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_242_245.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_246_248.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_249_250.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_251_253.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_254_255.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_256_258.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_260_264.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_265_266.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_267_269.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_270_270.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_271_271.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_272_274.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_275_277.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_278_283.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_284_291.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_292_297.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "control-center-web/docs/references/README.md",
@@ -202,11 +1007,137 @@
       "reason": "Own the source previously located at paw-agent-chat-ui-kit-source.zip; preserve runtime behavior and attribution."
     },
     {
+      "path": "control-center-web/index.html",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/public/app-icon-192.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/public/app-icon-512.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/public/app-icon-64.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/public/app-icon.svg",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/public/manifest.webmanifest",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
       "path": "control-center-web/scripts/build-portable-agent-ui.mjs",
       "status": "modified",
       "disposition": "keep_release",
       "group": "portable_agent_ui",
       "reason": "Shared Agent controls and their standalone bundle entry."
+    },
+    {
+      "path": "control-center-web/src/app/mount-control-center.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "control-center-web/src/app/register-extension-hosts.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated-validators.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/trace-diagnostic-inspection.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/trace-diagnostic-report-list.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/trace-diagnostic-report.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/trace-diagnostic-result.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/trace-envelope.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/trace-optimization.v1.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/schema-index.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/validators.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
     },
     {
       "path": "control-center-web/src/features/agent/portable/index.test.tsx",
@@ -279,11 +1210,683 @@
       "reason": "Shared Agent controls and their standalone bundle entry."
     },
     {
+      "path": "control-center-web/src/features/files/PawOsFilesApp.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/features/files/paw-os-files-app.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/features/files/paw-os-files-app.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/app-icons.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/model/app-registry.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/model/app-registry.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/paw-os-satellite.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/diagnostic-start.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/diagnostic-start.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/html-export.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/optimization-command.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/optimization-command.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/optimization-intent.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/optimization-report-content.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/optimization-report-model.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/optimization-report.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/optimization-report.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/report-document.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/report-document.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/report-redesign.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/timeline-order.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/timeline-order.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/trace-agent-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/trace-agent.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/trace-app-shell.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/trace-app-shell.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/trace-app.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawAppsRuntime.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawNativeApps.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomRoundSheet.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomRoundSheet.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomWorkspace.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomWorkspace.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/app-sidebar.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/app-sidebar.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/app-sidebar.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawTraceAgentAppEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-apps-style.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/paw-apps.css",
       "status": "modified",
       "disposition": "keep_release",
       "group": "react_os_docs",
       "reason": "Current React OS naming, architecture and development entrypoints."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-room-round-sheet.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-round-task-sheet.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-round-task-sheet.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-satellite-auto-open.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-satellite-auto-open.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/00.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/01.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/02.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/03.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/04.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/05.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/06.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/07.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/08.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/09.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/00.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/01.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/02.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/03.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/04.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/05.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/06.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/07.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/08.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/ringed-frames/09.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/host-registry.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/host-registry.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/registry-hosts.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/registry.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/paw-os/real-data-fixtures.test.ts",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/app-registry.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawAppIcon.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawAppIcon.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawDesktop.tsx",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "Keep keyboard focus on interactive controls when the brand contains an SVG image.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawStellarBackdrop.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawStopMotionPlanet.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWindowLayer.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWindowLayer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/collaboration-focus.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/paw-app-icon.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/stellar-stop-motion.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/stellar-stop-motion.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-agent-migrated-v1.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-room-focus.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-room-migrated-v1.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-stellar.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-sys-apps-migrated-v1.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/platform/routes.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "control-center-web/src/platform/routes.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
     },
     {
       "path": "conversation_ui_standalone.zip",
@@ -296,15 +1899,183 @@
       "path": "design-qa.md",
       "status": "deleted",
       "disposition": "delete_old_implementation",
-      "group": "references_history",
-      "reason": "Relocate to control-center-web/docs/history/design-qa-20260714.md without retaining a duplicate implementation."
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
-      "path": "eval/room-blackbox/ACCEPTANCE_20260825.md",
-      "status": "added",
+      "path": "eval/execution-reliability/README.md",
+      "status": "modified",
       "disposition": "keep_release",
-      "group": "references_history",
-      "reason": "Own the source previously located at PAW_ROOM_MULTI_AGENT_BLACKBOX_ACCEPTANCE_20260825.md; preserve runtime behavior and attribution."
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "eval/interview-metrics/AGENT_LAB_INTERVIEW_DATA_20260901.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/interview-metrics/ENTERPRISEOPS_CSM_TRACE_REPAIR_20260901.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/interview-metrics/README.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "eval/interview-metrics/RESUME_EVIDENCE_20260901.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/interview-metrics/RESUME_EVIDENCE_CURRENT.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/interview-metrics/TRACE_EVAL_COMPATIBILITY.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/interview-metrics/agent-experiments.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "eval/interview-metrics/evidence-ledger.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "eval/memory-topic-selfboot/RESULT.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/CORE_SKILL_FLOW_REVIEW.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/FIVE_METRIC_RESULTS.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/MEDIUM_TASK_RESULTS.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/MEDIUM_TASK_WORK.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/METRIC_COMPLETION.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/OPTIMIZATION_RESULTS.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/OPTIMIZATION_WORK.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/OS_RESULTS.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/PAW_CURRENT_SKILL_REVIEW.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/PROMPT_SETTINGS_REVIEW.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/README.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "eval/micro-selfboot/RESULTS.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "eval/micro-selfboot/SKILL_FLOW_REVIEW.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "integrations/pi/skills/agent-eval-room-optimizer/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "room_frontend",
+      "reason": "Room partner windows, readable replies, sidebars and responsive layout."
     },
     {
       "path": "integrations/pi/skills/pawos-system/SKILL.md",
@@ -312,6 +2083,27 @@
       "disposition": "keep_release",
       "group": "react_os_docs",
       "reason": "Current React OS naming, architecture and development entrypoints."
+    },
+    {
+      "path": "integrations/pi/skills/trace-agent-diagnostics/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "integrations/pi/skills/trace-agent-diagnostics/references/optimization-workflow.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "integrations/pi/skills/trace-agent-diagnostics/references/report-contract.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     },
     {
       "path": "paw-agent-chat-ui-kit-source.zip",
@@ -473,6 +2265,20 @@
       "disposition": "keep_release",
       "group": "lab_backend",
       "reason": "Own the source previously located at rag_ime/agent_lab_optimal_path.py; preserve runtime behavior and attribution."
+    },
+    {
+      "path": "rag_ime/agent_lab/optimization_distillation.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/agent_lab/optimization_knowledge.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     },
     {
       "path": "rag_ime/agent_lab/project_application.py",
@@ -755,11 +2561,102 @@
       "reason": "Relocate to rag_ime/agent_lab/trials.py without retaining a duplicate implementation."
     },
     {
+      "path": "rag_ime/agent_routes.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/agent_runtime_driver.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
       "path": "rag_ime/agent_service.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "lab_backend",
       "reason": "Agent Lab package, resource resolution and service consumers."
+    },
+    {
+      "path": "rag_ime/agent_tools.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/agent_workspace.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/contracts/json/trace-diagnostic-inspection.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/contracts/json/trace-diagnostic-report-list.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/contracts/json/trace-diagnostic-report.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/contracts/json/trace-diagnostic-result.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/contracts/json/trace-envelope.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/contracts/json/trace-optimization.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/control_api/route_policy.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/db/migrations/0199_trace_optimization.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/db/migrations/0200_trace_optimization_versions.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     },
     {
       "path": "rag_ime/debug_server.py",
@@ -776,6 +2673,83 @@
       "reason": "Agent Lab package, resource resolution and service consumers."
     },
     {
+      "path": "rag_ime/pi_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/public_release.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/trace_diagnostics.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/trace_optimization.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/trace_optimization_application.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/trace_optimization_execution.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/trace_optimization_installation.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/trace_optimization_pi.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/trace_optimization_versions.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/trace_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
       "path": "release/release-candidate-scope.json",
       "status": "modified",
       "disposition": "keep_release",
@@ -790,11 +2764,60 @@
       "reason": "Operator scripts that import Lab owners or record current source paths."
     },
     {
+      "path": "scripts/build_managed_pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "scripts/build_paw_backend_model_bundle.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "scripts/build_paw_backend_web_model_package.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "scripts/build_paw_os_electron_host.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "scripts/build_paw_pi_runtime_model_bundle.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
       "path": "scripts/check_agent_execution_fault_matrix.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "lab_tools",
       "reason": "Operator scripts that import Lab owners or record current source paths."
+    },
+    {
+      "path": "scripts/check_owner_boundaries.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "scripts/check_project_harness.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_integration",
+      "reason": "Integrate current product source and public contribution guidance."
     },
     {
       "path": "scripts/eval_paw_execution_reliability.py",
@@ -865,6 +2888,20 @@
       "disposition": "keep_release",
       "group": "lab_tools",
       "reason": "Operator scripts that import Lab owners or record current source paths."
+    },
+    {
+      "path": "squirrel-patches/GENERATION_EXPERIENCE.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "squirrel-patches/SCENARIO_INTEGRATION.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
       "path": "tests/fixtures/agent_execution_fault_host.py",
@@ -993,6 +3030,13 @@
       "reason": "Existing executable regressions updated for the owning package."
     },
     {
+      "path": "tests/test_agent_lab_optimization_knowledge.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
       "path": "tests/test_agent_lab_project_routes.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -1056,11 +3100,39 @@
       "reason": "Existing executable regressions updated for the owning package."
     },
     {
+      "path": "tests/test_agent_tools.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
       "path": "tests/test_build_agent_lab_cost_receipt_from_runtime_db.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Existing executable regressions updated for the owning package."
+    },
+    {
+      "path": "tests/test_build_managed_pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "tests/test_ci_workflow.py",
+      "group": "verification",
+      "disposition": "keep_release",
+      "reason": "Regression checks for included source changes.",
+      "status": "modified"
+    },
+    {
+      "path": "tests/test_database_migrations.py",
+      "group": "verification",
+      "disposition": "keep_release",
+      "reason": "Regression checks for included source changes.",
+      "status": "modified"
     },
     {
       "path": "tests/test_eval_lab.py",
@@ -1075,6 +3147,90 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Existing executable regressions updated for the owning package."
+    },
+    {
+      "path": "tests/test_interview_metrics.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "tests/test_owner_boundaries.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "tests/test_pawos_frontend_source_map.py",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "tests/test_pawos_requirement_status.py",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "local_docs",
+      "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
+    },
+    {
+      "path": "tests/test_pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "tests/test_public_release.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "tests/test_trace_diagnostic_http.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "tests/test_trace_optimization.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "tests/test_trace_optimization_application.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "tests/test_trace_optimization_installation.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "tests/test_trace_optimization_pending_applications.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "tests/test_trace_optimization_pi.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     }
   ]
 }

@@ -6,22 +6,18 @@ bootstrap and route to the smallest additional context needed for the task.
 
 ## Session Bootstrap
 
-1. Read [PROJECT.md](PROJECT.md) for the durable vision, destination, boundaries,
-   and non-goals.
-2. Read the relevant active entry in [OUTCOMES.md](OUTCOMES.md). Do not preload
-   completed history or every product area.
-3. Read [CONTEXT.md](CONTEXT.md) only when domain terms or ownership are involved.
-4. Read only the related entries in [DECISIONS.md](DECISIONS.md). Use
-   [ARCHITECTURE.md](ARCHITECTURE.md) when a change crosses owners, processes, or
-   persistence boundaries.
-5. Treat `release/product-status.json`, current Git state, Runtime events, and
-   fresh checks as machine evidence. Root prose never proves that a Session is
-   running, a worktree is clean, or a foreground path passed.
-
-`docs/` at the repository root is ignored local history. For **PAWOS frontend**
-work that a GitHub-only model must continue, start at
-[control-center-web/CLOUD_MODEL.md](control-center-web/CLOUD_MODEL.md). React OS
-is the current frontend; use the sources here without cloning external reference repositories.
+1. Read [README.md](README.md) for product scope and source ownership, then
+   [CONTRIBUTING.md](CONTRIBUTING.md) for setup and verification.
+2. Inspect the relevant source entry, downstream consumers, tests, and current
+   Git changes. PAWOS frontend sources live in `control-center-web/src/paw-os`
+   and `control-center-web/src/features`; the interface takes inspiration from React OS.
+3. If this checkout contains local development records under `docs/project/`
+   or `control-center-web/docs/pawos/`, read only the relevant entries. These
+   records are optional, ignored, and unavailable in a fresh public clone.
+   Do not require them or recreate them to complete ordinary contributions.
+4. Treat `release/product-status.json`, current Git state, Runtime events, and
+   fresh checks as machine evidence. Prose never proves a Session is running,
+   a worktree is clean, or a foreground path passed.
 
 ## Skill Routing
 
@@ -77,7 +73,7 @@ objective + scope + expected output + acceptance
 ```
 
 Start with summaries and references; let the receiving Agent load a referenced
-body only when needed. Stable project meaning comes from root docs. Current
+body only when needed. Public project context starts in README.md. Current
 task facts come from the prompt and owned work document. Mechanical facts come
 from Runtime, workspace, and Git projections.
 
@@ -87,23 +83,15 @@ Do not dump private reasoning or raw Tool history into parent context.
 
 ## Document Responsibility
 
-- `PROJECT.md` changes only when the durable vision, destination, boundary, or
-  non-goal is accepted.
-- `OUTCOMES.md` is the bounded project focus set. Update it for an accepted
-  result, material blocker, or changed next frontier—not every Tool call. Keep
-  every new Outcome in the root index. If it exceeds budget, retain its stable
-  row, archive detail or closed history by category with reciprocal links, and
-  never leave an Outcome only in an ad-hoc document.
-- `DECISIONS.md` stores cross-outcome decisions and their consequences.
-- `CONTEXT.md` is a glossary only; it must not become an implementation guide.
-- Active Session and Room Agents update only their assigned brief, workboard,
-  result, or review document when one exists. Do not create documents for
-  trivial work merely to satisfy a process.
-- The background organizer consumes document receipts and accepted results,
-  fixes links/indexes, and condenses closed material. It must propose rather
-  than overwrite ambiguous active meaning.
-- Never parse Markdown checkboxes to decide running, stopped, completed,
-  accepted, worktree, approval, or Tool state.
+- Keep public usage, setup, and contribution guidance in README.md and
+  CONTRIBUTING.md. Record released changes in CHANGELOG.md.
+- Development plans, requirement ledgers, Session handoffs, review notes, and
+  acceptance diaries stay local and ignored. Do not force-add them to Git.
+- Existing `docs/project/` records retain their local roles: PROJECT for
+  direction, OUTCOMES for progress, DECISIONS for choices, CONTEXT for terms.
+- Preserve user source wording and unrelated work. Update only the records
+  relevant to the assigned task; do not create records for trivial changes.
+- Never infer running, stopped, accepted, or approved state from Markdown.
 
 ## Product Boundaries
 
@@ -145,6 +133,7 @@ are:
 ```bash
 python3 scripts/check_project_harness.py
 python3 -m unittest discover -s tests
+python3 scripts/check_owner_boundaries.py
 python3 scripts/check_import_boundaries.py
 python3 scripts/check_route_ownership.py
 python3 scripts/check_public_release.py --repository-only

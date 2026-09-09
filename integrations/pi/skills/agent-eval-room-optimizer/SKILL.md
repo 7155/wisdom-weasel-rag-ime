@@ -186,7 +186,9 @@ Reviewer 应先检查候选是否仍遵守该项目合同，再检查目标指�
 
 RAG 和 Memory 的专门边界分别交给
 `rag-retrieval-optimization` 与 `memory-curation`；跨 Session 因果证据
-才调用 `trace-agent-diagnostics`。没有匹配证据时标记
+通过 `trace_diagnostics` 读取。需要完整诊断时，把所选对象交给 Trace App 创建
+专用诊断 Session；`trace-agent-diagnostics` 属于 Trace 场景的 Skill 目录，
+Lab/Room 不能直接加载或冒充该 Session。没有匹配证据时标记
 `not_applicable` 或 `unknown`，不要制造 finding。
 
 每个场景结束时，Facilitator 必须从 Host receipt、Trace 和 Eval projection

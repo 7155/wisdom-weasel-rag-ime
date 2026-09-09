@@ -747,13 +747,22 @@
     0 0 0 4px color-mix(in srgb, var(--paw-chat-accent) 9%, transparent);
 }
 
-.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer textarea {
-  min-height: 64px;
-  padding: 13px 15px 41px;
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer.paw-unified-composer textarea {
+  min-height: 40px;
+  max-height: 120px;
+  padding: 13px 15px 3px;
   color: var(--paw-chat-text);
   caret-color: var(--paw-chat-accent);
   font-size: 16px;
   line-height: 24px;
+}
+
+/* Keep the controls outside the textarea's scrollport. Bottom padding only
+   reserves space at the end of a draft; earlier lines in a long draft can
+   still scroll underneath an absolutely positioned toolbar. */
+.paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__toolbar {
+  position: static;
+  margin: 0 6px 4px;
 }
 
 /* Send is the composer's one primary action: a filled accent circle
@@ -1662,10 +1671,6 @@
 
   .paw-desktop-root .paw-session-workspace__composer {
     padding: 7px 9px 9px;
-  }
-
-  .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer textarea {
-    min-height: 54px;
   }
 
   .paw-agent-trace-v1__event > summary {

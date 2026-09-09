@@ -738,6 +738,9 @@ class DebugImeService:
             ),
         )
         self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
+        self.agent.bind_trace_optimization_services(
+            self.agent_extensions, self.agent_tools.trace_optimization_capability_catalog,
+        )
         self.control_api = AgentKernelControlFacade(
             agent=self.agent,
             capabilities=self.agent_tools,
@@ -8275,6 +8278,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     {"ok": False, "error": "Invalid Eval request"},
                 )
             return
+        if parsed.path in {"/api/observability/trace-optimization", "/api/observability/trace-optimization/capabilities"}:
+            if not self._trace_repair_loopback_allowed():
+                self._write_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "Trace optimization is local-only"})
+                return
+            try:
+                response = (self.service.agent.trace_optimization_capabilities()
+                    if parsed.path.endswith("/capabilities") else self.service.agent.trace_optimization_library(
+                        {key: _query_first(query, key) for key in ("projectId", "query", "patternId", "revision", "offset") if key in query}))
+                self._write_json(HTTPStatus.OK, response)
+            except KeyError:
+                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Trace optimization record not found"})
+            except (TypeError, ValueError):
+                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid Trace optimization request"})
+            return
         diagnostic_report_id, diagnostic_report_action = (
             observability_trace_diagnostic_report_route(parsed.path)
         )
@@ -9532,8 +9549,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 "finalize",
                 "repair-authorize",
                 "repair-verify",
+                "optimization",
             }:
-                if diagnostic_report_action.startswith("repair-") and not self._trace_repair_loopback_allowed():
+                if (diagnostic_report_action.startswith("repair-") or diagnostic_report_action == "optimization") and not self._trace_repair_loopback_allowed():
                     self._write_json(
                         HTTPStatus.FORBIDDEN,
                         {
@@ -9556,6 +9574,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                             diagnostic_report_id,
                             payload,
                         )
+                    elif diagnostic_report_action == "optimization":
+                        response = self.service.agent.trace_optimization_command(diagnostic_report_id, payload)
                     else:
                         response = self.service.agent.verify_trace_diagnostic_repair(
                             diagnostic_report_id,

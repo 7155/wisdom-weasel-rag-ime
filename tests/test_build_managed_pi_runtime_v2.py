@@ -207,6 +207,24 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("boundedToolResult(toolCallId", source)
 
 
+    def test_candidate_skill_host_path_guard_executes_without_runtime_or_provider(self) -> None:
+        from scripts.build_managed_pi_runtime_v2 import _CANDIDATE_SKILL_PATHS_SOURCE
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace, outside = root / "workspace", root / "outside"
+            skill = workspace / "skills" / "candidate"
+            skill.mkdir(parents=True)
+            outside.mkdir()
+            (skill / "SKILL.md").write_text("candidate")
+            (outside / "SKILL.md").write_text("outside")
+            (workspace / "linked").symlink_to(outside, target_is_directory=True)
+            program = root / "guard.ts"
+            program.write_text('import { realpath, stat } from "node:fs/promises";\nimport { join, relative, isAbsolute as pathIsAbsolute } from "node:path";\nclass RuntimeProtocolError extends Error { constructor(code:string, message:string) {super(message);} }\nfunction isInside(root:string, target:string) {const p=relative(root,target);return !p.startsWith("..") && !pathIsAbsolute(p);}\n' + _CANDIDATE_SKILL_PATHS_SOURCE + '\nconst root=process.argv[2];\nconst base={piSkillsEnabled:true,noContextFiles:true,skillAllowlist:["candidate"]};\nconst allowed=await optionalCandidateSkillPaths({...base,candidateSkillPaths:[join(root,"skills","candidate")]},root);\nif(allowed?.length!==1)throw new Error("valid candidate rejected");\nfor(const params of [{...base,candidateSkillPaths:[join(root,"..","outside")]},{...base,candidateSkillPaths:[join(root,"linked")]},{...base,noContextFiles:false,candidateSkillPaths:[join(root,"skills","candidate")]}]) {let rejected=false;try{await optionalCandidateSkillPaths(params,root);}catch{rejected=true;}if(!rejected)throw new Error("unsafe candidate accepted");}\nconsole.log("guard passed");\n')
+            completed = subprocess.run(["node", "--experimental-strip-types", str(program), str(workspace)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("guard passed", completed.stdout)
+
     def test_runtime_host_overlay_adds_guarded_session_skill_allowlist(self) -> None:
         from scripts.build_managed_pi_runtime_v2 import (
             _RUNTIME_HOST_SOURCE_OVERLAYS,
@@ -245,6 +263,10 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("skillAllowlist?: string[];", session_source)
+            self.assertIn("candidateSkillPaths?: string[];", session_source)
+            self.assertIn("options.candidateSkillPaths ?? [", session_source)
+            self.assertIn("sessionCandidateSkillPaths: true", host_source)
+            self.assertIn("await optionalCandidateSkillPaths(params, cwd)", host_source)
             self.assertIn("allowedSkillNames.has(skill.name)", session_source)
             self.assertNotIn(
                 "|| skillPromptFocus.includes(skill.name)",

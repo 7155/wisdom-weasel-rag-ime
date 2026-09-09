@@ -22,6 +22,7 @@ describe('pawOsAppRegistry', () => {
       'input-studio',
       'app-center',
       'system-monitor',
+      'trace-agent',
       'eval-lab',
       'system-settings',
       'files',
@@ -34,6 +35,7 @@ describe('pawOsAppRegistry', () => {
     expect(pawOsAppForRoute('voice')?.id).toBe('input-studio');
     expect(pawOsAppForRoute('history')?.id).toBe('input-studio');
     expect(pawOsAppForRoute('diagnostics')?.id).toBe('system-monitor');
+    expect(pawOsAppForRoute('trace-agent')?.id).toBe('trace-agent');
     expect(pawOsAppForRoute('evolution-report')).toBeNull();
     expect(pawOsAppForRoute('governance')?.id).toBe('system-settings');
   });

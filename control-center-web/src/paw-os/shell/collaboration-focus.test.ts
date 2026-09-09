@@ -8,6 +8,7 @@ import {
   isCollaborationSatellite,
   layoutCollaborationFocus,
   normalizeCollaborationFocusFrames,
+  roomFocusPartnerRegions,
   roomWindowFlowGroups,
   windowBelongsToFocus,
   windowFlowArrivalPulse,
@@ -138,14 +139,17 @@ describe('PAWOS collaboration focus', () => {
     expect(frames.get('main')).toEqual({ x: 10, y: 104, width: width - 20, height: height - 114 });
   });
 
-  it('shows four independent partners beside the Room without hiding the previously focused partner', () => {
+  it.each([{ width: 1280, height: 720 }, { width: 1440, height: 900 }, { width: 1900, height: 1300 }])('surrounds the centered Room with four retained partner windows at $width×$height', (viewport) => {
     const nodes = roomFocusNodes(4);
-    const viewport = { width: 1280, height: 720 };
     const first = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46, selectedParticipantId: 'participant-2' });
     const second = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46, selectedParticipantId: 'participant-3' });
     expect([...first.keys()]).toEqual(nodes.map((node) => node.id));
     expect(second).toEqual(first);
     expect(first.get('main')!.width).toBeGreaterThanOrEqual(640);
+    const main = first.get('main')!;
+    expect(main.x + main.width / 2).toBeCloseTo(viewport.width / 2);
+    expect(nodes.slice(1).filter((node) => first.get(node.id)!.x < main.x)).toHaveLength(2);
+    expect(nodes.slice(1).filter((node) => first.get(node.id)!.x > main.x + main.width)).toHaveLength(2);
     const frames = [...first.values()];
     for (let index = 0; index < frames.length; index += 1) {
       for (const other of frames.slice(index + 1)) expect(overlaps(frames[index]!, other)).toBe(false);
@@ -157,7 +161,7 @@ describe('PAWOS collaboration focus', () => {
   });
 
   it.each([{ width: 934, height: 867 }, { width: 390, height: 720 }])(
-    'keeps every partner below the main composer in an accessible rail at $width×$height',
+    'stacks retained partners below the main composer without horizontal overflow at $width×$height',
     (viewport) => {
       const nodes = roomFocusNodes(4);
       const frames = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
@@ -166,15 +170,52 @@ describe('PAWOS collaboration focus', () => {
       for (const node of nodes.slice(1)) {
         const detail = frames.get(node.id)!;
         expect(detail.y).toBeGreaterThan(main.y + main.height);
-        expect(detail.y + detail.height).toBeLessThanOrEqual(viewport.height - 10);
+        expect(detail.x).toBeGreaterThanOrEqual(10);
+        expect(detail.x + detail.width).toBeLessThanOrEqual(viewport.width - 10);
         expect(detail.width).toBeGreaterThanOrEqual(280);
       }
-      expect(frames.get('participant-3')!.x).toBeGreaterThan(frames.get('participant-0')!.x);
+      expect(frames.get('participant-3')!.y).toBeGreaterThan(frames.get('participant-0')!.y);
+      const regions = roomFocusPartnerRegions(frames, viewport);
+      expect(regions).toHaveLength(1);
+      expect(regions[0]!.key).toBe('bottom');
+      expect(regions[0]!.contentHeight).toBeGreaterThan(regions[0]!.bounds.height);
     },
   );
 
-  it('constrains user adjustments to the partner area without moving the main or persisted windows', () => {
-    const viewport = { width: 934, height: 867 };
+  it.each([
+    { width: 1920, height: 1080 }, { width: 1440, height: 900 },
+    { width: 1365, height: 768 }, { width: 1280, height: 720 },
+    { width: 934, height: 867 }, { width: 390, height: 720 },
+  ])('keeps 1, 3, 4 and 8 partners reachable in bounded scrolling regions at $width×$height', (viewport) => {
+    for (const count of [1, 3, 4, 8]) {
+      const nodes = roomFocusNodes(count);
+      const frames = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
+      const regions = roomFocusPartnerRegions(frames, viewport);
+      expect([...frames.keys()]).toEqual(nodes.map((node) => node.id));
+      expect(regions.flatMap((region) => region.windowIds).sort()).toEqual(nodes.slice(1).map((node) => node.id).sort());
+      expect(frames.get('main')!.width).toBeGreaterThanOrEqual(Math.min(640, viewport.width - 20));
+      for (const region of regions) {
+        expect(region.bounds.x).toBeGreaterThanOrEqual(10);
+        expect(region.bounds.x + region.bounds.width).toBeLessThanOrEqual(viewport.width - 10);
+        expect(region.bounds.y + region.bounds.height).toBeLessThanOrEqual(viewport.height - 10);
+        for (const id of region.windowIds) {
+          const frame = frames.get(id)!;
+          expect(frame.width).toBeGreaterThanOrEqual(280);
+          expect(frame.height).toBeGreaterThanOrEqual(280);
+          expect(frame.x).toBeGreaterThanOrEqual(region.bounds.x);
+          // The native host's visible vertical scrollbar consumes 11px.
+          expect(frame.x + frame.width).toBeLessThanOrEqual(region.bounds.x + region.bounds.width - 11);
+          expect(frame.y + frame.height).toBeLessThanOrEqual(region.bounds.y + region.contentHeight);
+        }
+      }
+      const values = [...frames.values()];
+      for (let index = 0; index < values.length; index += 1) {
+        for (const other of values.slice(index + 1)) expect(overlaps(values[index]!, other)).toBe(false);
+      }
+    }
+  });
+
+  it.each([{ width: 1440, height: 900 }, { width: 934, height: 867 }, { width: 390, height: 720 }])('constrains user adjustments to the partner area at $width×$height without moving the main or persisted windows', (viewport) => {
     const nodes = roomFocusNodes(4);
     const before = nodes.map((node) => ({ ...node.bounds }));
     const computed = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46, selectedParticipantId: 'removed' });
@@ -183,7 +224,12 @@ describe('PAWOS collaboration focus', () => {
       'participant-0': { x: 700, y: 20, width: 280, height: 500 },
     }, viewport, { modeBarHeight: 46 }, true);
     expect(normalized.get('main')).toEqual(computed.get('main'));
-    for (const node of nodes.slice(1)) expect(overlaps(normalized.get('main')!, normalized.get(node.id)!)).toBe(false);
+    for (const node of nodes.slice(1)) {
+      const frame = normalized.get(node.id)!;
+      expect(overlaps(normalized.get('main')!, frame)).toBe(false);
+      expect(frame.x).toBeGreaterThanOrEqual(10);
+      expect(frame.x + frame.width).toBeLessThanOrEqual(viewport.width - 10);
+    }
     expect(nodes.map((node) => node.bounds)).toEqual(before);
   });
 

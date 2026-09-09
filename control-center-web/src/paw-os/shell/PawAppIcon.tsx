@@ -35,6 +35,7 @@ const APPROVED_SYMBOL_IDS: Record<PawBuiltinIdentityIconId, string> = {
   'input-studio': 'app-input',
   'app-center': 'app-appcenter',
   'system-monitor': 'app-monitor',
+  'trace-agent': 'app-trace-agent',
   'eval-lab': 'app-eval-lab',
   'system-settings': 'app-settings',
 };
@@ -51,6 +52,7 @@ const APP_COLORS: Record<PawBuiltinIdentityIconId, string> = {
   'input-studio': '#5E5CE6',
   'app-center': '#0E9F8A',
   'system-monitor': '#3E4C59',
+  'trace-agent': '#087E8B',
   'eval-lab': '#C97718',
   'system-settings': '#8E8E93',
 };
@@ -107,6 +109,7 @@ const APPROVED_ART: Record<PawBuiltinIdentityIconId, ReactNode> = {
     <path d="M24 24.5 V39 M24 24.5 11.2 17.2 M24 24.5 36.8 17.2" fill="none" stroke={PAW_ICON_PAPER} strokeLinejoin="round" strokeWidth="3.4" />
   </>,
   'system-monitor': <path d="M9 27.5 h7.5 l3-9.5 5 16.5 3.6-11 H39" fill="none" stroke="#30D158" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.6" />,
+  'trace-agent': <><path d="M12 33 22 24 29 28 37 14" fill="none" stroke={PAW_ICON_PAPER} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.2" /><circle cx="12" cy="33" fill={PAW_ICON_PAPER} r="3.5" /><circle cx="22" cy="24" fill={PAW_ICON_PAPER} r="3.5" /><path d="M29 14 h8 v8" fill="none" stroke={PAW_ICON_PAPER} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.2" /></>,
   'eval-lab': <><path d="M18 10 h12 M21 10 v12 l-8 13 a3 3 0 0 0 2.6 4.5 h16.8 A3 3 0 0 0 35 35 l-8-13 V10" fill="none" stroke={PAW_ICON_PAPER} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.4" /><path d="M16 31 h16" stroke="#FFE0A8" strokeLinecap="round" strokeWidth="3" /></>,
   'system-settings': <>
     <circle cx="24" cy="24" fill="none" r="6.6" stroke={PAW_ICON_PAPER} strokeWidth="3.6" />
@@ -183,9 +186,8 @@ export type PawBrandMarkProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
 };
 
 /**
- * The PAW system mark is a ringed world and its guiding star. It stays static
- * and monochrome on system chrome; rotation belongs to real execution states,
- * never to the brand itself. The favicon shares this 48-unit geometry.
+ * The system mark uses the supplied planetary paw artwork shared by the
+ * native icon and web app icons. It stays static on system chrome.
  */
 export function PawBrandMark({ className = '', size = 16, title, ...props }: PawBrandMarkProps) {
   return (
@@ -203,9 +205,7 @@ export function PawBrandMark({ className = '', size = 16, title, ...props }: Paw
       width={size}
     >
       {title ? <title>{title}</title> : null}
-      <ellipse cx="23" cy="26" fill="none" rx="21" ry="8" stroke="currentColor" strokeWidth="3.5" transform="rotate(-28 23 26)" />
-      <circle cx="23" cy="26" r="9" />
-      <path d="m37 3 1.7 4.3L43 9l-4.3 1.7L37 15l-1.7-4.3L31 9l4.3-1.7Z" />
+      <image height="48" href={`${import.meta.env.BASE_URL}app-icon-192.png?v=20260909`} preserveAspectRatio="xMidYMid meet" width="48" />
     </svg>
   );
 }

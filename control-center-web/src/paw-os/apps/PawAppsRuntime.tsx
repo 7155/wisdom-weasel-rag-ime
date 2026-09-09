@@ -21,6 +21,7 @@ type PawNativeAppId = Extract<PawAppId,
 const loadPawAgentApp = () => import('./entries/PawAgentAppEntry');
 const loadPawBrowserApp = () => import('./entries/PawBrowserAppEntry');
 const loadPawNativeApp = () => import('./entries/PawNativeAppEntry');
+const loadTraceAgentApp = () => import('./entries/PawTraceAgentAppEntry');
 const loadPawOsSatelliteHost = () => import('./entries/PawSatelliteEntry');
 const loadPawResultWindow = () => import('./entries/PawResultWindowEntry');
 const loadFilesApp = async () => ({
@@ -33,6 +34,7 @@ const loadTerminalApp = async () => ({
 const PawAgentApp = lazy(loadPawAgentApp);
 const PawBrowserApp = lazy(loadPawBrowserApp);
 const PawNativeApp = lazy(loadPawNativeApp);
+const TraceAgentApp = lazy(loadTraceAgentApp);
 const PawOsSatelliteHost = lazy(loadPawOsSatelliteHost);
 const PawResultWindow = lazy(loadPawResultWindow);
 const FilesApp = lazy(loadFilesApp);
@@ -47,6 +49,8 @@ export function warmPawAppBody(appId: PawAppId): void {
     ? loadFilesApp
     : appId === 'terminal'
     ? loadTerminalApp
+    : appId === 'trace-agent'
+    ? loadTraceAgentApp
     : isPawExtensionAppId(appId)
     ? undefined
     : loadPawNativeApp;
@@ -99,6 +103,8 @@ function renderApp(appId: PawAppId, entityId?: string, initialRoute?: string, ta
       return <FilesApp initialRoute={initialRoute} />;
     case 'terminal':
       return <TerminalApp />;
+    case 'trace-agent':
+      return <TraceAgentApp initialRoute={initialRoute} />;
     case 'project-workbench':
     case 'memory':
     case 'knowledge':

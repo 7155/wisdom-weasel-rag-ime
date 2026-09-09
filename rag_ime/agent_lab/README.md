@@ -12,6 +12,7 @@ Knowledge owns indexing/retrieval; `db` owns migrations and connections.
 | Reference evaluation | `golden`, `golden_execution`, `golden_pi`, `experiments`, `cost`, `candidate_evidence`, `optimal_path` |
 | Scenario adapters | `micro`, `medium`, `cloudops`, `room_comparison`, `room_merge`, `memory_trial`, `memory_pi`, `rag_trial` |
 | Knowledge preparation | `knowledge`, `knowledge_data` |
+| Persistent optimization experience | `optimization_knowledge`, `optimization_distillation` |
 | Application delivery | `apps`, `app_sources`, `app_assets`, `app_runtime`, `app_knowledge_runtime` |
 
 `app_sources` freezes explicitly selected application files and exports the

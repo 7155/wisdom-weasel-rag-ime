@@ -27,7 +27,7 @@ class InterviewMetricsLedgerTests(unittest.TestCase):
         self.assertTrue(any(item["domain"] == "memory" for item in payload["datasets"]))
         self.assertTrue(any(item["domain"] == "knowledge" for item in payload["datasets"]))
 
-    def test_agent_lab_preview_keeps_report_only_luna_and_expands_candidate_rounds(self) -> None:
+    def test_agent_lab_ledger_keeps_report_only_luna_and_expands_candidate_rounds(self) -> None:
         root = Path(__file__).resolve().parents[1]
         ledger = json.loads(
             (root / "eval/interview-metrics/evidence-ledger.v1.json").read_text(
@@ -48,13 +48,6 @@ class InterviewMetricsLedgerTests(unittest.TestCase):
             "memory.maintenance.luna_v4.20260902",
             "memory.maintenance.luna_v5.20260902",
         } <= metric_ids)
-        preview = (root / "eval/interview-metrics/AGENT_LAB_INTERVIEW_DATA_20260901.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("readable transcriptCount=0", preview)
-        self.assertIn("Reject，仅保留失败回执", preview)
-        self.assertIn("Memory Maintenance Luna v1 → v5", preview)
-        self.assertIn("834.945 s", preview)
 
     def test_claimable_metric_requires_sample_command_and_claim_boundaries(self) -> None:
         payload = {

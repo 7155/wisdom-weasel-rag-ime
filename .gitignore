@@ -50,8 +50,32 @@ control-center-web/.playwright-cli/
 control-center-web/playwright-report/
 control-center-web/test-results/
 
-# Local-only design notes, agent logs, screenshots, and acceptance records.
+# Local development documents; public guidance lives in README and CONTRIBUTING.
 /docs/
+/control-center-web/docs/README.md
+/control-center-web/docs/pawos/
+/control-center-web/docs/handoffs/
+/control-center-web/docs/history/
+/control-center-web/CLOUD_MODEL.md
+/control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md
+/control-center-web/PAWOS_FRONTEND_CONTINUATION.md
+/.agents/*.md
+
+# Checks of local development ledgers and handoff documents.
+/tests/test_pawos_requirement_status.py
+/tests/test_pawos_frontend_source_map.py
+/control-center-web/src/paw-os/real-data-fixtures.test.ts
 
 # Local interface design evidence.
 .impeccable/
+
+# Local evaluation narratives and implementation diaries; datasets stay tracked.
+/eval/micro-selfboot/*.md
+!/eval/micro-selfboot/README.md
+/eval/interview-metrics/*.md
+!/eval/interview-metrics/README.md
+/eval/memory-topic-selfboot/*.md
+/eval/room-blackbox/*.md
+/eval/trace-agent/*.md
+/squirrel-patches/GENERATION_EXPERIENCE.md
+/squirrel-patches/SCENARIO_INTEGRATION.md

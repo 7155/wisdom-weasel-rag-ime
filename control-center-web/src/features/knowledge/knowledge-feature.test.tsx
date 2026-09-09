@@ -24,11 +24,26 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   document.querySelectorAll('[data-test-paw-desktop-root]').forEach((element) => element.remove());
   vi.restoreAllMocks();
 });
 
 describe('document knowledge library', () => {
+  it('collapses the actual App library index while retaining the current search draft and a library selector', async () => {
+    const user = userEvent.setup();
+    renderKnowledge(createTransport(), '/knowledge', true);
+    const query = await screen.findByRole('textbox', { name: '搜索知识库' });
+    await user.type(query, '保留检索草稿');
+    const rail = screen.getByRole('complementary', { name: '文档知识库' });
+    await user.click(screen.getByRole('button', { name: '收起知识库目录' }));
+    expect(rail).not.toBeVisible();
+    expect(query).toHaveValue('保留检索草稿');
+    expect(screen.getByRole('combobox', { name: '当前知识库' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '展开知识库目录' }));
+    expect(rail).toBeVisible();
+    expect(query).toHaveValue('保留检索草稿');
+  });
   it('starts with search and reveals configuration only from the library tools menu', async () => {
     const user = userEvent.setup();
     const transport = createTransport();

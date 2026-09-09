@@ -399,9 +399,7 @@
       },
       "evidenceRefs": [
         "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-validation-20260902.v1.json",
-        ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-v20.json",
         "eval/interview-metrics/runs/enterprise-rag-answer-evidence-validation-reject-20260901.v1.json",
-        "build/managed-pi-runtime/luna-output-budget-compat-920e42b9c/manifest.json",
         "scripts/run_rag_agent_ablation.py",
         "tests/test_run_rag_agent_ablation.py"
       ],
@@ -415,7 +413,8 @@
         "Agentic token usage is incomplete and must not be compared to Sol's zero failure placeholder",
         "observed latency/token deltas include the source-local compatibility runtime envelope and are descriptive, not a pure model-causal claim",
         "no frozen USD price snapshot or Provider bill is bound, so cost and savings are intentionally unreported",
-        "Held-out remained closed and no production Knowledge mutation or runtime installation occurred"
+        "Held-out remained closed and no production Knowledge mutation or runtime installation occurred",
+        "Raw report and build manifest remain local-only; their original paths are preserved in the published validation receipt."
       ]
     },
     {
@@ -762,8 +761,7 @@
         "status": "validates the frozen receipt; it does not rerun the historical live Room"
       },
       "evidenceRefs": [
-        "release/product-status.json",
-        "OUTCOMES.md"
+        "release/product-status.json"
       ],
       "claim": {
         "allowed": "在 2026-08-16 的安装开发版自举验收中，3 个参与者、2 个受委派 Partner 完成 19 个 Tool step、1/1 任务、唯一 final，并通过浏览器刷新恢复。",
@@ -797,11 +795,11 @@
         "unit": "installed bounded Session canary"
       },
       "reproduction": {
-        "command": "rg -n '6.4 seconds|stopping.*35 ms|384 ms|eight terminal events|660 bytes' OUTCOMES.md",
+        "command": "git show 34d940969258550a8685433b00450aac74f0206e:OUTCOMES.md",
         "status": "reads the recorded outcome; the original installed canary command is not retained in this ledger"
       },
       "evidenceRefs": [
-        "OUTCOMES.md"
+        "https://github.com/7155/personal-agent-workbench/blob/34d940969258550a8685433b00450aac74f0206e/OUTCOMES.md#o1--long-running-session"
       ],
       "claim": {
         "allowed": "2026-08-16 安装版有一轮有界生命周期 canary：Stop 384 ms、浏览器 stopping 投影 35 ms、8/8 Tool 终态、最大公开事件 660 B。",
@@ -996,7 +994,7 @@
         "rag_ime/contracts/json/trace-envelope.v1.json",
         "rag_ime/contracts/json/eval-run.v1.json",
         "rag_ime/contracts/json/sandbox-run.v1.json",
-        "eval/interview-metrics/TRACE_EVAL_COMPATIBILITY.md"
+        "https://github.com/7155/personal-agent-workbench/blob/67b81f89b87b251ff6c2807344901638f15be15a/eval/interview-metrics/TRACE_EVAL_COMPATIBILITY.md"
       ],
       "claim": {
         "allowed": "公共 Trace/Eval/Sandbox 契约骨架已有 10 个聚焦测试通过，并以构造约束分开 Ground Truth 与 AI Judge，提供两个共用 harness 的公开垂直示例。",

@@ -1058,7 +1058,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn("sessionFile", str(result))
         self.assertNotIn(str(Path(self.tmp.name)), str(result))
 
-    def test_trace_diagnostics_exposes_one_bounded_read_only_multi_target_inspector(self) -> None:
+    def test_trace_diagnostics_exposes_bounded_inspection_and_scoped_knowledge_read(self) -> None:
         class _TraceDiagnostics:
             def trace_diagnostic_inspection(self, payload):
                 return {
@@ -1076,7 +1076,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 branch["properties"]["op"]["const"]
                 for branch in manifest["parameters"]["oneOf"]
             },
-            {"inspect"},
+            {"inspect", "read", "command"},
         )
 
         result = self.gateway.execute(

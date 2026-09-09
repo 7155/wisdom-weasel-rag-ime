@@ -28,6 +28,9 @@ class ControlPathId(str, Enum):
     OBSERVABILITY_TRACE_GET = "observability.trace.get"
     OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST = "observability.traceDiagnosticReports.list"
     OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_GET = "observability.traceDiagnosticReport.get"
+    OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_OPTIMIZATION = "observability.traceDiagnosticReport.optimizationCommand"
+    OBSERVABILITY_TRACE_OPTIMIZATION_LIBRARY = "observability.traceOptimization.library"
+    OBSERVABILITY_TRACE_OPTIMIZATION_CAPABILITIES = "observability.traceOptimization.capabilities"
     OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_CREATE = "observability.traceDiagnosticReports.create"
     OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_FINALIZE = "observability.traceDiagnosticReport.finalize"
     OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_REPAIR_AUTHORIZE = "observability.traceDiagnosticReport.repairAuthorize"
@@ -781,7 +784,10 @@ def default_route_policy() -> ControlRoutePolicy:
         # observability, but must not enumerate or retrieve these reports.
         _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST, ControlMethod.GET, "/api/observability/trace-diagnostic-reports", None, query={"limit", "cursor"}),
         _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_GET, ControlMethod.GET, "/api/observability/trace-diagnostic-reports/{reportId}", None, params=_OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT),
-        _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_CREATE, ControlMethod.POST, "/api/observability/trace-diagnostic-reports", None, body={"diagnosticSessionId", "title", "targets"}, required_body={"diagnosticSessionId", "targets"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_CREATE, ControlMethod.POST, "/api/observability/trace-diagnostic-reports", None, body={"diagnosticSessionId", "title", "targets", "intent"}, required_body={"diagnosticSessionId", "targets"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_OPTIMIZATION, ControlMethod.POST, "/api/observability/trace-diagnostic-reports/{reportId}/optimization", None, params=_OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT, body={"operation", "clientRequestId", "candidateId", "action", "input"}, required_body={"operation", "clientRequestId"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_OPTIMIZATION_LIBRARY, ControlMethod.GET, "/api/observability/trace-optimization", None, query={"projectId", "query", "patternId", "revision", "offset"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_OPTIMIZATION_CAPABILITIES, ControlMethod.GET, "/api/observability/trace-optimization/capabilities", None),
         _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_FINALIZE, ControlMethod.POST, "/api/observability/trace-diagnostic-reports/{reportId}/finalize", None, params=_OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT, body={"expectedRevision"}, required_body={"expectedRevision"}),
         _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_REPAIR_AUTHORIZE, ControlMethod.POST, "/api/observability/trace-diagnostic-reports/{reportId}/repair-authorize", None, params=_OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT, body={"expectedRevision", "findingId", "sourceScope", "sourceTraceId", "failureRef", "repairSessionId"}, required_body={"expectedRevision", "findingId", "sourceScope", "sourceTraceId", "failureRef", "repairSessionId"}),
         _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_REPAIR_VERIFY, ControlMethod.POST, "/api/observability/trace-diagnostic-reports/{reportId}/repair-verify", None, params=_OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT, body={"expectedRevision", "repairReceiptId", "verificationReceiptId"}, required_body={"expectedRevision", "repairReceiptId"}),

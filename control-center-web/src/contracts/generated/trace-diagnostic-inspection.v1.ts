@@ -5,6 +5,7 @@
  */
 
 export interface TraceDiagnosticInspectionV1 {
+  intent?: OptimizationIntent;
   schemaVersion: 'rag-ime.trace-diagnostic-inspection.v1';
   generatedAtMs: number;
   /**
@@ -57,6 +58,39 @@ export interface TraceDiagnosticInspectionV1 {
     evidence: boolean;
     traceIds: boolean;
   };
+}
+export interface OptimizationIntent {
+  mode: 'improve' | 'distill';
+  scopeMode: 'all' | 'selected';
+  /**
+   * @minItems 1
+   * @maxItems 5
+   */
+  focusAreas:
+    | ['tool' | 'skill' | 'prompt' | 'workflow' | 'model']
+    | [
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+      ]
+    | [
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+      ]
+    | [
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+      ]
+    | [
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+      ];
+  objective: string;
 }
 export interface Target {
   targetKey: string;

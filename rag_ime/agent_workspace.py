@@ -3742,6 +3742,14 @@ class WorkspaceHarness:
     def execute(self, prepared: PreparedWorkspaceCommand) -> dict[str, object]:
         return self._executor(prepared)
 
+    def execute_cancellable(self, prepared: PreparedWorkspaceCommand, cancelled: Callable[[], bool]) -> dict[str, object]:
+        """Use the same process owner while a Lab job supplies its stop flag."""
+        if self._executor == self._run_sandboxed:
+            return self._run_sandboxed(prepared, cancelled=cancelled)
+        # Explicit injected executors retain execution ownership (for example
+        # deterministic fixtures); never bypass them with a real subprocess.
+        return self._executor(prepared)
+
     def preview(self, prepared: PreparedWorkspaceCommand) -> dict[str, object]:
         return {
             "title": "确认运行系统命令" if prepared.unrestricted else "确认运行工作区命令",
@@ -4184,7 +4192,7 @@ class WorkspaceHarness:
             redacted = pattern.sub(replacement, redacted)
         return redacted
 
-    def _run_sandboxed(self, prepared: PreparedWorkspaceCommand) -> dict[str, object]:
+    def _run_sandboxed(self, prepared: PreparedWorkspaceCommand, *, cancelled: Callable[[], bool] | None = None) -> dict[str, object]:
         started_at_ms = int(time.time() * 1_000)
         launched = self._spawn_sandboxed(prepared)
         process = launched.process
@@ -4192,6 +4200,7 @@ class WorkspaceHarness:
             output, timed_out, output_limited = self._bounded_output(
                 process,
                 prepared.timeout_seconds,
+                cancelled=cancelled,
             )
             # Keep the leader waitable until its descendants have been stopped.
             # Reaping first would allow its PID/process-group number to be reused.
@@ -4401,6 +4410,7 @@ class WorkspaceHarness:
         self,
         process: subprocess.Popen[bytes],
         timeout_seconds: int,
+        *, cancelled: Callable[[], bool] | None = None,
     ) -> tuple[bytes, bool, bool]:
         if process.stdout is None:
             return b"", False, False
@@ -4413,6 +4423,9 @@ class WorkspaceHarness:
         output_limited = False
         try:
             while selector.get_map():
+                if cancelled is not None and cancelled():
+                    self._terminate_group(process)
+                    break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     timed_out = True

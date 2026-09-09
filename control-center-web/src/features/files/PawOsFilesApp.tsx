@@ -29,6 +29,7 @@ import { RichHtmlPreview } from '@/features/agent/file-preview/RichHtmlPreview';
 import '@/features/agent/file-preview/file-preview.css';
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
 import { EvidenceEchoUsage } from '@/features/evidence-echo/EvidenceEchoUsage';
+import { AppSidebarToggle, useAppSidebar } from '@/paw-os/apps/app-sidebar';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '@/paw-os/shell/PawWindowChrome';
 import { writeClipboardText } from '@/platform/clipboard';
 import { SvgFilePreview } from './SvgFilePreview';
@@ -100,6 +101,9 @@ const FILE_FAMILY: Record<string, string> = {
 
 export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } = {}) {
   const transport = useControlTransport();
+  const sidebar = useAppSidebar('files');
+  const [treeVisible, setTreeVisible] = useState(!sidebar.collapsed);
+  const [treeRevealed, setTreeRevealed] = useState(false);
   const windowChromeTarget = usePawWindowChromeTarget();
   const requested = useMemo(() => requestedWorkspaceFile(initialRoute), [initialRoute]);
   const requestedKey = JSON.stringify([requested.sessionId, requested.path]);
@@ -489,8 +493,21 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
 
   function goBackToTree(): void {
     if (!selectedFile) return;
+    sidebar.setCollapsed(false);
     pendingFocusPathRef.current = selectedFile.path;
     setSelectedFile(null);
+  }
+
+  function toggleTree(): void {
+    if (sidebar.collapsed || treeHidden()) {
+      sidebar.setCollapsed(false);
+      // The narrow pane can reveal the same mounted tree without throwing
+      // away the selected file, its preview, or an in-progress editor draft.
+      setTreeRevealed(true);
+    } else {
+      sidebar.setCollapsed(true);
+      setTreeRevealed(false);
+    }
   }
 
   /** Expand a directory's ancestor chain and hand tree focus to it. In the
@@ -505,7 +522,10 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     });
     void loadDirectory(path);
     pendingFocusPathRef.current = path;
-    if (treeHidden()) setSelectedFile(null);
+    if (treeHidden()) {
+      sidebar.setCollapsed(false);
+      setSelectedFile(null);
+    }
   }
 
   function openFilterMatch(entry: WorkspaceEntry): void {
@@ -536,6 +556,8 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
 
   // When the narrow layout swaps the tree for the reader, focus travels with
   // the content; going back restores focus to the row that opened the file.
+  useLayoutEffect(() => { setTreeRevealed(false); }, [selectedFile]);
+  useLayoutEffect(() => { setTreeVisible(!treeHidden()); }, [selectedFile, sidebar.collapsed, treeRevealed]);
   useEffect(() => {
     if (selectedFile && treeHidden()) backButtonRef.current?.focus();
   }, [selectedFile]);
@@ -548,6 +570,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
   useEffect(() => {
     if (!selectedFile) return;
     const repairStrandedRailFocus = (): void => {
+      setTreeVisible(!treeHidden());
       const rail = treeRef.current;
       if (!rail || !holdsFocusRef.current || !treeHidden()) return;
       const active = document.activeElement;
@@ -684,6 +707,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
 
   const filesTools = (
     <div className="paw-files-app__toolbar" data-window-chrome={windowChromeTarget ? true : undefined}>
+      <AppSidebarToggle className="paw-files-tree-toggle" collapsed={sidebar.collapsed || !treeVisible} controlsId={sidebar.controlsId} label="文件目录" onToggle={toggleTree} toggleRef={sidebar.toggleRef} />
       <label className="paw-files-scope">
         <FolderTree aria-hidden="true" size={13} />
         <span className="sr-only">Session</span>
@@ -734,8 +758,8 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
         <h1 className="paw-files-app__title">Session 文件</h1>
         {windowChromeTarget ? null : filesTools}
         {sessionIssue ? <div className="paw-native-app__error" role="alert"><TriangleAlert size={16} />{sessionIssue}<button onClick={() => void loadSessions()} type="button">重试</button></div> : null}
-        <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined} ref={workspaceRef}>
-        <aside className="paw-files-tree" aria-label="Session 授权工作区" ref={treeRef}>
+        <div className="paw-files-app__workspace" data-file-open={selectedFile ? true : undefined} data-sidebar-collapsed={sidebar.collapsed} data-tree-revealed={treeRevealed || undefined} ref={workspaceRef}>
+        <aside className="paw-files-tree" aria-label="Session 授权工作区" {...sidebar.contentProps} ref={(node) => { treeRef.current = node; sidebar.contentProps.ref(node); }}>
           {roots.length ? (
             <header className="paw-files-tree__head">
               <strong>目录</strong>

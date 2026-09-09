@@ -67,6 +67,7 @@ import {
 } from '@/features/roles/role-model';
 import type { PawAppId } from '../runtime/app-registry';
 import { pawApp } from '../runtime/app-registry';
+import { AppSidebarToggle, useAppSidebar } from './app-sidebar';
 
 const ApprovalsFeature = lazy(async () => ({ default: (await import('@/features/approvals')).ApprovalsFeature }));
 const ConfigurationFeature = lazy(async () => ({ default: (await import('@/features/configuration')).ConfigurationFeature }));
@@ -79,7 +80,6 @@ const HistoryFeature = lazy(async () => ({ default: (await import('@/features/hi
 const PluginsFeature = lazy(async () => ({ default: (await import('@/features/plugins')).PluginsFeature }));
 const ModelRoutingPanel = lazy(async () => ({ default: (await import('@/features/roles')).ModelRoutingPanel }));
 const ObservabilityFeature = lazy(async () => ({ default: (await import('@/features/observability')).ObservabilityFeature }));
-const TraceAgentFeature = lazy(async () => ({ default: (await import('@/features/trace-agent')).TraceAgentFeature }));
 const VoiceFeature = lazy(async () => ({ default: (await import('@/features/voice')).VoiceFeature }));
 const InputLexiconFeature = lazy(async () => ({ default: (await import('@/features/input-method')).InputLexiconFeature }));
 const InputMethodFeature = lazy(async () => ({ default: (await import('@/features/input-method')).InputMethodFeature }));
@@ -124,7 +124,6 @@ const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
     { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时', purpose: '持续接收运行事件，回看发生时的状态' },
     { id: 'evolution-report', label: '优化报告', icon: FlaskConical, route: '/evolution-report', group: '实验', purpose: '在独立网页读懂冻结实验、指标与 Keep / Reject 边界', external: true },
     { id: 'context', label: '上下文', icon: Network, route: '/context-debug', group: '排查', purpose: '逐轮查看模型实际收到的上下文' },
-    { id: 'trace-agent', label: 'Trace Agent', icon: Search, route: '/trace-agent', group: '排查', purpose: '选择一段对话，让 Agent 解释失败、浪费与改进方向' },
     { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics', group: '排查', purpose: '各组件自报的状态与可执行的检查' },
   ],
   'system-settings': [
@@ -162,6 +161,7 @@ export function PawSystemAppsMigrated({
   initialRoute = '',
 }: PawSystemAppsMigratedProps) {
   const pages = systemPages[appId];
+  const sidebar = useAppSidebar(appId);
   const app = pawApp(appId);
   const desktop = usePawOsDesktop();
   const route = initialRoute || app.route || pages[0].route;
@@ -178,9 +178,10 @@ export function PawSystemAppsMigrated({
       data-stage={systemStageKind[appId]}
       data-system-app={appId}
     >
-      <div className="paw-system-app__frame">
+      <div className="paw-system-app__frame" data-sidebar-collapsed={sidebar.collapsed}>
         <aside className="paw-system-app__nav">
-          <nav aria-label={`${app.label}页面`}>
+          <AppSidebarToggle collapsed={sidebar.collapsed} controlsId={sidebar.controlsId} label={`${app.label}导航`} onToggle={() => sidebar.setCollapsed(!sidebar.collapsed)} toggleRef={sidebar.toggleRef} />
+          <nav aria-label={`${app.label}页面`} {...sidebar.contentProps}>
             {pages.map((candidate, index) => {
               const Icon = candidate.icon;
               const current = !candidate.external && candidate.id === page.id;
@@ -285,7 +286,6 @@ function PawSystemSurface({ appId, pageId }: { appId: PawSystemAppId; pageId: st
   }
   if (appId === 'system-monitor') {
     if (pageId === 'context') return <ContextDebugFeature />;
-    if (pageId === 'trace-agent') return <TraceAgentFeature />;
     if (pageId === 'diagnostics') return <DiagnosticsFeature />;
     return <ObservabilityFeature />;
   }

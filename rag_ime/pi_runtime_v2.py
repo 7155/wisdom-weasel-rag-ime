@@ -137,6 +137,11 @@ def _bound_session_resource_snapshot(
     }
     if "promptSettings" in snapshot:
         result["promptSettings"] = normalize_prompt_settings(snapshot["promptSettings"])
+    if "candidateSkillPaths" in snapshot:
+        paths = snapshot["candidateSkillPaths"]
+        if not isinstance(paths, list) or len(paths) > 8 or any(not isinstance(path, str) or not path or len(path) > 4096 for path in paths):
+            return None
+        result["candidateSkillPaths"] = list(paths)
     return result
 
 
@@ -608,6 +613,7 @@ class PiRuntimeHostManager:
         skill_allowlist_provider: SkillAllowlistProvider | None = None,
         compaction_observer: CompactionObserver | None = None,
         prompt_settings_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
+        candidate_skill_paths_provider: Callable[[Mapping[str, object]], list[str]] | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
@@ -620,6 +626,7 @@ class PiRuntimeHostManager:
         self._skill_allowlist_provider = skill_allowlist_provider
         self._compaction_observer = compaction_observer
         self._prompt_settings_provider = prompt_settings_provider
+        self._candidate_skill_paths_provider = candidate_skill_paths_provider
         self._lifecycle_lock = threading.RLock()
         self._model_catalog_lock = threading.Lock()
         self._lock = threading.RLock()
@@ -835,6 +842,29 @@ class PiRuntimeHostManager:
             self._status = "ready"
         return client
 
+    @staticmethod
+    def _candidate_skill_paths(value: object, cwd: str) -> list[str]:
+        if not isinstance(value, list) or len(value) > 8:
+            raise PiRuntimeError("Candidate Skill paths must be a bounded host-provided list")
+        if not value:
+            return []
+        root = Path(cwd).expanduser().resolve(strict=True)
+        result = []
+        for raw in value:
+            if not isinstance(raw, str) or len(raw) > 4096 or not Path(raw).is_absolute():
+                raise PiRuntimeError("Candidate Skill path must be absolute")
+            try:
+                path = Path(raw).resolve(strict=True)
+                entry = (path / "SKILL.md").resolve(strict=True)
+            except OSError as error:
+                raise PiRuntimeError("Candidate Skill resource is unavailable") from error
+            if path == root or not path.is_dir() or not path.is_relative_to(root) or not entry.is_file() or not entry.is_relative_to(path):
+                raise PiRuntimeError("Candidate Skill must remain inside its isolated Session workspace")
+            if str(path) in result:
+                raise PiRuntimeError("Candidate Skill paths must be unique")
+            result.append(str(path))
+        return result
+
     def _session_skill_allowlist(
         self,
         session: Mapping[str, object],
@@ -983,6 +1013,13 @@ class PiRuntimeHostManager:
                 resource_snapshot = _session_resource_snapshot(skill_allowlist)
                 if prompt_settings is not None:
                     resource_snapshot["promptSettings"] = dict(prompt_settings)
+                candidate_paths_provider = self._candidate_skill_paths_provider
+                paths = candidate_paths_provider(session) if candidate_paths_provider is not None else []
+                if paths:
+                    resource_snapshot["candidateSkillPaths"] = self._candidate_skill_paths(paths, cwd)
+            candidate_skill_paths = self._candidate_skill_paths(resource_snapshot.get("candidateSkillPaths", []), cwd)
+            if candidate_skill_paths and (not self._host_capabilities.get("sessionCandidateSkillPaths") or not skill_allowlist or not bool(session.get("piSkillsEnabled"))):
+                raise PiRuntimeError("Pi Runtime Host does not support isolated candidate Skill loading; update the managed Runtime before evaluating this Skill")
             if (
                 skill_allowlist is not None
                 and not bool(self._host_capabilities.get("sessionSkillAllowlist"))
@@ -1034,6 +1071,8 @@ class PiRuntimeHostManager:
             }
             if skill_allowlist is not None:
                 params["skillAllowlist"] = skill_allowlist
+            if candidate_skill_paths:
+                params["candidateSkillPaths"] = candidate_skill_paths
             compaction_instructions = str((prompt_settings or {}).get("compactionInstructions") or "")
             if prompt_settings is not None:
                 if not self._host_capabilities.get("sessionPromptSettings"):

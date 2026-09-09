@@ -5,7 +5,7 @@
  * buttons always retain the real participant identity behind them.
  */
 
-/* Focus keeps the conversation on one white working surface. The 48px
+/* Focus keeps the conversation on one opaque working surface. The 48px
  * roster matches the reserved geometry in layoutRoomCollaborationFocus. */
 .paw-desktop-root .paw-window-layer[data-room-focus] .paw-room-focus-plane {
   background: var(--paw-stellar-bg, #f5f7fb);
@@ -45,7 +45,7 @@
   align-items: center;
   gap: 12px;
   padding: 0 14px;
-  background: #fff;
+  background: var(--paw-stellar-surface, #fff);
   border-bottom: 1px solid var(--paw-stellar-line, #dce3ed);
   color: var(--paw-stellar-ink, #1c2636);
   pointer-events: auto;
@@ -84,25 +84,25 @@
 .paw-desktop-root .paw-room-focus-participants__empty { color: var(--paw-stellar-muted, #627086); font-size: 12px; }
 .paw-desktop-root .paw-room-focus-participant small { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
 .paw-desktop-root .paw-room-focus-participant > i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #788495; }
-.paw-desktop-root .paw-room-focus-participant > i[data-state='running'] { background: #3567b7; }
-.paw-desktop-root .paw-room-focus-participant > i[data-state='completed'] { background: #277353; }
-.paw-desktop-root .paw-room-focus-participant > i:is([data-state='failed'], [data-state='blocked']) { background: #b64343; }
-.paw-desktop-root .paw-room-focus-participant > i:is([data-state='review'], [data-state='waiting']) { background: #896009; }
+.paw-desktop-root .paw-room-focus-participant > i[data-state='running'] { background: var(--paw-stellar-accent, #3567b7); }
+.paw-desktop-root .paw-room-focus-participant > i[data-state='completed'] { background: var(--paw-stellar-success, #277353); }
+.paw-desktop-root .paw-room-focus-participant > i:is([data-state='failed'], [data-state='blocked']) { background: var(--paw-stellar-danger, #b64343); }
+.paw-desktop-root .paw-room-focus-participant > i:is([data-state='review'], [data-state='waiting']) { background: var(--paw-stellar-warning, #896009); }
 .paw-desktop-root .paw-room-focus-participant[aria-pressed='true'],
-.paw-desktop-root .paw-room-focus-participants__traffic[aria-expanded='true'] { color: #285796; background: #edf3fb; }
+.paw-desktop-root .paw-room-focus-participants__traffic[aria-expanded='true'] { color: var(--paw-stellar-accent, #285796); background: var(--paw-stellar-process, #edf3fb); }
 .paw-desktop-root .paw-room-focus-participants :focus-visible,
 .paw-desktop-root .paw-planet-detach:focus-visible { outline: 2px solid #3567b7; outline-offset: -2px; }
 @media (hover: hover) and (pointer: fine) {
   .paw-desktop-root .paw-room-focus-participant:hover,
-  .paw-desktop-root .paw-room-focus-participants__traffic:hover { background: #f0f3f8; }
+  .paw-desktop-root .paw-room-focus-participants__traffic:hover { background: var(--paw-stellar-process, #f0f3f8); }
 }
 .paw-desktop-root .paw-window-shell[data-focus-layout] .paw-planet-surface {
   overflow: hidden;
   border-radius: 12px;
-  box-shadow: 0 12px 32px rgb(28 38 54 / 12%);
+  box-shadow: none;
 }
-.paw-desktop-root .paw-window-shell[data-focus-layout] .paw-planet-identity { min-height: 40px; padding: 7px 10px; cursor: grab; }
-.paw-desktop-root .paw-window-shell[data-focus-layout] .paw-planet-identity > small { flex: 1; }
+.paw-desktop-root .paw-window-shell[data-focus-layout] .paw-planet-identity { min-height: 56px; padding: 8px 12px; cursor: grab; }
+.paw-desktop-root .paw-window-shell[data-focus-layout] .paw-planet-model-slot { flex: 0 1 auto; max-width: 30%; }
 .paw-desktop-root .paw-planet-detach,
 .paw-desktop-root .paw-window-shell[data-focus-layout] .paw-planet-close {
   width: 28px;
@@ -119,9 +119,13 @@
 }
 .paw-desktop-root .paw-planet-detach { margin-left: auto; }
 .paw-desktop-root .paw-window-shell[data-focus-layout] .paw-planet-close { margin-left: 0; }
-.paw-desktop-root .paw-room-focus-satellite-rail { position: absolute; z-index: 10; inset-inline: 0; overflow: auto hidden; overscroll-behavior-x: contain; pointer-events: auto; scrollbar-width: thin; scrollbar-color: #a8b4c4 transparent; }
+.paw-desktop-root .paw-room-focus-satellite-rail { position: absolute; z-index: 10; min-width: 0; min-height: 0; overflow: hidden auto; overscroll-behavior-y: contain; pointer-events: auto; scrollbar-width: thin; scrollbar-color: var(--paw-stellar-muted, #a8b4c4) transparent; }
 .paw-desktop-root .paw-room-focus-satellite-rail:focus-visible { outline: 2px solid #3567b7; outline-offset: -2px; }
-.paw-desktop-root .paw-room-focus-satellite-track { position: relative; height: 100%; min-width: 100%; }
+.paw-desktop-root .paw-room-focus-satellite-track { position: relative; width: 100%; min-height: 100%; }
+/* Ordinary resize handles extend 12px beyond their window. In a scrolling
+ * partner area that creates a scrollbar and clips the last content controls.
+ * Keep the existing inner hit area without enlarging this area's scroll box. */
+.paw-desktop-root .paw-room-focus-satellite-rail .paw-window-shell[data-focus-layout] { overflow: clip; }
 .paw-desktop-root .paw-room-focus-traffic.paw-room-focus-overview {
   position: absolute;
   z-index: 45;
@@ -135,11 +139,11 @@
   overflow: auto;
   overscroll-behavior: contain;
   border-radius: 12px;
-  background: #fff;
+  background: var(--paw-stellar-surface, #fff);
   box-shadow: 0 12px 32px rgb(28 38 54 / 14%);
   pointer-events: auto;
 }
-.paw-desktop-root .paw-room-focus-traffic__header { position: sticky; z-index: 1; top: 0; display: flex; align-items: center; justify-content: space-between; min-height: 48px; margin-bottom: 12px; background: #fff; border-bottom: 1px solid var(--focus-line); }
+.paw-desktop-root .paw-room-focus-traffic__header { position: sticky; z-index: 1; top: 0; display: flex; align-items: center; justify-content: space-between; min-height: 48px; margin-bottom: 12px; background: var(--focus-surface); border-bottom: 1px solid var(--focus-line); }
 .paw-desktop-root .paw-room-focus-traffic__header > strong { font-size: 14px; font-weight: 600; }
 .paw-desktop-root .paw-room-focus-traffic__header > button { display: inline-grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 6px; color: var(--focus-muted); background: transparent; cursor: pointer; }
 @media (max-width: 640px) {
@@ -160,9 +164,9 @@
      "running/waiting/blocked/complete" reads as the exact same colour in the
      Focus console, the chronology work-strip and the flow ledger. */
   --focus-blue: var(--paw-stellar-accent, #3567b7);
-  --focus-green: #277353;
-  --focus-amber: #896009;
-  --focus-red: #b64343;
+  --focus-green: var(--paw-stellar-success, #277353);
+  --focus-amber: var(--paw-stellar-warning, #896009);
+  --focus-red: var(--paw-stellar-danger, #b64343);
   --focus-ink: var(--paw-stellar-ink, #1c2636);
   --focus-muted: var(--paw-stellar-muted, #627086);
   --focus-line: var(--paw-stellar-line, #dce3ed);
@@ -178,7 +182,7 @@
   color: var(--focus-ink);
   background: var(--paw-stellar-bg, #f5f7fb);
   container: room-focus / inline-size;
-  color-scheme: light;
+  color-scheme: inherit;
   scrollbar-color: var(--focus-line) transparent;
 }
 

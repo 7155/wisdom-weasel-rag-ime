@@ -15,6 +15,7 @@ import { PawNativeApp } from './PawNativeApps';
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   delete document.documentElement.dataset.theme;
   document.documentElement.style.removeProperty('color-scheme');
 });
@@ -34,7 +35,6 @@ describe('PAWOS native Apps', () => {
     ['project-workbench', '/planning', '任务'],
     ['project-workbench', '/work-documents', '工作文档'],
     ['memory', '/memory?view=preferences', '记忆偏好'],
-    ['knowledge', '/knowledge', '知识库'],
     ['input-studio', '/history', '输入记录'],
     ['app-center', '/plugins?view=catalog', '目录'],
     ['system-monitor', '/context-debug', '上下文'],
@@ -46,6 +46,22 @@ describe('PAWOS native Apps', () => {
     const target = within(navigation).getByRole('button', { name: label });
     expect(target).toHaveAttribute('aria-label', label);
     expect(target).toHaveAttribute('aria-current', 'page');
+  });
+
+  it.each(['project-workbench', 'memory', 'eval-lab'] as const)('keeps %s page navigation collapsible without remounting the page', async (appId) => {
+    const user = userEvent.setup();
+    const view = renderNative(appId, nativeTransport());
+    const toggle = screen.getByRole('button', { name: /(?:展开|收起).*导航$/ });
+    if (toggle.getAttribute('aria-expanded') === 'false') await user.click(toggle);
+    const page = view.container.querySelector('.paw-native-page');
+    const navigation = screen.getByRole('navigation');
+    expect(toggle).toHaveAttribute('aria-controls', navigation.id);
+    await user.click(toggle);
+    expect(navigation).not.toBeVisible();
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(view.container.querySelector('.paw-native-page')).toBe(page);
+    await user.click(toggle);
+    expect(navigation).toBeVisible();
   });
 
   it('recomposes Project routes as one OS workspace instead of rendering legacy pages', async () => {
@@ -240,9 +256,14 @@ describe('PAWOS native Apps', () => {
     // The rail is the wide-window selector; its rows are virtualised, so only
     // its index header is measurable here.
     const rail = await screen.findByRole('complementary', { name: '文档知识库' });
+    expect(document.querySelector('.paw-native-nav')).toBeNull();
     expect(within(rail).getByText('1 个独立库')).toBeInTheDocument();
     expect(within(rail).queryByRole('button', { name: '刷新知识库' })).toBeNull();
     expect(transport.requests.map(({ request }) => request.pathId)).toContain('knowledgeBases.get');
+    await user.click(screen.getByRole('button', { name: '收起知识库目录' }));
+    expect(rail).not.toBeVisible();
+    await user.click(screen.getByRole('button', { name: '展开知识库目录' }));
+    expect(rail).toBeVisible();
   });
 
   it('keeps Appearance inside a native System Settings split view', async () => {

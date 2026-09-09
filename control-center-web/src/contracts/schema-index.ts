@@ -25770,6 +25770,9 @@ export const contractSchemas = {
       "truncated"
     ],
     "properties": {
+      "intent": {
+        "$ref": "#/$defs/optimizationIntent"
+      },
       "schemaVersion": {
         "const": "rag-ime.trace-diagnostic-inspection.v1"
       },
@@ -25840,6 +25843,51 @@ export const contractSchemas = {
       }
     },
     "$defs": {
+      "optimizationIntent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "scopeMode",
+          "focusAreas",
+          "objective"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "improve",
+              "distill"
+            ]
+          },
+          "scopeMode": {
+            "enum": [
+              "all",
+              "selected"
+            ]
+          },
+          "focusAreas": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "enum": [
+                "tool",
+                "skill",
+                "prompt",
+                "workflow",
+                "model"
+              ],
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          }
+        }
+      },
       "target": {
         "type": "object",
         "additionalProperties": false,
@@ -26463,6 +26511,51 @@ export const contractSchemas = {
       }
     },
     "$defs": {
+      "optimizationIntent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "scopeMode",
+          "focusAreas",
+          "objective"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "improve",
+              "distill"
+            ]
+          },
+          "scopeMode": {
+            "enum": [
+              "all",
+              "selected"
+            ]
+          },
+          "focusAreas": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "enum": [
+                "tool",
+                "skill",
+                "prompt",
+                "workflow",
+                "model"
+              ],
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          }
+        }
+      },
       "item": {
         "type": "object",
         "additionalProperties": false,
@@ -26480,6 +26573,14 @@ export const contractSchemas = {
           "updatedAtMs"
         ],
         "properties": {
+          "intent": {
+            "$ref": "#/$defs/optimizationIntent"
+          },
+          "optimizationProjectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
           "reportId": {
             "type": "string",
             "pattern": "^trace-report:[a-f0-9]{32}$"
@@ -26628,6 +26729,20 @@ export const contractSchemas = {
       "updatedAtMs"
     ],
     "properties": {
+      "intent": {
+        "$ref": "#/$defs/optimizationIntent"
+      },
+      "optimizationProjectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "optimization": {
+        "$ref": "#/$defs/optimization"
+      },
+      "distillation": {
+        "$ref": "#/$defs/distillation"
+      },
       "schemaVersion": {
         "const": "rag-ime.trace-diagnostic-report.v1"
       },
@@ -26704,6 +26819,1155 @@ export const contractSchemas = {
       }
     },
     "$defs": {
+      "optimizationIntent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "scopeMode",
+          "focusAreas",
+          "objective"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "improve",
+              "distill"
+            ]
+          },
+          "scopeMode": {
+            "enum": [
+              "all",
+              "selected"
+            ]
+          },
+          "focusAreas": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "enum": [
+                "tool",
+                "skill",
+                "prompt",
+                "workflow",
+                "model"
+              ],
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          }
+        }
+      },
+      "optimizationChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "targetRef",
+          "beforeVersionRef",
+          "afterVersionRef"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ]
+          },
+          "targetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "beforeVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "afterVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          }
+        }
+      },
+      "optimizationQualityGate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metricId",
+          "minimum"
+        ],
+        "properties": {
+          "metricId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "minimum": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "optimizationContract": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "caseSetRef",
+          "caseIds",
+          "controls",
+          "declaredChanges",
+          "qualityGates",
+          "costMetric"
+        ],
+        "properties": {
+          "caseSetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "caseIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            },
+            "uniqueItems": true
+          },
+          "controls": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "required": [
+              "inputState",
+              "evaluator",
+              "qualityPolicy",
+              "permissions",
+              "environment"
+            ]
+          },
+          "declaredChanges": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/$defs/optimizationChange"
+            }
+          },
+          "qualityGates": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/$defs/optimizationQualityGate"
+            }
+          },
+          "costMetric": {
+            "enum": [
+              "",
+              "totalCost"
+            ]
+          }
+        }
+      },
+      "optimizationProposal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "targetKind",
+          "targetRef",
+          "parentVersionRef",
+          "candidateVersionRef",
+          "findingIds",
+          "evidenceIds",
+          "historicalPatternRefs",
+          "summary",
+          "expectedEffect",
+          "actualDiffRef",
+          "comparisonContract"
+        ],
+        "properties": {
+          "targetKind": {
+            "enum": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ]
+          },
+          "targetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "parentVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "candidateVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "findingIds": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "historicalPatternRefs": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "expectedEffect": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "actualDiffRef": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 640
+          },
+          "comparisonContract": {
+            "$ref": "#/$defs/optimizationContract"
+          }
+        }
+      },
+      "optimizationCandidate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "targetKind",
+          "targetRef",
+          "parentVersionRef",
+          "candidateVersionRef",
+          "findingIds",
+          "evidenceIds",
+          "historicalPatternRefs",
+          "summary",
+          "expectedEffect",
+          "actualDiffRef",
+          "comparisonContract",
+          "candidateId",
+          "reportId",
+          "optimizationProjectId",
+          "comparisonContractSha256",
+          "intent",
+          "executionStatus",
+          "diffStatus",
+          "availableActions",
+          "supportedActions",
+          "createdAtMs",
+          "contentSha256"
+        ],
+        "properties": {
+          "targetKind": {
+            "enum": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ]
+          },
+          "targetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "parentVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "candidateVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "findingIds": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "historicalPatternRefs": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "expectedEffect": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "actualDiffRef": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 640
+          },
+          "comparisonContract": {
+            "$ref": "#/$defs/optimizationContract"
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "reportId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "optimizationProjectId": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256
+          },
+          "comparisonContractSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "intent": {
+            "$ref": "#/$defs/optimizationIntent"
+          },
+          "executionStatus": {
+            "const": "not_started"
+          },
+          "diffStatus": {
+            "enum": [
+              "verified",
+              "unverified"
+            ]
+          },
+          "availableActions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 6,
+            "items": {
+              "enum": [
+                "run_candidate",
+                "install",
+                "replace",
+                "apply",
+                "keep_original",
+                "rollback"
+              ]
+            }
+          },
+          "supportedActions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 6,
+            "items": {
+              "enum": [
+                "run_candidate",
+                "install",
+                "replace",
+                "apply",
+                "keep_original",
+                "rollback"
+              ]
+            }
+          },
+          "actualDiff": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "before",
+              "after",
+              "unifiedDiff"
+            ],
+            "properties": {
+              "before": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 100000
+              },
+              "after": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 100000
+              },
+              "unifiedDiff": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 200000
+              }
+            }
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contentSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        }
+      },
+      "optimizationMetric": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metricId",
+          "kind",
+          "baseline",
+          "candidate",
+          "delta",
+          "baselineNumerator",
+          "baselineDenominator",
+          "candidateNumerator",
+          "candidateDenominator"
+        ],
+        "properties": {
+          "metricId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "kind": {
+            "enum": [
+              "quality",
+              "cost"
+            ]
+          },
+          "baseline": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "candidate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "baselineNumerator": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "baselineDenominator": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "candidateNumerator": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "candidateDenominator": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "optimizationCase": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "caseId",
+          "baseline",
+          "candidate",
+          "regressed"
+        ],
+        "properties": {
+          "caseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseline": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "candidate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "regressed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "optimizationComparison": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "comparisonId",
+          "reportId",
+          "candidateId",
+          "optimizationProjectId",
+          "baselineTrialId",
+          "candidateTrialId",
+          "executionStatus",
+          "effectStatus",
+          "decision",
+          "comparable",
+          "reason",
+          "pairedMetrics",
+          "cases",
+          "regressions",
+          "usage",
+          "evidenceRefs",
+          "actualLoadedVersions",
+          "createdAtMs",
+          "contentSha256",
+          "validationScope"
+        ],
+        "properties": {
+          "comparisonId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "reportId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "optimizationProjectId": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256
+          },
+          "baselineTrialId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "candidateTrialId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "executionStatus": {
+            "enum": [
+              "not_started",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted"
+            ]
+          },
+          "effectStatus": {
+            "enum": [
+              "improved",
+              "neutral",
+              "regressed",
+              "not_run",
+              "unverified"
+            ]
+          },
+          "decision": {
+            "enum": [
+              "kept",
+              "rejected",
+              "needs_validation"
+            ]
+          },
+          "comparable": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          },
+          "pairedMetrics": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 17,
+            "items": {
+              "$ref": "#/$defs/optimizationMetric"
+            }
+          },
+          "cases": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "$ref": "#/$defs/optimizationCase"
+            }
+          },
+          "regressions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "usage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "baselineCost",
+              "candidateCost",
+              "currency",
+              "complete"
+            ],
+            "properties": {
+              "baselineCost": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "candidateCost": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "currency": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 16
+              },
+              "complete": {
+                "type": "boolean"
+              }
+            }
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 1024,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "actualLoadedVersions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "baseline",
+              "candidate"
+            ],
+            "properties": {
+              "baseline": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 640
+                }
+              },
+              "candidate": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 640
+                }
+              }
+            }
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contentSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "validationScope": {
+            "enum": [
+              "unverified",
+              "frozen_local_task_fixture",
+              "registered_task_execution"
+            ]
+          }
+        }
+      },
+      "optimizationApplication": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "applicationId",
+          "reportId",
+          "candidateId",
+          "comparisonId",
+          "action",
+          "status",
+          "receiptRef",
+          "targetRef",
+          "versionRef",
+          "createdAtMs",
+          "contentSha256"
+        ],
+        "properties": {
+          "applicationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "reportId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "comparisonId": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256
+          },
+          "action": {
+            "enum": [
+              "install",
+              "replace",
+              "apply",
+              "keep_original",
+              "rollback"
+            ]
+          },
+          "status": {
+            "enum": [
+              "kept_original",
+              "applied",
+              "failed",
+              "rolled_back",
+              "interrupted"
+            ]
+          },
+          "receiptRef": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 640
+          },
+          "targetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "versionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contentSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        }
+      },
+      "optimization": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "candidates",
+          "comparisons",
+          "applications"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "rag-ime.trace-optimization.v1"
+          },
+          "candidates": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "$ref": "#/$defs/optimizationCandidate"
+            }
+          },
+          "comparisons": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 512,
+            "items": {
+              "$ref": "#/$defs/optimizationComparison"
+            }
+          },
+          "applications": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 512,
+            "items": {
+              "$ref": "#/$defs/optimizationApplication"
+            }
+          },
+          "executions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/optimizationExecution"
+            }
+          },
+          "pendingApplications": {
+            "type": "array",
+            "maxItems": 512,
+            "items": {
+              "$ref": "#/$defs/optimizationPendingApplication"
+            }
+          }
+        }
+      },
+      "distillation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "authority",
+          "inventorySha256",
+          "sourceInspectionSha256"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 24,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "suggestionId",
+                "outcome",
+                "requestedOutcome",
+                "title",
+                "reason",
+                "proposedChange",
+                "evidenceIds",
+                "sourceRefs",
+                "existingCapabilityIds",
+                "capabilityNeeds",
+                "validationStatus",
+                "candidateIds"
+              ],
+              "properties": {
+                "suggestionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "outcome": {
+                  "enum": [
+                    "update_existing",
+                    "new_skill",
+                    "new_tool",
+                    "experience_only",
+                    "no_change"
+                  ]
+                },
+                "requestedOutcome": {
+                  "enum": [
+                    "update_existing",
+                    "new_skill",
+                    "new_tool",
+                    "experience_only",
+                    "no_change"
+                  ]
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "proposedChange": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                },
+                "evidenceIds": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 640
+                  },
+                  "uniqueItems": true
+                },
+                "sourceRefs": {
+                  "type": "array",
+                  "maxItems": 24,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "evidenceId",
+                      "sourceRef",
+                      "targetKeys",
+                      "sourceSha256"
+                    ],
+                    "properties": {
+                      "evidenceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 640
+                      },
+                      "sourceRef": {
+                        "type": "string",
+                        "minLength": 0,
+                        "maxLength": 640
+                      },
+                      "targetKeys": {
+                        "type": "array",
+                        "maxItems": 12,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "uniqueItems": true
+                      },
+                      "sourceSha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    }
+                  }
+                },
+                "existingCapabilityIds": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 640
+                  },
+                  "uniqueItems": true
+                },
+                "capabilityNeeds": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "uniqueItems": true
+                },
+                "validationStatus": {
+                  "enum": [
+                    "candidate_draft",
+                    "not_applicable"
+                  ]
+                },
+                "candidateIds": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 640
+                  },
+                  "uniqueItems": true
+                }
+              }
+            }
+          },
+          "authority": {
+            "const": "analysis_proposal"
+          },
+          "inventorySha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "sourceInspectionSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      },
+      "optimizationExecution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "candidateId",
+          "baselineJobId",
+          "candidateJobId",
+          "baselineState",
+          "candidateState",
+          "baselineSummary",
+          "candidateSummary",
+          "comparisonId",
+          "createdAtMs"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "candidateId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "baselineJobId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "candidateJobId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "baselineState": {
+            "enum": [
+              "queued",
+              "preparing",
+              "running",
+              "cancelling",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted",
+              "unavailable"
+            ]
+          },
+          "candidateState": {
+            "enum": [
+              "queued",
+              "preparing",
+              "running",
+              "cancelling",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted",
+              "unavailable"
+            ]
+          },
+          "baselineSummary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "candidateSummary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "comparisonId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "target": {
         "type": "object",
         "additionalProperties": false,
@@ -26978,6 +28242,59 @@ export const contractSchemas = {
             "$ref": "#/$defs/repairVerification"
           }
         }
+      },
+      "optimizationPendingApplication": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidateId",
+          "comparisonId",
+          "receiptRef",
+          "versionRef",
+          "action",
+          "status",
+          "createdAtMs"
+        ],
+        "properties": {
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "comparisonId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "receiptRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "versionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "action": {
+            "enum": [
+              "install",
+              "replace",
+              "apply",
+              "rollback"
+            ]
+          },
+          "status": {
+            "enum": [
+              "applying",
+              "interrupted"
+            ]
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       }
     }
   },
@@ -27242,6 +28559,16 @@ export const contractSchemas = {
           "verification"
         ],
         "properties": {
+          "candidateIds": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            }
+          },
           "findingId": {
             "type": "string",
             "minLength": 1,
@@ -27787,6 +29114,97 @@ export const contractSchemas = {
       }
     },
     "$defs": {
+      "optimizationExecution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidateId",
+          "role",
+          "comparisonContractSha256",
+          "controls",
+          "loadedVersions"
+        ],
+        "properties": {
+          "candidateId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+          },
+          "role": {
+            "enum": [
+              "baseline",
+              "candidate"
+            ]
+          },
+          "comparisonContractSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "controls": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+            },
+            "required": [
+              "inputState",
+              "evaluator",
+              "qualityPolicy",
+              "permissions",
+              "environment"
+            ]
+          },
+          "loadedVersions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ],
+            "properties": {
+              "tool": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              },
+              "skill": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              },
+              "prompt": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              },
+              "workflow": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              },
+              "model": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              }
+            }
+          },
+          "fixedContextFingerprints": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+            }
+          }
+        }
+      },
       "span": {
         "type": "object",
         "additionalProperties": false,
@@ -27857,7 +29275,12 @@ export const contractSchemas = {
             "type": "object"
           },
           "attributes": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "traceOptimization": {
+                "$ref": "#/$defs/optimizationExecution"
+              }
+            }
           }
         }
       },
@@ -27989,6 +29412,1041 @@ export const contractSchemas = {
           },
           "targetKind": {
             "const": "trace"
+          }
+        }
+      }
+    }
+  },
+  "trace-optimization.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-optimization.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "candidates",
+      "comparisons",
+      "applications"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-optimization.v1"
+      },
+      "candidates": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 128,
+        "items": {
+          "$ref": "#/$defs/optimizationCandidate"
+        }
+      },
+      "comparisons": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 512,
+        "items": {
+          "$ref": "#/$defs/optimizationComparison"
+        }
+      },
+      "applications": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 512,
+        "items": {
+          "$ref": "#/$defs/optimizationApplication"
+        }
+      },
+      "executions": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/optimizationExecution"
+        }
+      },
+      "pendingApplications": {
+        "type": "array",
+        "maxItems": 512,
+        "items": {
+          "$ref": "#/$defs/optimizationPendingApplication"
+        }
+      }
+    },
+    "$defs": {
+      "optimizationIntent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "scopeMode",
+          "focusAreas",
+          "objective"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "improve",
+              "distill"
+            ]
+          },
+          "scopeMode": {
+            "enum": [
+              "all",
+              "selected"
+            ]
+          },
+          "focusAreas": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "enum": [
+                "tool",
+                "skill",
+                "prompt",
+                "workflow",
+                "model"
+              ],
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          }
+        }
+      },
+      "optimizationChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "targetRef",
+          "beforeVersionRef",
+          "afterVersionRef"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ]
+          },
+          "targetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "beforeVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "afterVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          }
+        }
+      },
+      "optimizationQualityGate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metricId",
+          "minimum"
+        ],
+        "properties": {
+          "metricId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "minimum": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "optimizationContract": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "caseSetRef",
+          "caseIds",
+          "controls",
+          "declaredChanges",
+          "qualityGates",
+          "costMetric"
+        ],
+        "properties": {
+          "caseSetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "caseIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            },
+            "uniqueItems": true
+          },
+          "controls": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "required": [
+              "inputState",
+              "evaluator",
+              "qualityPolicy",
+              "permissions",
+              "environment"
+            ]
+          },
+          "declaredChanges": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/$defs/optimizationChange"
+            }
+          },
+          "qualityGates": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/$defs/optimizationQualityGate"
+            }
+          },
+          "costMetric": {
+            "enum": [
+              "",
+              "totalCost"
+            ]
+          }
+        }
+      },
+      "optimizationProposal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "targetKind",
+          "targetRef",
+          "parentVersionRef",
+          "candidateVersionRef",
+          "findingIds",
+          "evidenceIds",
+          "historicalPatternRefs",
+          "summary",
+          "expectedEffect",
+          "actualDiffRef",
+          "comparisonContract"
+        ],
+        "properties": {
+          "targetKind": {
+            "enum": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ]
+          },
+          "targetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "parentVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "candidateVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "findingIds": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "historicalPatternRefs": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "expectedEffect": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "actualDiffRef": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 640
+          },
+          "comparisonContract": {
+            "$ref": "#/$defs/optimizationContract"
+          }
+        }
+      },
+      "optimizationCandidate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "targetKind",
+          "targetRef",
+          "parentVersionRef",
+          "candidateVersionRef",
+          "findingIds",
+          "evidenceIds",
+          "historicalPatternRefs",
+          "summary",
+          "expectedEffect",
+          "actualDiffRef",
+          "comparisonContract",
+          "candidateId",
+          "reportId",
+          "optimizationProjectId",
+          "comparisonContractSha256",
+          "intent",
+          "executionStatus",
+          "diffStatus",
+          "availableActions",
+          "supportedActions",
+          "createdAtMs",
+          "contentSha256"
+        ],
+        "properties": {
+          "targetKind": {
+            "enum": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ]
+          },
+          "targetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "parentVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "candidateVersionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "findingIds": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "historicalPatternRefs": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "expectedEffect": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "actualDiffRef": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 640
+          },
+          "comparisonContract": {
+            "$ref": "#/$defs/optimizationContract"
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "reportId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "optimizationProjectId": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256
+          },
+          "comparisonContractSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "intent": {
+            "$ref": "#/$defs/optimizationIntent"
+          },
+          "executionStatus": {
+            "const": "not_started"
+          },
+          "diffStatus": {
+            "enum": [
+              "verified",
+              "unverified"
+            ]
+          },
+          "availableActions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 6,
+            "items": {
+              "enum": [
+                "run_candidate",
+                "install",
+                "replace",
+                "apply",
+                "keep_original",
+                "rollback"
+              ]
+            }
+          },
+          "supportedActions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 6,
+            "items": {
+              "enum": [
+                "run_candidate",
+                "install",
+                "replace",
+                "apply",
+                "keep_original",
+                "rollback"
+              ]
+            }
+          },
+          "actualDiff": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "before",
+              "after",
+              "unifiedDiff"
+            ],
+            "properties": {
+              "before": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 100000
+              },
+              "after": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 100000
+              },
+              "unifiedDiff": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 200000
+              }
+            }
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contentSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        }
+      },
+      "optimizationMetric": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metricId",
+          "kind",
+          "baseline",
+          "candidate",
+          "delta",
+          "baselineNumerator",
+          "baselineDenominator",
+          "candidateNumerator",
+          "candidateDenominator"
+        ],
+        "properties": {
+          "metricId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "kind": {
+            "enum": [
+              "quality",
+              "cost"
+            ]
+          },
+          "baseline": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "candidate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "delta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "baselineNumerator": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "baselineDenominator": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "candidateNumerator": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "candidateDenominator": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "optimizationCase": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "caseId",
+          "baseline",
+          "candidate",
+          "regressed"
+        ],
+        "properties": {
+          "caseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseline": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "candidate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "regressed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "optimizationComparison": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "comparisonId",
+          "reportId",
+          "candidateId",
+          "optimizationProjectId",
+          "baselineTrialId",
+          "candidateTrialId",
+          "executionStatus",
+          "effectStatus",
+          "decision",
+          "comparable",
+          "reason",
+          "pairedMetrics",
+          "cases",
+          "regressions",
+          "usage",
+          "evidenceRefs",
+          "actualLoadedVersions",
+          "createdAtMs",
+          "contentSha256",
+          "validationScope"
+        ],
+        "properties": {
+          "comparisonId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "reportId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "optimizationProjectId": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256
+          },
+          "baselineTrialId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "candidateTrialId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "executionStatus": {
+            "enum": [
+              "not_started",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted"
+            ]
+          },
+          "effectStatus": {
+            "enum": [
+              "improved",
+              "neutral",
+              "regressed",
+              "not_run",
+              "unverified"
+            ]
+          },
+          "decision": {
+            "enum": [
+              "kept",
+              "rejected",
+              "needs_validation"
+            ]
+          },
+          "comparable": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2000
+          },
+          "pairedMetrics": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 17,
+            "items": {
+              "$ref": "#/$defs/optimizationMetric"
+            }
+          },
+          "cases": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "$ref": "#/$defs/optimizationCase"
+            }
+          },
+          "regressions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "usage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "baselineCost",
+              "candidateCost",
+              "currency",
+              "complete"
+            ],
+            "properties": {
+              "baselineCost": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "candidateCost": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "currency": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 16
+              },
+              "complete": {
+                "type": "boolean"
+              }
+            }
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 1024,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            },
+            "uniqueItems": true
+          },
+          "actualLoadedVersions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "baseline",
+              "candidate"
+            ],
+            "properties": {
+              "baseline": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 640
+                }
+              },
+              "candidate": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 640
+                }
+              }
+            }
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contentSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "validationScope": {
+            "enum": [
+              "unverified",
+              "frozen_local_task_fixture",
+              "registered_task_execution"
+            ]
+          }
+        }
+      },
+      "optimizationApplication": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "applicationId",
+          "reportId",
+          "candidateId",
+          "comparisonId",
+          "action",
+          "status",
+          "receiptRef",
+          "targetRef",
+          "versionRef",
+          "createdAtMs",
+          "contentSha256"
+        ],
+        "properties": {
+          "applicationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "reportId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "comparisonId": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256
+          },
+          "action": {
+            "enum": [
+              "install",
+              "replace",
+              "apply",
+              "keep_original",
+              "rollback"
+            ]
+          },
+          "status": {
+            "enum": [
+              "kept_original",
+              "applied",
+              "failed",
+              "rolled_back",
+              "interrupted"
+            ]
+          },
+          "receiptRef": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 640
+          },
+          "targetRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "versionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contentSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        }
+      },
+      "optimizationExecution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "candidateId",
+          "baselineJobId",
+          "candidateJobId",
+          "baselineState",
+          "candidateState",
+          "baselineSummary",
+          "candidateSummary",
+          "comparisonId",
+          "createdAtMs"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "candidateId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "baselineJobId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "candidateJobId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "baselineState": {
+            "enum": [
+              "queued",
+              "preparing",
+              "running",
+              "cancelling",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted",
+              "unavailable"
+            ]
+          },
+          "candidateState": {
+            "enum": [
+              "queued",
+              "preparing",
+              "running",
+              "cancelling",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted",
+              "unavailable"
+            ]
+          },
+          "baselineSummary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "candidateSummary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "comparisonId": {
+            "type": "string",
+            "maxLength": 640
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "optimizationPendingApplication": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidateId",
+          "comparisonId",
+          "receiptRef",
+          "versionRef",
+          "action",
+          "status",
+          "createdAtMs"
+        ],
+        "properties": {
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "comparisonId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "receiptRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "versionRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "action": {
+            "enum": [
+              "install",
+              "replace",
+              "apply",
+              "rollback"
+            ]
+          },
+          "status": {
+            "enum": [
+              "applying",
+              "interrupted"
+            ]
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

@@ -90,8 +90,11 @@
   isolation: isolate;
 }
 .paw-stellar-scene__far,
+.paw-stellar-scene__middle,
 .paw-stellar-scene__near,
 .paw-stellar-scene__planet-plane { position: absolute; inset: -40px; }
+.paw-stellar-scene__planet-plane { z-index: 2; }
+.paw-stellar-scene__near { z-index: 1; }
 .paw-stellar-scene__nebula {
   position: absolute;
   width: 100%;
@@ -108,15 +111,74 @@
 }
 .paw-stellar-scene__planet {
   position: absolute;
-  width: clamp(360px, 52vw, 960px);
+  width: clamp(420px, 59vw, 1080px);
   max-width: none;
-  height: auto;
-  left: 63%;
-  top: 49%;
-  opacity: .82;
-  animation: paw-stellar-planet-drift 70s linear infinite alternate;
+  aspect-ratio: 3 / 2;
+  left: 51%;
+  top: 42%;
+  opacity: 1;
+  animation: paw-stellar-planet-drift 84s linear infinite alternate;
 }
+.paw-stellar-scene__planet-image,
+.paw-stellar-scene__planet-material { position: absolute; inset: 0; width: 100%; height: 100%; }
+.paw-stellar-scene__planet-material { visibility: hidden; }
+.paw-stellar-scene__planet[data-material-ready] .paw-stellar-scene__planet-material { visibility: visible; }
+.paw-stellar-scene__planet[data-material-ready] .paw-stellar-scene__planet-image { visibility: hidden; }
 .paw-stellar-scene:not([data-agent-count='0']) .paw-stellar-scene__planet { opacity: .18; }
+.paw-stellar-scene__dust { position: absolute; inset: 0; }
+.paw-stellar-scene__dust i { position: absolute; width: 1px; height: 1px; background: #e2efff; border-radius: 50%; }
+/* The intermediate moon is decoration, so it carries no running marker or
+ * orbit. Its cloud material turns beneath fixed day/night illumination. */
+.paw-stellar-scene__moon {
+  position: absolute;
+  left: 64%;
+  top: 29%;
+  width: clamp(28px, 4.1vw, 68px);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #778aa5;
+  box-shadow: -1px -1px 2px rgb(235 246 255 / .72), 3px 5px 18px rgb(15 32 65 / .12);
+  opacity: .78;
+  animation: paw-stellar-moon-drift 96s linear infinite alternate;
+}
+.paw-stellar-scene__moon-clouds {
+  position: absolute;
+  inset: 0 -50%;
+  background-size: 100% 100%;
+  animation: paw-stellar-moon-turn 110s linear infinite alternate;
+}
+.paw-stellar-scene__moon::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  border-radius: inherit;
+  background: radial-gradient(circle at 29% 24%, rgb(225 239 255 / .48), transparent 44%),
+    linear-gradient(118deg, transparent 20%, rgb(10 22 44 / .18) 46%, #101e38 84%);
+  box-shadow: inset -3px -4px 7px rgb(6 13 32 / .8), inset 1px 1px 1px rgb(237 246 255 / .62);
+}
+.paw-stellar-scene__distant-world {
+  position: absolute;
+  left: 26%;
+  top: 62%;
+  width: clamp(9px, 1.2vw, 19px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 24% 22%, #e9f0f6, #8695ad 42%, #2d4161 78%);
+  box-shadow: -1px -1px 2px rgb(238 246 255 / .6);
+  opacity: .36;
+}
+.paw-stellar-scene__light-wisp {
+  position: absolute;
+  width: 57%;
+  height: 28%;
+  left: 23%;
+  top: 41%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgb(243 222 193 / .16), rgb(213 229 250 / .06) 46%, transparent 70%);
+  transform: rotate(-32deg);
+  animation: paw-stellar-wisp-drift 48s linear infinite alternate;
+}
 .paw-stellar-scene__stars { position: absolute; inset: 0; animation: paw-stellar-star-drift 60s linear infinite alternate; }
 .paw-stellar-scene__stars i {
   position: absolute;
@@ -130,28 +192,74 @@
 .paw-stellar-scene__stars i:nth-child(13n + 1)::after { position: absolute; top: 50%; left: 50%; content: ''; background: currentColor; transform: translate(-50%, -50%); opacity: .65; }
 .paw-stellar-scene__stars i:nth-child(13n + 1)::before { width: 11px; height: 1px; }
 .paw-stellar-scene__stars i:nth-child(13n + 1)::after { width: 1px; height: 11px; }
-.paw-stellar-scene[data-stellar-paused='true'] :is(.paw-stellar-scene__nebula, .paw-stellar-scene__planet, .paw-stellar-scene__stars) { animation-play-state: paused; }
+.paw-stellar-scene__stars i:nth-child(13n + 1)::before,
+.paw-stellar-scene__stars i:nth-child(13n + 1)::after {
+  animation: paw-stellar-scintillation var(--star-duration) linear var(--star-delay) infinite;
+}
+/* One brief, peripheral meteor in a long cycle. It does not loop across the
+ * reading plane and shares the same suspension contract as the whole sky. */
+.paw-stellar-scene__meteor {
+  position: absolute;
+  width: 110px;
+  height: 1px;
+  left: 72%;
+  top: 23%;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent, rgb(214 232 255 / .18) 38%, #f8edda);
+  transform: rotate(147deg);
+  animation: paw-stellar-meteor 47s linear 9s infinite;
+}
+.paw-stellar-scene__meteor::after { position: absolute; right: 0; top: -1px; width: 3px; height: 3px; content: ''; border-radius: 50%; background: #fff7e7; box-shadow: 0 0 6px #d6eaff; }
+.paw-stellar-scene[data-stellar-paused='true'] *,
+.paw-stellar-scene[data-stellar-paused='true'] *::before,
+.paw-stellar-scene[data-stellar-paused='true'] *::after { animation-play-state: paused; }
 @keyframes paw-stellar-nebula-drift {
   from { transform: scale(1.04) translate3d(-.5%, 0, 0); }
   to { transform: scale(1.09) translate3d(.5%, -1%, 0); }
 }
 @keyframes paw-stellar-planet-drift {
-  from { transform: translate3d(0, 0, 0) rotate(-2deg); }
-  to { transform: translate3d(-1.2%, -1.8%, 0) rotate(1deg); }
+  from { transform: translate3d(0, 0, 0) rotate(-1deg); }
+  to { transform: translate3d(-1.2%, -1.8%, 0) rotate(.6deg); }
 }
 @keyframes paw-stellar-star-drift {
   from { transform: translate3d(0, 0, 0); }
   to { transform: translate3d(-16px, 10px, 0); }
 }
+@keyframes paw-stellar-moon-turn {
+  from { transform: translate3d(-9%, 0, 0); }
+  to { transform: translate3d(9%, 0, 0); }
+}
+@keyframes paw-stellar-moon-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(7px, -9px, 0); }
+}
+@keyframes paw-stellar-wisp-drift {
+  from { transform: translate3d(-1%, 1%, 0) rotate(-32deg); opacity: .4; }
+  to { transform: translate3d(2%, -2%, 0) rotate(-30deg); opacity: .9; }
+}
+@keyframes paw-stellar-scintillation {
+  0%, 100% { opacity: .22; transform: translate(-50%, -50%) scale(.75); }
+  45% { opacity: .8; transform: translate(-50%, -50%) scale(1.12); }
+  70% { opacity: .36; transform: translate(-50%, -50%) scale(.9); }
+}
+@keyframes paw-stellar-meteor {
+  0%, 4%, 100% { opacity: 0; transform: translate3d(0, 0, 0) rotate(147deg); }
+  .5% { opacity: .7; }
+  2.5% { opacity: 0; transform: translate3d(-240px, 156px, 0) rotate(147deg); }
+}
 @media (max-width: 700px) {
   .paw-stellar-scene__stars i:nth-child(n + 49) { display: none; }
   .paw-stellar-scene__planet { width: 520px; left: 40%; top: 65%; }
   .paw-stellar-scene__nebula { object-position: 60% center; }
+  .paw-stellar-scene__moon { left: 75%; top: 42%; }
+  .paw-stellar-scene__dust i:nth-child(n + 33), .paw-stellar-scene__distant-world, .paw-stellar-scene__meteor { display: none; }
 }
 @media (prefers-reduced-motion: reduce), (hover: none), (pointer: coarse) {
-  .paw-stellar-scene :is(.paw-stellar-scene__nebula, .paw-stellar-scene__planet, .paw-stellar-scene__stars) { animation: none; }
+  .paw-stellar-scene *, .paw-stellar-scene *::before, .paw-stellar-scene *::after { animation: none; }
 }
-[data-reduce-motion='true'] .paw-stellar-scene :is(.paw-stellar-scene__nebula, .paw-stellar-scene__planet, .paw-stellar-scene__stars) { animation: none; }
+[data-reduce-motion='true'] .paw-stellar-scene *,
+[data-reduce-motion='true'] .paw-stellar-scene *::before,
+[data-reduce-motion='true'] .paw-stellar-scene *::after { animation: none; }
 
 .paw-desktop-root[data-paw-visual='stellar'] .paw-menu-bar {
   background: #f5f7fa;

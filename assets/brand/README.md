@@ -9,9 +9,21 @@ collaboration surfaces.
 
 ## Runtime Assets
 
+- `paw-os-icon.png`: the current OS icon, supplied as a 1254px planetary paw
+  image and retained unchanged. The Electron host selects this source through
+  `build_app_icon.sh`; web `app-icon-64.png`, `app-icon-192.png` and
+  `app-icon-512.png` are size exports made with `sips`. `app-icon.svg` embeds the
+  192px export for browser compatibility. The PAWOS system mark and Story site
+  use the same 192px image.
+- `paw-macos-icon-v2.svg`: editable PAW macOS icon master, with a porcelain
+  ground, blue globe, continuous inclined orbit and small guiding star.
+  `paw-macos-icon-v2.png` is its retained 1024px export. The current OS uses
+  `paw-os-icon.png`; adapter and individual App identities remain separate.
+  Re-export this earlier design with
+  `rsvg-convert --width 1024 --height 1024 assets/brand/paw-macos-icon-v2.svg --output assets/brand/paw-macos-icon-v2.png`.
 - `rag-ime-icon.png`: the legacy build filename for a silver-tail orbit around an emerald working
-  spark, used to build the macOS `.icns` files and derive the PWA icons. It is
-  retained so existing release scripts do not need a path migration. The image
+  spark, retained for adapter builds that still select the legacy default in
+  `build_app_icon.sh`. The Electron PAW host selects its native icon explicitly. The image
   is a product mark rather than a document glyph or role portrait, keeping app
   identity and companion identity visually distinct.
 - `macos/Shared/Assets/CompanionStates/`: tight UI crops for idle, listening,

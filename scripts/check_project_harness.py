@@ -7,13 +7,7 @@ import subprocess
 from pathlib import Path
 
 
-ROOT_DOCUMENT_BUDGETS = {
-    "AGENTS.md": 1_250,
-    "PROJECT.md": 900,
-    "OUTCOMES.md": 1_300,
-    "DECISIONS.md": 1_200,
-    "CONTEXT.md": 900,
-}
+BOOTSTRAP_DOCUMENT_BUDGETS = {"AGENTS.md": 1_250}
 
 CORE_SKILLS = (
     "alignment-and-decision",
@@ -39,12 +33,8 @@ RETIRED_FLOW_NAMES = (
 
 CURRENT_CONTRACT_DOCS = (
     "AGENTS.md",
-    "PROJECT.md",
-    "OUTCOMES.md",
-    "DECISIONS.md",
-    "CONTEXT.md",
     "README.md",
-    "ARCHITECTURE.md",
+    "CONTRIBUTING.md",
 )
 
 LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -63,7 +53,7 @@ def _word_count(text: str) -> int:
 
 def _read_documents(root: Path, errors: list[str]) -> dict[str, str]:
     documents: dict[str, str] = {}
-    for relative, budget in ROOT_DOCUMENT_BUDGETS.items():
+    for relative, budget in BOOTSTRAP_DOCUMENT_BUDGETS.items():
         path = root / relative
         if not path.is_file():
             errors.append(f"missing bootstrap authority document: {relative}")
@@ -268,9 +258,9 @@ def validate_project_harness(root: Path) -> list[str]:
     documents = _read_documents(root, errors)
 
     agents = documents.get("AGENTS.md", "")
-    for relative in ("PROJECT.md", "OUTCOMES.md", "CONTEXT.md", "DECISIONS.md"):
+    for relative in ("README.md", "CONTRIBUTING.md"):
         if f"]({relative})" not in agents:
-            errors.append(f"AGENTS.md must route progressively to {relative}")
+            errors.append(f"AGENTS.md must route to public guidance: {relative}")
 
     for skill in CORE_SKILLS:
         if f"`{skill}`" not in agents:
@@ -281,7 +271,7 @@ def validate_project_harness(root: Path) -> list[str]:
     for relative in CURRENT_CONTRACT_DOCS:
         path = root / relative
         if not path.is_file():
-            if relative not in ROOT_DOCUMENT_BUDGETS:
+            if relative not in BOOTSTRAP_DOCUMENT_BUDGETS:
                 errors.append(f"missing current contract document: {relative}")
             continue
         text = documents.get(relative)
@@ -291,18 +281,6 @@ def validate_project_harness(root: Path) -> list[str]:
         for retired in RETIRED_FLOW_NAMES:
             if retired in text:
                 errors.append(f"{relative} still references retired flow name: {retired}")
-
-    outcomes = documents.get("OUTCOMES.md", "")
-    if "release/product-status.json" not in outcomes:
-        errors.append("OUTCOMES.md must name the machine-readable release evidence")
-
-    context = documents.get("CONTEXT.md", "")
-    for implementation_marker in ("rag_ime/", "control-center-web/", "scripts/", ".py"):
-        if implementation_marker in context:
-            errors.append(
-                f"CONTEXT.md must remain a glossary, found implementation marker: "
-                f"{implementation_marker}"
-            )
 
     gitignore = root / ".gitignore"
     if not gitignore.is_file() or "/docs/" not in gitignore.read_text(encoding="utf-8"):

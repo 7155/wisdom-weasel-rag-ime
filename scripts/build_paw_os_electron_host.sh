@@ -126,7 +126,7 @@ mv "$MACOS/Electron" "$MACOS/$EXECUTABLE"
 # Electron's stock atom icon/version must never leak into the PAW product.
 # Rebuild the branded resource for every host build and expose the same
 # semantic version in Finder, the native host and the PAWOS shell.
-RAG_IME_ICON_SOURCE="${RAG_IME_ICON_SOURCE:-$ROOT/control-center-web/public/app-icon-512.png}" \
+RAG_IME_ICON_SOURCE="${RAG_IME_ICON_SOURCE:-$ROOT/assets/brand/paw-os-icon.png}" \
   "$ROOT/scripts/support/build_app_icon.sh" "$RESOURCES/RagImeIcon.icns"
 # Electron's atom.icns is an implementation detail, not a PAW identity. Keep
 # only the resource named by CFBundleIconFile so Finder cannot cache or expose
@@ -213,6 +213,10 @@ PY
 }
 codesign --force --deep --sign - "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
+# Electron's archive gives the bundle directory a fixed 1980 timestamp.
+# Refresh it after assembly so LaunchServices sees the new branded icon even
+# when an update replaces the same app path. This changes no signed content.
+touch "$APP"
 
 verify_release_provenance() {
   local candidate="$1"
@@ -247,6 +251,7 @@ if [[ "$ACTION" == install-* ]]; then
   if [[ "$CHANNEL" == "release" ]]; then
     verify_release_provenance "$INSTALL_DEST"
   fi
+  touch "$INSTALL_DEST"
   "$LSREGISTER" -f "$INSTALL_DEST" >/dev/null
   echo "$INSTALL_DEST"
 else

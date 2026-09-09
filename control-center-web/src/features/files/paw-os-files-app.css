@@ -190,6 +190,14 @@
   background: transparent;
 }
 
+.paw-files-app__toolbar .paw-files-tree-toggle {
+  width: var(--paw-files-control-h);
+  height: var(--paw-files-control-h);
+  min-width: var(--paw-files-control-h);
+  min-height: var(--paw-files-control-h);
+  margin: 0;
+}
+
 .paw-files-scope,
 .paw-files-filter {
   position: relative;
@@ -385,6 +393,8 @@
   overflow: hidden;
   background: var(--color-paper);
 }
+
+.paw-files-app__workspace[data-sidebar-collapsed='true'] { grid-template-columns: minmax(0, 1fr); }
 
 /* -------------------------------------------------------------------------
    Directory rail. The shell repaints its surface per window; everything
@@ -1634,6 +1644,18 @@ i.paw-files-tree__disclosure {
   .paw-files-app__workspace:not([data-file-open]) .paw-files-preview,
   .paw-files-app__workspace[data-file-open] .paw-files-tree {
     display: none;
+  }
+
+  .paw-files-app__workspace[data-tree-revealed]:not([data-sidebar-collapsed='true']) .paw-files-tree {
+    display: flex;
+  }
+
+  .paw-files-app__workspace[data-tree-revealed]:not([data-sidebar-collapsed='true']) .paw-files-preview {
+    display: none;
+  }
+
+  .paw-files-app__workspace[data-sidebar-collapsed='true'] .paw-files-preview {
+    display: flex;
   }
 
   .paw-files-tree {

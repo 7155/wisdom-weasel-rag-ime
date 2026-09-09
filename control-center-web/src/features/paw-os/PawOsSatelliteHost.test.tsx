@@ -859,8 +859,8 @@ describe('PawOsSatelliteHost', () => {
   it('keeps the statusline one text row that never squeezes the dialogue at 280 width', () => {
     expect(satelliteCss).toContain('.paw-os-satellite--participant-chat {\n  display: grid;\n  grid-template-rows: minmax(0, 1fr) auto;');
     expect(satelliteCss).toContain('.paw-participant-chat__statusline > p { min-width: 0; flex: 1; margin: 0; overflow: hidden; color: var(--paw-ink); text-overflow: ellipsis; white-space: nowrap; }');
-    expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='running'] { --paw-satellite-state: #2783de; }");
-    expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='blocked'],\n.paw-participant-chat__statusline[data-state='failed'] { --paw-satellite-state: #c64747; }");
+    expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='running'] { --paw-satellite-state: var(--paw-accent); }");
+    expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='blocked'],\n.paw-participant-chat__statusline[data-state='failed'] { --paw-satellite-state: var(--paw-danger); }");
     expect(satelliteCss).toContain('.paw-participant-chat__statusline > button {');
     expect(satelliteCss).toContain('white-space: nowrap;');
     expect(satelliteCss).not.toContain('.paw-participant-chat__statusline > button > span { display: none; }');

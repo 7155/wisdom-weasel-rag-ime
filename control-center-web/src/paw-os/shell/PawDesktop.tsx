@@ -1278,7 +1278,7 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
       onKeyDown={(event) => {
         if (event.key === 'Tab') {
           const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
-            'input:not(:disabled), button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+            'input:not(:disabled), button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
           ));
           const first = focusable[0];
           const last = focusable.at(-1);

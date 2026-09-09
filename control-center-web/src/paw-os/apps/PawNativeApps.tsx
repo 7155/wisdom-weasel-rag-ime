@@ -22,6 +22,7 @@ import type { ControlPathId } from '@/platform/routes';
 import type { ControlRequest } from '@/platform/transport';
 import type { PawOsAppId } from '@/features/paw-os/model/app-registry';
 import { pawApp } from '../runtime/app-registry';
+import { AppSidebarToggle, useAppSidebar } from './app-sidebar';
 import { PawSystemAppsMigrated, isPawSystemAppId, type PawSystemAppId } from './PawSystemAppsMigrated';
 import { PawWorkbenchDocumentLifecycle } from './PawWorkbenchDocumentLifecycle';
 import { PawWorkbenchMigrated, type PawWorkbenchPageId } from './PawWorkbenchMigrated';
@@ -32,7 +33,7 @@ const KnowledgeFeature = lazy(async () => ({ default: (await import('@/features/
 const EvalLabFeature = lazy(async () => ({ default: (await import('@/features/eval-lab')).EvalLabFeature }));
 const MemoryFeature = lazy(async () => ({ default: (await import('@/features/memory')).MemoryFeature }));
 
-export type PawNativeAppId = Exclude<PawOsAppId, 'agent' | 'browser' | 'files' | 'terminal'>;
+export type PawNativeAppId = Exclude<PawOsAppId, 'agent' | 'browser' | 'files' | 'terminal' | 'trace-agent'>;
 type PawFeatureAppId = Exclude<PawNativeAppId, PawSystemAppId>;
 
 type NativePage = { id: string; label: string; icon: LucideIcon; route: string };
@@ -61,21 +62,27 @@ const pagesByApp: Record<PawFeatureAppId, readonly NativePage[]> = {
 
 export function PawNativeApp({ appId, initialRoute = '' }: { appId: PawNativeAppId; initialRoute?: string }) {
   if (isPawSystemAppId(appId)) return <PawSystemAppsMigrated appId={appId} initialRoute={initialRoute} />;
+  return <PawFeatureApp appId={appId} initialRoute={initialRoute} />;
+}
+
+function PawFeatureApp({ appId, initialRoute }: { appId: PawFeatureAppId; initialRoute: string }) {
   const pages = pagesByApp[appId];
+  const sidebar = useAppSidebar(appId, appId === 'eval-lab');
   const app = pawApp(appId);
   const desktop = usePawOsDesktop();
   const route = initialRoute || app.route;
   const pageId = pageForRoute(pages, route).id;
   return (
-    <div className="paw-native-app" data-app-id={appId} data-page-id={pageId} data-single-page={pages.length === 1 || undefined}>
-      <aside className="paw-native-nav">
-        <nav aria-label={`${app.label}页面`}>
+    <div className="paw-native-app" data-app-id={appId} data-page-id={pageId} data-sidebar-collapsed={sidebar.collapsed} data-owns-navigation={appId === 'knowledge' || undefined} data-single-page={pages.length === 1 || undefined}>
+      {appId === 'knowledge' ? null : <aside className="paw-native-nav">
+        <AppSidebarToggle collapsed={sidebar.collapsed} controlsId={sidebar.controlsId} label={`${app.label}导航`} onToggle={() => sidebar.setCollapsed(!sidebar.collapsed)} toggleRef={sidebar.toggleRef} />
+        <nav aria-label={`${app.label}页面`} {...sidebar.contentProps}>
           {pages.map((page) => {
             const Icon = page.icon;
-            return <button aria-current={page.id === pageId ? 'page' : undefined} aria-label={page.label} key={page.id} onClick={() => openPawOsRoute(desktop, page.route)} type="button"><Icon size={15} /><span>{page.label}</span><ChevronRight size={13} /></button>;
+            return <button aria-current={page.id === pageId ? 'page' : undefined} aria-label={page.label} key={page.id} onClick={() => openPawOsRoute(desktop, page.route)} title={page.label} type="button"><Icon aria-hidden="true" size={15} /><span>{page.label}</span><ChevronRight aria-hidden="true" size={13} /></button>;
           })}
         </nav>
-      </aside>
+      </aside>}
       <section className="paw-native-stage">
         <MemoryRouter initialEntries={[route]} key={route}>
           <NativeRouteReporter expectedRoute={route} />

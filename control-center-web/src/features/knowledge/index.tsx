@@ -16,10 +16,11 @@ import {
   Settings2,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { useControlTransport } from '@/app/control-transport';
+import { AppSidebarToggle, useAppSidebar } from '@/paw-os/apps/app-sidebar';
 import {
   Button,
   Dialog,
@@ -109,6 +110,7 @@ type DetailTab = 'materials' | 'viewer' | 'search' | 'graph' | 'jobs' | 'setting
 
 export function KnowledgeFeature() {
   const appSurface = usePawOsAppIdentity();
+  const sidebar = useAppSidebar('knowledge');
   const surfaceActive = usePawOsAppActive();
   const compact = usePawOsAppCompact();
   const pageVisible = usePageVisibility();
@@ -383,7 +385,7 @@ export function KnowledgeFeature() {
     >
       <h1 className="knowledge-feature__title">知识库</h1>
       <QueryState error={pageError} isPending={queries.bases.isPending} onRetry={refresh}>
-        <div className="knowledge-library" data-empty={!bases.length || undefined} data-native-layout={appSurface ? 'app' : undefined}>
+        <div className="knowledge-library" data-empty={!bases.length || undefined} data-native-layout={appSurface ? 'app' : undefined} data-sidebar-collapsed={appSurface ? sidebar.collapsed : undefined}>
           {/* Inside a PAWOS window the library index and the workspace share one
               window-bound grid. The command band spans both columns and always
               carries service health and library actions; the rail below it is
@@ -400,6 +402,7 @@ export function KnowledgeFeature() {
               onSelect={selectBase}
               refreshing={queries.bases.isFetching || queries.worker.isFetching}
               selectedBaseId={selectedBaseId}
+              sidebarToggle={<AppSidebarToggle collapsed={sidebar.collapsed} controlsId={sidebar.controlsId} label="知识库目录" onToggle={() => sidebar.setCollapsed(!sidebar.collapsed)} toggleRef={sidebar.toggleRef} />}
               worker={worker}
             />
           ) : null}
@@ -410,6 +413,7 @@ export function KnowledgeFeature() {
             onSelect={selectBase}
             refreshing={queries.bases.isFetching || queries.worker.isFetching}
             selectedBaseId={selectedBaseId}
+            sidebar={appSurface ? sidebar : undefined}
             variant={appSurface ? 'app' : 'web'}
             worker={worker}
           />
@@ -621,6 +625,7 @@ function KnowledgeBaseRail({
   onSelect,
   refreshing,
   selectedBaseId,
+  sidebar,
   variant = 'web',
   worker,
 }: {
@@ -630,6 +635,7 @@ function KnowledgeBaseRail({
   onSelect: (baseId: string) => void;
   refreshing: boolean;
   selectedBaseId: string;
+  sidebar?: ReturnType<typeof useAppSidebar>;
   variant?: 'web' | 'app';
   worker: WorkerState;
 }) {
@@ -639,7 +645,7 @@ function KnowledgeBaseRail({
   // two identically named buttons in the same window.
   const app = variant === 'app';
   return (
-    <aside className="knowledge-base-rail" aria-label="文档知识库" data-variant={variant}>
+    <aside className="knowledge-base-rail" aria-label="文档知识库" data-variant={variant} {...sidebar?.contentProps}>
       <header>
         <div><strong>知识库</strong><span>{bases.length} 个独立库</span></div>
         {app ? null : (
@@ -717,6 +723,7 @@ function KnowledgeBaseSwitcher({
   onSelect,
   refreshing,
   selectedBaseId,
+  sidebarToggle,
   worker,
 }: {
   base: DocumentKnowledgeBase | null;
@@ -726,10 +733,12 @@ function KnowledgeBaseSwitcher({
   onSelect: (baseId: string) => void;
   refreshing: boolean;
   selectedBaseId: string;
+  sidebarToggle?: ReactNode;
   worker: WorkerState;
 }) {
   return (
     <section aria-label="切换文档知识库" className="knowledge-base-switcher">
+      {sidebarToggle}
       <p className="knowledge-base-switcher__current">{base ? base.name : '还没有知识库'}</p>
       <Field htmlFor="knowledge-native-base" label="当前知识库">
         <Select

@@ -50,6 +50,7 @@ class RuntimeDriverContext:
     skill_allowlist_provider: SkillAllowlistProvider | None = None
     compaction_observer: CompactionObserver | None = None
     prompt_settings_provider: PromptSettingsProvider | None = None
+    candidate_skill_paths_provider: Callable[[Mapping[str, object]], list[str]] | None = None
 
 
 @dataclass(frozen=True)

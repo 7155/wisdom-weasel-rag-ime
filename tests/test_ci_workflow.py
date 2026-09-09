@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -11,9 +13,13 @@ class CIWorkflowTests(unittest.TestCase):
     def test_provenance_checks_have_full_git_history(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-        self.assertEqual(workflow.count("fetch-depth: 0"), 2)
-        self.assertEqual(workflow.count("actions/checkout@v6"), 2)
-        self.assertEqual(workflow.count("actions/setup-python@v6"), 2)
+        jobs = yaml.safe_load(workflow)["jobs"]
+        for job_name in ("python", "macos"):
+            with self.subTest(job=job_name):
+                steps = jobs[job_name]["steps"]
+                checkout = next(step for step in steps if step.get("uses") == "actions/checkout@v6")
+                self.assertEqual(checkout["with"]["fetch-depth"], 0)
+                self.assertTrue(any(step.get("uses") == "actions/setup-python@v6" for step in steps))
 
     def test_squirrel_build_uses_a_swift_6_runner(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

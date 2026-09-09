@@ -182,7 +182,9 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('2 伙伴已提交结果');
     expect(screen.queryByText('Room 已完成')).not.toBeInTheDocument();
     const rounds = screen.getByRole('region', { name: 'Room 行星任务表' });
-    expect(within(rounds).getByRole('region', { name: 'Earth 主控汇报' })).toBeInTheDocument();
+    expect(within(rounds).getByRole('region', { name: 'Earth 主控回复' })).toHaveTextContent(
+      '我已把实时进展收拢在同一条消息里',
+    );
     expect(within(rounds).queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止整轮协作' })).not.toBeInTheDocument();
   });
@@ -358,8 +360,11 @@ describe('PAWOS Room collaboration tools', () => {
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
     expect(within(tools).getByRole('group', { name: '协作网状图' })).toHaveTextContent('实现 Room 依赖数据投影');
-    /* The retained completed Room does not admit empty running windows. */
-    expect(openWindow).not.toHaveBeenCalled();
+    /* Entering after settlement still opens the current round's real results. */
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(2));
+    expect(openWindow.mock.calls.map(([request]) => request.target.id)).toEqual([
+      'participant-present', 'participant-firstlight',
+    ]);
 
     /* PF-CM-013/PF-CM-020：态势弹出是真实可达的协作窗口入口，指向 focus 面板。 */
     openWindow.mockClear();
@@ -410,7 +415,8 @@ describe('PAWOS Room collaboration tools', () => {
       'room:room-preview',
     );
     await screen.findByRole('textbox', { name: '协作消息' });
-    expect(openWindow).not.toHaveBeenCalled();
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(2));
+    expect(openWindow.mock.calls.every(([request]) => request.background === true)).toBe(true);
     openWindow.mockClear();
 
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
@@ -604,6 +610,19 @@ describe('PAWOS Room collaboration tools', () => {
     act(() => useRoomLiveStore.setState((state) => ({ projections: { ...state.projections, [roomId]: completedProjection } })));
     expect(openWindow).toHaveBeenCalledTimes(3);
     expect(view.closeWindow).not.toHaveBeenCalled();
+
+    // A new round reopens its participants even if their previous results
+    // were collapsed; ordinary progress in the same round never does.
+    const nextRound = structuredClone(completedProjection);
+    const nextRootId = `${root.id}:next`;
+    nextRound.turnOrder.push(nextRootId);
+    nextRound.turnsById[nextRootId] = {
+      ...root, id: nextRootId, rootId: nextRootId, status: 'running',
+      messageIds: ['next-round-user'], activityIds: [],
+    };
+    act(() => useRoomLiveStore.setState((state) => ({ projections: { ...state.projections, [roomId]: nextRound } })));
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(6));
+    expect(openWindow.mock.calls.slice(3).every(([request]) => request.background === true)).toBe(true);
   });
 
   it('opens the canonical full Session when a standalone result planet is clicked in the ordinary Room', async () => {

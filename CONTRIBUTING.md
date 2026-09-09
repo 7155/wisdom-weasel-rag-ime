@@ -10,9 +10,8 @@ change can therefore cross privacy or lifecycle boundaries.
 - Use Python 3.12 or newer.
 - Use Node.js 22 and the pinned `pnpm@11.9.0` for `control-center-web/`.
 - Use Xcode 16 or newer for patched Squirrel and native release work.
-- Read [PROJECT.md](PROJECT.md) and the relevant active Outcome in
-  [OUTCOMES.md](OUTCOMES.md); load only the related decisions and architecture.
-- Read [ARCHITECTURE.md](ARCHITECTURE.md).
+- Start with the [architecture and source owners](README.md#架构与职责)
+  for the area you want to change.
 - Open an issue before changing persisted schemas, Provider context ordering,
   Tool approval, Room settlement/cancellation, or cross-language route
   contracts.
@@ -31,6 +30,10 @@ build products, or macOS permission state to fixtures.
 
 ## Change Discipline
 
+Development plans, requirement ledgers, handoffs, and review diaries stay local
+and are excluded by `.gitignore`. A fresh clone needs only the public source,
+fixtures, and guides; do not force-add private development records.
+
 - Trace one real entry point through its downstream consumer before editing.
 - Keep one authoritative owner for each stateful concern.
 - Migrate complete capabilities and delete the replaced path in the same change.
@@ -48,6 +51,7 @@ Run focused tests while working. Before a substantial pull request, run:
 ```bash
 uv run --locked python scripts/check_project_harness.py
 uv run --locked python -m compileall -q rag_ime scripts tests
+uv run --locked python scripts/check_owner_boundaries.py
 uv run --locked python scripts/check_import_boundaries.py
 uv run --locked python scripts/check_route_ownership.py
 uvx --from ruff==0.14.2 ruff check rag_ime scripts tests

@@ -1,0 +1,259 @@
+{
+  "schemaVersion": "pawos.feature-gallery.v1",
+  "capturedOn": "2026-09-08",
+  "source": {
+    "baseCommit": "67b81f89b87b251ff6c2807344901638f15be15a",
+    "workingTree": "modified",
+    "frontendFingerprint": "sha256:02cae32281e64bc5e57356dbf46a90d989cd5076f9e2a8fb8489226cea60c2cf"
+  },
+  "capture": {
+    "frontend": "paw-os",
+    "transport": "mock",
+    "method": "interactive browser screenshots of the Vite source preview",
+    "query": "?frontend=paw-os&controlTransport=mock",
+    "theme": "light",
+    "motion": "reduced",
+    "clock": "browser wall clock; not fixed"
+  },
+  "evidenceBoundary": "Public preview fixtures only. No live Provider, installed Pi, native browser or input-method acceptance is asserted. Browser screenshot shows the web control view, which cannot embed native tabs. Lab shows the existing-experiments view; Trace shows diagnosis input selection.",
+  "assets": [
+    {
+      "file": "pawos-desktop.webp",
+      "caption": "PAWOS 桌面",
+      "route": "/appearance",
+      "steps": "关闭窗口，查看桌面 App 与最近项目。",
+      "bytes": 116000,
+      "sha256": "4351c320ccec68de436efdb0873e60c94d5aa3138ba0074b3d1b2c8f7746b0b5",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "11ee54b1862ffc06b22d7ed920e19ea7bc7e9419594d0d701d3449117fcea99e",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-agent.webp",
+      "caption": "Agent 对话",
+      "route": "/agent?session=session-preview",
+      "steps": "最大化窗口，跳到第一轮对话。",
+      "bytes": 48064,
+      "sha256": "2bf0aa8001d8aca06b159a9ac7a636000fad335511e1808f09d1c567668755bd",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "416f6a90ec6c024470e54e4bf1588b5d01137392a90fc809252697fee7492455",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-agent-trace.webp",
+      "caption": "Agent 上下文轨迹",
+      "route": "/agent?session=session-preview",
+      "steps": "Agent 轨迹 → 上下文装配。",
+      "bytes": 69398,
+      "sha256": "6c5604ca2387f38206249d8d300cb01a2a685fd7e6ba41cc7a4ffae691cf6413",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "a80f93e65056fb90bd19b3e188c12a13ec3f6b50d26650b103708db6a4aea624",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-room-results.webp",
+      "caption": "Room 结果",
+      "route": "/rooms?room=room-preview",
+      "steps": "对话与结果。",
+      "bytes": 36586,
+      "sha256": "89f2a12e7696820780a44f29682a62f6ead9459f78477546d12c784300527af1",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "d96016db991618a217c97db4adc9a6f659199fcff06a95cfcc3cdb4e51b65ae9",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-room-collaboration.webp",
+      "caption": "Room 多 Agent 协作",
+      "route": "/rooms?room=room-preview",
+      "steps": "协同模式，等待 Earth、Mars 伙伴窗口加载。",
+      "bytes": 62090,
+      "sha256": "80274ecf5751dc529f42068fd3ecf388474fd03b3e8ff9d77e05f4515b19273d",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "4217494b97b93be5be395c459651cd5c4e28309ed178da462dd627ab30a1fb5e",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-lab.webp",
+      "caption": "Agent Lab 实验比较",
+      "route": "/eval-lab",
+      "steps": "已有实验 → 企业知识库问答 → 检查结果。",
+      "bytes": 53266,
+      "sha256": "be533cdcd3fd846d93d65fa996dffdbf662f76471673dc25a07befe1195e6949",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "6237f5e684710ab5f32d062bd82934ae8f610b98b0a1af649360e0be5b757fc3",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-trace-agent.webp",
+      "caption": "Trace Agent 诊断输入",
+      "route": "/trace-agent?view=new",
+      "steps": "新建任务，查看选择对象与原始证据；不启动执行。",
+      "bytes": 56478,
+      "sha256": "579315ade243955afee1558096e8ecedff641244ee5e6ecbc2e8cbc245bc80bc",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "075d8ba44ca7f52d2eb3e507d3a9878df5b480668dc6b7899efd59ca6cc58116",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-memory.webp",
+      "caption": "Memory 记忆与来源",
+      "route": "/memory?layer=atoms",
+      "steps": "选择输入段封口规则，查看正文和关联来源。",
+      "bytes": 58462,
+      "sha256": "6005bb36f2d0f49a58ffd2c3caaacf5aaa858af9aa308d5b24373010d914a102",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "e9f990a0119d1e7dcfe76a37f1c0cd0676fd4f93d835733f315d4f2eb7ce86ff",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-knowledge.webp",
+      "caption": "Knowledge 检索与引用",
+      "route": "/knowledge",
+      "steps": "搜索“伙伴工具边界”，查看结果与来源位置。",
+      "bytes": 40590,
+      "sha256": "6cbc53bc23680c7832af391cedf0933f0d9717149277b7f39a3d39afd567d18e",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "0d928ff5b59c64d51146da3bca3e5547bcf627421f66db59e5969e6794413e43",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-app-center.webp",
+      "caption": "App Center 包管理",
+      "route": "/plugins",
+      "steps": "已安装，查看 Package 状态和版本入口。",
+      "bytes": 49818,
+      "sha256": "4d05b15580043cd188159c5eb81b02ddac984fac05801a78fcf769eaa9f669bc",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "f248db0c2688e577a2a42191de8a8de82816c74209afa093e4422f02a7709efa",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-project.webp",
+      "caption": "项目工作台",
+      "route": "/overview",
+      "steps": "查看项目概览、工作文档和任务入口。",
+      "bytes": 36576,
+      "sha256": "c06346d8ad81cc4c35923297056c9a1a9a8597d729882a8021de15b2b9d9a259",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "8251d492a78b78ea1353b5fe2ac42fc7464e79f5a2ba4c0e7970c47045e1044c",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-files.webp",
+      "caption": "Files 文件预览",
+      "route": "/files",
+      "steps": "选择控制中心迁移 Session，打开 README.md。",
+      "bytes": 34212,
+      "sha256": "39cd78039868aac19a0034be652407ab7136ba954febe5d94683850ae9d96b8c",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "23e2c94d85c5e8788620533158ed22e7968b3e50dfcb92063c92129df9d4decd",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-browser.webp",
+      "caption": "Browser 网页控制视图",
+      "route": "/browser",
+      "steps": "查看标签栏与桌面宿主能力说明。",
+      "bytes": 18944,
+      "sha256": "246e2cd5bdb0af15c118117bc2378e624e72989d4d777e7c40050ddf2b02a321",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "fbb8d2a530e6ad8103cfa6e7d72d6c3d48452bef3818454dc76379ddaa22339b",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-terminal.webp",
+      "caption": "Terminal 内置终端",
+      "route": "/terminal",
+      "steps": "查看预览终端与工作目录。",
+      "bytes": 16438,
+      "sha256": "ee4a12653029571f17511d73a8c70cc3226295e49ecf8e319ed0a8df2034c39d",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "724dab4eb8b59c05c360e899ccae93daf7c7dc7cc8aa809e58830729a602ee6e",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-input.webp",
+      "caption": "Input Studio 输入设置",
+      "route": "/input",
+      "steps": "查看输入方式、候选和本地运行状态。",
+      "bytes": 74770,
+      "sha256": "0bf4cd12cf28f48382bce678a6be65f6136da10a6fdd74826ef5dcf2b6cf7be7",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "87294e09fb51a6307908eed4662fd0406a0d53fadca1c6c819746ef493659910",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-monitor.webp",
+      "caption": "System Monitor 运行记录",
+      "route": "/observability",
+      "steps": "查看事件时间线与 Trace。",
+      "bytes": 78168,
+      "sha256": "e66864c61f9c30451d333c12bbf58bd5d0b41d34d80570b808153f27f301a9cd",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "dd0775782319725f973bb0089ec2b0e91198aaaefc1c0b57a61c37bbe7621251",
+      "sourceCaptureMimeType": "image/jpeg"
+    },
+    {
+      "file": "pawos-settings.webp",
+      "caption": "System Settings 外观",
+      "route": "/appearance",
+      "steps": "最大化窗口，查看浅色主题与减少动效选项。",
+      "bytes": 45880,
+      "sha256": "02bfa535165dc00aa4ca600bdd4f02b221e02c37ae03e4ee00d460fd9a663ee1",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "sourceCaptureSha256": "e4b5f78624e2889481dd62a9229dee3f207f897693649b73608d9919a15f2d33",
+      "sourceCaptureMimeType": "image/jpeg"
+    }
+  ]
+}

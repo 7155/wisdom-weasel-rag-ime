@@ -214,6 +214,49 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
         )
         return source_id, diagnostic_id, report
 
+    def test_optimization_intent_is_frozen_and_tools_require_the_owning_session(self) -> None:
+        source_id, diagnostic_id = self._sessions()
+        targets = [{"kind": "session", "id": source_id, "title": "source"}]
+        intent = {"mode": "distill", "scopeMode": "selected", "focusAreas": ["skill"], "objective": "提取有用方法"}
+        report = self.service.create_trace_diagnostic_report({"diagnosticSessionId": diagnostic_id,
+            "targets": targets, "intent": intent})
+        self.assertEqual(report["intent"], intent)
+        self.assertTrue(report["optimizationProjectId"])
+        frozen = self.service.trace_diagnostic_inspection({"targets": targets, "_sessionId": diagnostic_id})
+        self.assertEqual(frozen, report["inspection"])
+        with self.assertRaisesRegex(ValueError, "diagnostic Session"):
+            self.service.trace_optimization_read(report["reportId"], {}, session_id=source_id)
+        with self.assertRaisesRegex(ValueError, "user's Trace App"):
+            self.service.trace_optimization_command(report["reportId"], {"operation": "candidate_action"}, session_id=diagnostic_id)
+        with self.assertRaisesRegex(ValueError, "bound diagnostic"):
+            self.service.trace_optimization_command(report["reportId"], {"operation": "save_distillation"})
+        with self.assertRaisesRegex(ValueError, "outside this report's focus"):
+            self.service.trace_optimization_command(report["reportId"], {"command": "register_version", "clientRequestId": "bad-focus", "input": {"targetKind": "tool"}}, session_id=diagnostic_id)
+
+    @requires_loopback_bind
+    def test_optimization_library_capabilities_and_command_local_http_routes(self) -> None:
+        _, _, report = self._create_report()
+        server, thread = self._server()
+        try:
+            port = server.server_port
+            status, body = self._json_request(port, "/api/observability/trace-optimization")
+            self.assertEqual(status, 200)
+            self.assertEqual(body["projects"][0]["projectId"], report["optimizationProjectId"])
+            status, body = self._json_request(port, "/api/observability/trace-optimization/capabilities")
+            self.assertEqual(status, 200)
+            self.assertIn("items", body)
+            self.assertTrue(body["unavailable"])
+            path = "/api/observability/trace-diagnostic-reports/" + quote(report["reportId"], safe="") + "/optimization"
+            status, _ = self._json_request(port, path, method="POST", payload={"operation": "run_candidate", "clientRequestId": "unknown", "candidateId": "missing"})
+            self.assertEqual(status, 400)
+            with patch.object(DebugRequestHandler, "_trace_repair_loopback_allowed", return_value=False):
+                status, _ = self._json_request(port, "/api/observability/trace-optimization")
+                self.assertEqual(status, 403)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(2)
+
     def test_repair_authorization_requires_a_confirmed_full_automation_session(self) -> None:
         repair = self._full_auto_repair_session("Trace full-auto repair")
         payload = {

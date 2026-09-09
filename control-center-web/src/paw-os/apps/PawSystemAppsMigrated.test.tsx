@@ -75,8 +75,22 @@ describe('PawSystemAppsMigrated', () => {
 
     const rail = document.querySelector('.paw-system-app__nav');
     expect(rail?.querySelector('.paw-app-icon')).toBeNull();
-    expect(rail?.firstElementChild?.tagName).toBe('NAV');
+    expect(rail?.firstElementChild).toHaveAttribute('aria-controls', screen.getByRole('navigation').id);
     expect(screen.getByRole('navigation', { name: 'Input Studio页面' })).toBeInTheDocument();
+  });
+
+  it.each(['input-studio', 'app-center', 'system-monitor', 'system-settings'] as const)('collapses %s navigation and preserves the current workspace', async (appId) => {
+    const user = userEvent.setup();
+    renderSystemApp(appId, '');
+    const toggle = screen.getByRole('button', { name: /收起.*导航$/ });
+    const navigation = screen.getByRole('navigation');
+    const workspace = document.querySelector('.paw-system-app__workspace');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(navigation).not.toBeVisible();
+    expect(document.querySelector('.paw-system-app__workspace')).toBe(workspace);
+    await user.click(toggle);
+    expect(navigation).toBeVisible();
   });
 
   it('names the current page with its group in the stage chrome strip', () => {

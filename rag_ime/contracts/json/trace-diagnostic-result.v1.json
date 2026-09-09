@@ -67,6 +67,16 @@
       "type": "object", "additionalProperties": false,
       "required": ["findingId", "dimensionId", "severity", "observation", "hypothesis", "conclusion", "confidence", "evidenceIds", "candidateRepair", "verification"],
       "properties": {
+        "candidateIds": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          }
+        },
         "findingId": {"type": "string", "minLength": 1, "maxLength": 160},
         "dimensionId": {"$ref": "#/$defs/dimensionId"},
         "severity": {"enum": ["critical", "high", "medium", "low"]},

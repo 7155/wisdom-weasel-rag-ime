@@ -1,20 +1,31 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef } from 'react';
 import { useMotionValueEvent, useSpring } from 'motion/react';
 import nebula from '../assets/stellar/nebula.png';
 import { PawStopMotionPlanet } from './PawStopMotionPlanet';
-import { createStellarStopMotion } from './stellar-stop-motion';
 import { usePawWorkDirectory } from './PawWorkDirectory';
 import { projectStellarAgents, type StellarAgentProjection } from './stellar-agent-projection';
 import { StellarAgentField } from './StellarAgentField';
+import { createStellarStopMotion } from './stellar-stop-motion';
 
 const spring = { mass: 1, stiffness: 100, damping: 10 };
 // A fixed sky avoids hydration changes and never implies Runtime activity.
+const scatter = (index: number, salt: number) => {
+  const value = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453;
+  return value - Math.floor(value);
+};
 const stars = Array.from({ length: 96 }, (_, index) => ({
-  left: `${(index * 47 + 13) % 101}%`,
-  top: `${(index * 31 + 7) % 97}%`,
+  left: `${scatter(index, 1) * 100}%`,
+  top: `${scatter(index, 2) * 100}%`,
   width: index % 13 === 0 ? 3 : index % 3 === 0 ? 2 : 1,
   height: index % 13 === 0 ? 3 : index % 3 === 0 ? 2 : 1,
   opacity: .35 + (index % 4) * .15,
+  '--star-delay': `${-scatter(index, 3) * 19}s`,
+  '--star-duration': `${11 + scatter(index, 4) * 8}s`,
+}));
+const dust = Array.from({ length: 64 }, (_, index) => ({
+  left: `${scatter(index, 5) * 100}%`,
+  top: `${scatter(index, 6) * 100}%`,
+  opacity: .18 + scatter(index, 7) * .4,
 }));
 
 /** A painted sky with independently moving depth planes. Reading, window
@@ -23,12 +34,13 @@ const stars = Array.from({ length: 96 }, (_, index) => ({
 export function PawStellarBackdrop({ agents }: { agents?: StellarAgentProjection } = {}) {
   const sceneRef = useRef<HTMLDivElement>(null);
   const farRef = useRef<HTMLDivElement>(null);
+  const middleRef = useRef<HTMLDivElement>(null);
   const planetRef = useRef<HTMLDivElement>(null);
   const nearRef = useRef<HTMLDivElement>(null);
   const x = useSpring(0, spring);
   const y = useSpring(0, spring);
   const paintDepth = () => {
-    for (const [element, depth] of [[farRef.current, 6], [planetRef.current, 20], [nearRef.current, 34]] as const) {
+    for (const [element, depth] of [[farRef.current, 6], [middleRef.current, 12], [planetRef.current, 28], [nearRef.current, 20]] as const) {
       if (element) element.style.transform = `translate3d(${x.get() * depth}px, ${y.get() * depth}px, 0)`;
     }
   };
@@ -92,16 +104,23 @@ export function PawStellarBackdrop({ agents }: { agents?: StellarAgentProjection
     <div aria-hidden="true" className="paw-stellar-scene" data-agent-count={agents?.runningPlanets.length ?? 0} data-stellar-paused="true" ref={sceneRef}>
       <div className="paw-stellar-scene__far" ref={farRef}>
         <img alt="" className="paw-stellar-scene__nebula" decoding="async" draggable={false} src={nebula} />
+        <div className="paw-stellar-scene__dust">{dust.map((style, index) => <i key={index} style={style} />)}</div>
       </div>
       <div className="paw-stellar-scene__daylight" />
+      <div className="paw-stellar-scene__middle" ref={middleRef}>
+        <div className="paw-stellar-scene__moon"><div className="paw-stellar-scene__moon-clouds" style={{ backgroundImage: `url(${import.meta.env.BASE_URL}paw-media/starfield/moon-512.jpg)` }} /></div>
+        <div className="paw-stellar-scene__distant-world" />
+        <div className="paw-stellar-scene__light-wisp" />
+      </div>
       <div className="paw-stellar-scene__planet-plane" ref={planetRef}>
         <PawStopMotionPlanet />
         {agents ? <StellarAgentField projection={agents} /> : null}
       </div>
       <div className="paw-stellar-scene__near" ref={nearRef}>
         <div className="paw-stellar-scene__stars">
-          {stars.map((style, index) => <i data-bright-sky={parseFloat(style.left) < 58 || undefined} key={index} style={style} />)}
+          {stars.map((style, index) => <i data-bright-sky={parseFloat(style.left) < 58 || undefined} key={index} style={style as CSSProperties} />)}
         </div>
+        <div className="paw-stellar-scene__meteor" />
       </div>
     </div>
   );

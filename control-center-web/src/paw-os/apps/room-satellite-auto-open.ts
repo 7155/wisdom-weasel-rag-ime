@@ -108,18 +108,31 @@ export function roomPartnerSessionWindowRequest(
 }
 
 /**
- * An explicit collaboration view opens partners admitted to a running public
- * turn. Membership alone cannot invent activity or an empty observer. These
- * background requests preserve the main composer and stable participant keys.
+ * Opening collaboration mode restores the latest public round, including
+ * partners that submitted before the view mounted. Other concurrent roots
+ * contribute their admitted partners while running. Window visibility is a
+ * reading choice, not a claim that those Sessions are still executing.
+ * Membership alone cannot invent an observer; these background requests
+ * preserve the main composer and stable participant keys.
  */
 export function roomCollaborationPlanetRequests(
   room: RoomSummary,
   projection?: RoomProjectionState,
 ): PawOsWindowRequest[] {
-  if (room.status !== 'active') return [];
-  const activeIds = roomProjectionRuntimeActiveParticipantIds(projection);
+  if (room.status !== 'active' || !projection) return [];
+  const publicTurns = selectPublicRoomTurnOrder(projection);
+  const latestTurnId = publicTurns.at(-1);
+  const participantIds = new Set<string>();
+  for (const turnId of publicTurns) {
+    const turn = projection.turnsById[turnId];
+    if (!turn || (turnId !== latestTurnId && turn.status !== 'running')) continue;
+    for (const id of turn.participantIds) participantIds.add(id);
+    for (const lane of selectRoomTurnExecution(projection, turnId).lanes) {
+      if (lane.participantId) participantIds.add(lane.participantId);
+    }
+  }
   return room.participants
-    .filter((participant) => participant.status === 'active' && activeIds.has(participant.id))
+    .filter((participant) => participant.status === 'active' && participantIds.has(participant.id))
     .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
     .map((participant) => roomPlanetObserverWindowRequest(participant, room.id, true));
 }

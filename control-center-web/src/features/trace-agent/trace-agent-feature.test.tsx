@@ -8,6 +8,7 @@ import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
+import { ControlTransportHttpError } from '@/platform/http-transport';
 import type { TraceDiagnosticReportV1 } from '@/contracts/generated/trace-diagnostic-report.v1';
 import type { TraceDiagnosticReportListV1 } from '@/contracts/generated/trace-diagnostic-report-list.v1';
 import {
@@ -16,15 +17,82 @@ import {
   TraceAgentFeature,
 } from './index';
 import { buildTraceAgentHandoffRoute } from './handoff';
+import { clearTraceDiagnosticStart } from './diagnostic-start';
 import traceAgentCss from './trace-agent.css?raw';
 
 afterEach(() => {
   vi.useRealTimers();
   window.pawBrowserHost = undefined;
+  clearTraceDiagnosticStart();
   cleanup();
 });
 
 describe('TraceAgentFeature', () => {
+  it('opens an independent workspace and preserves the new-task draft across app views', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    renderFeature(transport, [], ['/trace-agent']);
+    expect(await screen.findByRole('heading', { name: '工作台' })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Trace Agent 应用导航' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '开始诊断' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '新建优化任务' }));
+    const objective = await screen.findByRole('textbox', { name: '希望改善的结果（可选）' });
+    await user.type(objective, '减少 Skill 重复重试');
+    await user.click(screen.getByRole('button', { name: '工作台' }));
+    expect(screen.queryByRole('textbox', { name: '希望改善的结果（可选）' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '新建任务' }));
+    expect(screen.getByRole('textbox', { name: '希望改善的结果（可选）' })).toHaveValue('减少 Skill 重复重试');
+  });
+
+  it('freezes the selected Skill-only distillation intent into the report request and actual prompt', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    renderFeature(transport, []);
+    const settings = await screen.findByRole('region', { name: '本次任务设置' });
+    expect(within(settings).getByRole('checkbox', { name: '全部' })).toBeChecked();
+    await user.click(within(settings).getByRole('radio', { name: /从对话沉淀方法/ }));
+    await user.click(within(settings).getByRole('checkbox', { name: '全部' }));
+    expect(screen.getByRole('button', { name: '开始诊断' })).toBeDisabled();
+    await user.click(within(settings).getByRole('checkbox', { name: 'Skill' }));
+    await user.type(within(settings).getByRole('textbox'), '总结可以复用的排障方法');
+    await user.click(screen.getByRole('tab', { name: 'Room 协作' }));
+    await user.click(within(await screen.findByRole('listitem', { name: /失败的协作/ })).getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.prompt')).toBe(true));
+    const create = transport.requests.find(({ request }) => request.pathId === 'observability.traceDiagnosticReports.create')!.request;
+    expect(create.body).toMatchObject({ intent: { mode: 'distill', scopeMode: 'selected', focusAreas: ['skill'], objective: '总结可以复用的排障方法' }, targets: [{ kind: 'session', id: 'session-source' }, { kind: 'room', id: 'room-source' }] });
+    const prompt = String((transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')!.request.body as Record<string, unknown>).message);
+    expect(prompt).toContain('"mode":"distill","scopeMode":"selected","focusAreas":["skill"]');
+    expect(prompt).toContain('不得修改未选方向');
+    expect(prompt).toContain('总结可以复用的排障方法');
+    expect(within(settings).getByRole('checkbox', { name: 'Skill' })).toBeDisabled();
+  });
+
+  it('keeps an explicitly cleared source selection empty across refresh and tab changes', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    renderFeature(transport, []);
+    const source = await screen.findByRole('checkbox', { name: '选择 失败的对话' });
+    await waitFor(() => expect(source).toBeChecked());
+    await user.click(source);
+    expect(source).not.toBeChecked();
+    expect(screen.getByRole('button', { name: '开始诊断' })).toBeDisabled();
+
+    const readsBefore = transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.list').length;
+    await user.click(screen.getByRole('button', { name: '刷新对象' }));
+    await waitFor(() => expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.list').length).toBeGreaterThan(readsBefore));
+    expect(source).not.toBeChecked();
+    await user.click(screen.getByRole('tab', { name: 'Room 协作' }));
+    const room = within(await screen.findByRole('listitem', { name: /失败的协作/ })).getByRole('checkbox');
+    expect(room).not.toBeChecked();
+    expect(screen.getByRole('button', { name: '开始诊断' })).toBeDisabled();
+    await user.click(room);
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'observability.traceDiagnosticReports.create')).toBe(true));
+    const request = transport.requests.find(({ request }) => request.pathId === 'observability.traceDiagnosticReports.create')!.request;
+    expect((request.body as { targets: { kind: string; id: string }[] }).targets.map(({ kind, id }) => ({ kind, id }))).toEqual([{ kind: 'room', id: 'room-source' }]);
+  });
+
   it('carries the exact saved diagnostic report into Lab without starting another run', async () => {
     const reportId = `trace-report:${'c'.repeat(32)}`;
     const routes: string[] = [];
@@ -495,6 +563,67 @@ describe('TraceAgentFeature', () => {
     )).length).toBeGreaterThanOrEqual(2);
   });
 
+  it('retains the created report and Session after a rejected prompt and retries its frozen message identity', async () => {
+    const user = userEvent.setup();
+    let attempts = 0;
+    const transport = traceAgentTransport({
+      diagnosticSnapshots: [emptyDiagnosticSessionSnapshot()],
+      diagnosticPrompt: () => {
+        if (attempts++ === 0) throw new ControlTransportHttpError('agent.session.prompt', 409, 'Runtime needs_configuration');
+        return { ok: true };
+      },
+    });
+    const routes: string[] = [];
+    const firstView = renderFeature(transport, routes);
+    const settings = await screen.findByRole('region', { name: '本次任务设置' });
+    await user.click(within(settings).getByRole('radio', { name: /从对话沉淀方法/ }));
+    await user.click(within(settings).getByRole('checkbox', { name: '全部' }));
+    await user.click(within(settings).getByRole('checkbox', { name: 'Skill' }));
+    await user.type(within(settings).getByRole('textbox'), '保留原诊断目标');
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    expect(report).toHaveTextContent('启动待确认');
+    await user.click(within(report).getByRole('button', { name: '打开诊断 Agent 对话' }));
+    expect(routes).toContain('/agent?session=agent%3Atrace-diagnostic');
+    firstView.unmount();
+    renderFeature(transport, routes);
+    await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    const restoredSettings = screen.getByRole('region', { name: '本次任务设置' });
+    expect(within(restoredSettings).getByRole('radio', { name: /从对话沉淀方法/ })).toBeChecked();
+    expect(within(restoredSettings).getByRole('checkbox', { name: 'Skill' })).toBeChecked();
+    expect(within(restoredSettings).getByRole('textbox')).toHaveValue('保留原诊断目标');
+    await user.click(await screen.findByRole('button', { name: '重试诊断启动' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '诊断已启动' })).toBeDisabled());
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'observability.traceDiagnosticReports.create')).toHaveLength(1);
+    const prompts = transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt');
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]!.request.body).toEqual(prompts[1]!.request.body);
+  });
+
+  it('reconciles an ambiguous prompt by exact message identity without sending it again', async () => {
+    const user = userEvent.setup();
+    let clientMessageId = '';
+    const transport = traceAgentTransport({
+      diagnosticPrompt: (request) => {
+        clientMessageId = String((request.body as Record<string, unknown>).clientMessageId);
+        throw new TypeError('fetch failed after acceptance');
+      },
+      diagnosticSnapshot: () => ({
+        ...emptyDiagnosticSessionSnapshot(),
+        items: clientMessageId ? [{ id: 'accepted-user', role: 'user', clientMessageId, createdAtMs: 201, blocks: [{ type: 'text', data: { text: '已接收原诊断请求' } }] }] : [],
+      }),
+    });
+    renderFeature(transport, []);
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    const check = screen.queryByRole('button', { name: '核对启动状态' });
+    if (check) await user.click(check);
+    await waitFor(() => expect(screen.getByRole('button', { name: '诊断已启动' })).toBeDisabled());
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt')).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
+  });
+
   it('waits for terminal settlement before finalizing a canonical structured snapshot', async () => {
     const user = userEvent.setup();
     const completedWhileBusy = {
@@ -685,6 +814,39 @@ describe('TraceAgentFeature', () => {
     expect(timeline).toHaveTextContent('最终思考');
     expect(timeline).not.toHaveTextContent('临时回答');
     expect(timeline).not.toHaveTextContent('临时思考');
+  });
+
+  it('orders durable user messages without sequences before their own assistant and tool events', async () => {
+    // Read from the real Session messages response: user rows have only epoch
+    // timestamps, while assistant and history activity rows have JSONL ordinals.
+    // Content and identities are replaced; the ordering fields are unchanged.
+    const snapshot = {
+      ok: true,
+      sessionId: 'session-source',
+      status: 'idle',
+      items: [
+        { id: 'user-1', turnId: 'turn-1', role: 'user', createdAtMs: 1788324850227, blocks: [{ type: 'text', data: { text: '第一轮请求' } }] },
+        { id: 'assistant-1', turnId: 'turn-1', role: 'assistant', timelineSequence: 2.9, createdAtMs: 1788324854774, blocks: [{ type: 'text', data: { text: '第一轮回答' } }] },
+        { id: 'user-2', turnId: 'turn-2', role: 'user', createdAtMs: 1788325217090, blocks: [{ type: 'text', data: { text: '第二轮请求' } }] },
+        { id: 'assistant-2', turnId: 'turn-2', role: 'assistant', timelineSequence: 6.9, createdAtMs: 1788325224772, blocks: [{ type: 'text', data: { text: '第二轮回答' } }] },
+        { id: 'user-3', turnId: 'turn-3', role: 'user', createdAtMs: 1788327047098, blocks: [{ type: 'text', data: { text: '第三轮请求' } }] },
+        { id: 'assistant-3', turnId: 'turn-3', role: 'assistant', timelineSequence: 8.9, createdAtMs: 1788327049961, blocks: [{ type: 'text', data: { text: '第三轮回答' } }] },
+      ],
+      liveEvents: [
+        { eventId: 'reasoning-1', turnId: 'turn-1', eventType: 'reasoning_summary', sequence: 1, timelineSequence: 2.1, createdAtMs: 1788324854774, payload: { summary: '第一轮思考' } },
+        { eventId: 'reasoning-2', turnId: 'turn-2', eventType: 'reasoning_summary', sequence: 2, timelineSequence: 4.1, createdAtMs: 1788325221542, payload: { summary: '第二轮思考' } },
+        { eventId: 'tool-start', turnId: 'turn-2', eventType: 'tool_started', sequence: 3, timelineSequence: 4.2010000000000005, createdAtMs: 1788325221543, payload: { summary: '工具开始' } },
+        { eventId: 'tool-finish', turnId: 'turn-2', eventType: 'tool_finished', sequence: 4, timelineSequence: 5.8, createdAtMs: 1788325221761, payload: { summary: '工具完成' } },
+      ],
+    };
+    renderFeature(traceAgentTransport({ sourceSnapshot: snapshot }), []);
+    const timeline = await screen.findByRole('region', { name: '原始对话时间线' });
+    await waitFor(() => expect(within(timeline).getAllByTestId('trace-agent-timeline-entry')).toHaveLength(10));
+    const entries = within(timeline).getAllByTestId('trace-agent-timeline-entry');
+    expect(entries.map((entry) => entry.querySelector('.trace-agent-timeline__title > span')?.textContent?.replace(/^ · /, ''))).toEqual([
+      '第一轮请求', '第一轮思考', '第一轮回答', '第二轮请求', '第二轮思考', '工具开始', '工具完成', '第二轮回答', '第三轮请求', '第三轮回答',
+    ]);
+    expect(entries.filter((entry) => entry.getAttribute('data-kind') === 'user').map((entry) => entry.getAttribute('data-sequence'))).not.toContain('1788324850227');
   });
 
   it('switches between Room and recorded runs while preserving precise source deep links', async () => {
@@ -1370,11 +1532,6 @@ describe('TraceAgentFeature', () => {
     const target = await screen.findByRole('listitem', { name: /失败的对话/ });
     expect(target).toHaveTextContent('已诊断 · 失败');
     expect(within(target).getByRole('button', { name: '打开报告' })).toBeInTheDocument();
-    const reports = await screen.findByRole('region', { name: '已保存的 Trace 诊断报告' });
-    expect(reports).toHaveTextContent('已保存的工程审计报告');
-    expect(reports).toHaveTextContent('失败原因：结构化结果缺失');
-    expect(within(reports).getByRole('button', { name: '打开审计报告' })).toBeInTheDocument();
-    expect(within(reports).getByRole('listitem')).toHaveAttribute('data-status', 'failed');
     await userEvent.setup().click(within(target).getByRole('button', { name: '打开报告' }));
     expect(routes).toContain(`/trace-agent?reportId=${encodeURIComponent(reportId)}`);
 
@@ -1413,12 +1570,12 @@ describe('TraceAgentFeature', () => {
       }],
     });
     const user = userEvent.setup();
-    renderFeature(transport, []);
+    renderFeature(transport, [], ['/trace-agent']);
 
     const reports = await screen.findByRole('region', { name: '已保存的 Trace 诊断报告' });
     expect(reports).toHaveTextContent('最近报告');
     expect(within(reports).queryByText('更早报告')).not.toBeInTheDocument();
-    await user.click(within(reports).getByRole('button', { name: '加载更早报告' }));
+    await user.click(screen.getByRole('button', { name: '加载更早任务' }));
     await waitFor(() => expect(within(reports).getByText('更早报告')).toBeInTheDocument());
     expect(transport.requests.filter(({ request }) => (
       request.pathId === 'observability.traceDiagnosticReports.list'
@@ -1583,6 +1740,7 @@ describe('TraceAgentFeature', () => {
     expect(page).toHaveTextContent('查看完整冻结时间线');
     expect(page).toHaveTextContent('问题出在哪一层');
     expect(page).toHaveTextContent('主要故障在 Tool / Runtime');
+    await userEvent.setup().click(within(page).getByText('证据详情与技术附录'));
     expect(within(page).getByRole('listitem', { name: 'Tool / Runtime：主要责任' })).toBeInTheDocument();
     expect(within(page).getByRole('listitem', { name: 'Skill：正常' })).toBeInTheDocument();
     expect(within(page).getByRole('listitem', { name: '模板提示：未知' })).toBeInTheDocument();
@@ -1642,7 +1800,7 @@ describe('TraceAgentFeature', () => {
   });
 });
 
-function renderFeature(transport: MockControlTransport, routes: string[], initialEntries = ['/trace-agent']) {
+function renderFeature(transport: MockControlTransport, routes: string[], initialEntries = ['/trace-agent?view=new']) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -1673,6 +1831,8 @@ function traceAgentTransport(options: {
   sourceSnapshots?: unknown[];
   repairSessionSnapshot?: unknown;
   diagnosticSnapshots?: unknown[];
+  diagnosticSnapshot?: () => unknown;
+  diagnosticPrompt?: (request: ControlRequest) => unknown;
   diagnosticReports?: TraceDiagnosticReportListV1;
   diagnosticReportPages?: TraceDiagnosticReportListV1[];
   diagnosticReport?: TraceDiagnosticReportV1;
@@ -1743,6 +1903,7 @@ function traceAgentTransport(options: {
       },
       'agent.session.snapshot': (request: ControlRequest) => {
         if (request.params?.sessionId === 'agent:trace-diagnostic') {
+          if (options.diagnosticSnapshot) return options.diagnosticSnapshot();
           const index = Math.min(diagnosticSnapshotIndex++, Math.max(0, diagnosticSnapshots.length - 1));
           return diagnosticSnapshots[index] ?? emptyDiagnosticSessionSnapshot();
         }
@@ -1787,6 +1948,7 @@ function traceAgentTransport(options: {
         return { ok: true, ...(source ? { session: source } : {}) };
       },
       'agent.session.prompt': (request: ControlRequest) => {
+        if (request.params?.sessionId === 'agent:trace-diagnostic' && options.diagnosticPrompt) return options.diagnosticPrompt(request);
         const message = String((request.body as Record<string, unknown> | undefined)?.message ?? '');
         if (
           message.includes('Trace Agent 的候选修复交接')

@@ -165,6 +165,13 @@
 :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher { grid-area: band; }
 :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail { grid-area: rail; }
 
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library[data-native-layout='app'][data-sidebar-collapsed='true'] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'band' 'workspace';
+}
+
+.knowledge-base-switcher > .paw-app-sidebar-toggle { margin: 0; }
+
 /* The workspace column is its own container: a tab panel beside a 236px rail
    is that much narrower than the window, so its two-column surfaces fold on
    their own measured width instead of the window's. */
@@ -398,6 +405,9 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: 9px;
 }
+
+.knowledge-library[data-sidebar-collapsed='true'] .knowledge-base-switcher__current { display: none; }
+.knowledge-library[data-sidebar-collapsed='true'] .knowledge-base-switcher > .ui-field { display: grid; }
 
 .knowledge-base-switcher > .ui-field > label { color: var(--color-text-secondary); font-size: 13px; line-height: 1.4; white-space: nowrap; }
 .knowledge-base-switcher .ui-select__trigger {
@@ -2412,6 +2422,8 @@
   :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] { display: none; }
   :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__current { display: none; }
   :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher > .ui-field { display: grid; }
+  /* The labelled library selector replaces the entire rail at this width. */
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher > .paw-app-sidebar-toggle { display: none; }
 }
 
 /* The command band keeps identity, health and actions the longest; the

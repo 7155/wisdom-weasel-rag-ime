@@ -15,6 +15,8 @@ export interface TraceDiagnosticReportListV1 {
   items: Item[];
 }
 export interface Item {
+  intent?: OptimizationIntent;
+  optimizationProjectId?: string;
   reportId: string;
   revision: number;
   status: 'generating' | 'completed' | 'failed';
@@ -88,6 +90,39 @@ export interface Item {
   failureReason: string;
   createdAtMs: number;
   updatedAtMs: number;
+}
+export interface OptimizationIntent {
+  mode: 'improve' | 'distill';
+  scopeMode: 'all' | 'selected';
+  /**
+   * @minItems 1
+   * @maxItems 5
+   */
+  focusAreas:
+    | ['tool' | 'skill' | 'prompt' | 'workflow' | 'model']
+    | [
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+      ]
+    | [
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+      ]
+    | [
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+      ]
+    | [
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+        'tool' | 'skill' | 'prompt' | 'workflow' | 'model',
+      ];
+  objective: string;
 }
 export interface Target {
   targetKey: string;

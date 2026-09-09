@@ -25,6 +25,19 @@ vi.mock('@/features/paw-os/PawOsSatelliteHost', () => ({
 afterEach(cleanup);
 
 describe('PAWOS App runtime', () => {
+  it('mounts Trace Agent as an independent App with its own task and library navigation', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'observability.traceDiagnosticReports.list': { schemaVersion: 'rag-ime.trace-diagnostic-report-list.v1', total: 0, truncated: false, items: [] },
+    } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<ControlTransportProvider transport={transport}><PawOsAppearanceProvider><QueryClientProvider client={client}><PawAppBody appId="trace-agent" initialRoute="/trace-agent" /></QueryClientProvider></PawOsAppearanceProvider></ControlTransportProvider>);
+    expect(await screen.findByRole('heading', { name: '工作台' })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Trace Agent 应用导航' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '经验库' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '能力库' })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'System Monitor页面' })).not.toBeInTheDocument();
+  });
+
   it('mounts the direct PAW Browser surface', async () => {
     render(<PawAppBody appId="browser" />);
 

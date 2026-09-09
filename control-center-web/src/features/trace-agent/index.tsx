@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   FolderOpen,
   FlaskConical,
-  GitBranch,
   LoaderCircle,
   MessageSquareText,
   Network,
@@ -48,7 +47,6 @@ import {
 import { parseRoomEventPage, type RoomEventPage } from '@/contracts/room-reducer';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { pawBrowserHost } from '@/paw-os/apps/paw-browser-host';
-import type { LucideIcon } from 'lucide-react';
 import {
   parseTraceAgentHandoff,
   buildTraceLabRoute,
@@ -80,7 +78,15 @@ import {
   type TraceTargetKind,
 } from './trace-agent-model';
 import { TraceDiagnosticReportDocument } from './report-document';
+import { traceOptimizationNeedsPolling, type TraceCandidateAction } from './optimization-report-model';
+import { TraceAppShell, TraceCapabilityLibrary, TraceKnowledgeLibrary, type TraceAppView } from './trace-app-shell';
+import { defaultTraceOptimizationIntent, freezeTraceOptimizationIntent, TraceOptimizationSetup, type TraceOptimizationIntent } from './optimization-intent';
+import { settleTraceOptimizationCommand, traceOptimizationCommandId } from './optimization-command';
+import { orderTraceTimelineEntries, recordedTimelineSequence, type TraceTimelineOrderEntry } from './timeline-order';
+import { deliverTraceDiagnosticPrompt, readTraceDiagnosticStart, saveTraceDiagnosticStart, traceDiagnosticPromptAccepted, type TraceDiagnosticStartContext } from './diagnostic-start';
 import './engineering-audit-report.css';
+import './optimization-report.css';
+import './trace-app.css';
 import './trace-agent.css';
 
 const TRACE_AGENT_SKILL_REF = 'integrations/pi/skills/trace-agent-diagnostics/SKILL.md';
@@ -130,6 +136,7 @@ type TraceAgentReport = {
   traceIds: string[];
   promptAccepted: boolean;
   evidence: TraceEvidenceItem[];
+  intent?: TraceOptimizationIntent;
 };
 
 type TraceRepairHandoff = {
@@ -159,12 +166,46 @@ type TraceTargetCatalog = {
 };
 
 export function TraceAgentFeature() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const reportId = searchParams.get('reportId')?.trim() ?? '';
-  return reportId ? <TraceDiagnosticReportPage reportId={reportId} /> : <TraceAgentWorkbench />;
+  const requestedView = searchParams.get('view') ?? '';
+  const view: TraceAppView = reportId ? 'report' : ['workspace', 'new', 'knowledge', 'capabilities'].includes(requestedView) ? requestedView as TraceAppView : parseTraceAgentHandoff(searchParams) ? 'new' : 'workspace';
+  const [draftOpened, setDraftOpened] = useState(view === 'new');
+  useEffect(() => { if (view === 'new') setDraftOpened(true); }, [view]);
+  const navigate = (next: TraceAppView) => setSearchParams({ view: next });
+  return <TraceAppShell onNavigate={navigate} view={view}>
+    {view === 'workspace' ? <TraceTaskWorkspace onCreate={() => navigate('new')} onOpen={(id) => setSearchParams({ reportId: id })} /> : null}
+    {draftOpened || view === 'new' ? <div hidden={view !== 'new'}><TraceAgentWorkbench /></div> : null}
+    {view === 'knowledge' ? <TraceKnowledgeLibrary /> : null}
+    {view === 'capabilities' ? <TraceCapabilityLibrary /> : null}
+    {view === 'report' ? <TraceDiagnosticReportPage reportId={reportId} /> : null}
+  </TraceAppShell>;
 }
 
 type TraceDiagnosticReportSummary = TraceDiagnosticReportListV1['items'][number];
+
+function TraceTaskWorkspace({ onCreate, onOpen }: { onCreate: () => void; onOpen: (reportId: string) => void }) {
+  const transport = useControlTransport();
+  const reports = useTraceDiagnosticReports(transport);
+  const [status, setStatus] = useState('all');
+  const items = useMemo(() => {
+    const byId = new Map<string, TraceDiagnosticReportSummary>();
+    for (const page of reports.data?.pages ?? []) for (const item of page.items) byId.set(item.reportId, item);
+    return [...byId.values()].sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+  }, [reports.data]);
+  const visible = items.filter((item) => status === 'all' || item.status === status);
+  return <section aria-labelledby="trace-workspace-title" className="trace-app__page">
+    <header className="trace-app__page-heading"><div><h1 id="trace-workspace-title">工作台</h1><p>从真实记录发起改进，回来查看候选、重测结果与版本决策。</p></div><Button leadingIcon={<Sparkles size={16} />} onClick={onCreate} variant="primary">新建优化任务</Button></header>
+    <div className="trace-app__task-toolbar"><h2>最近任务</h2><label>任务状态<select onChange={(event) => setStatus(event.target.value)} value={status}><option value="all">全部任务</option><option value="generating">分析中</option><option value="completed">报告已完成</option><option value="failed">未完成</option></select></label><Button loading={reports.isFetching} onClick={() => void reports.refetch()} size="small" variant="quiet">刷新</Button></div>
+    <QueryState error={reports.error} isPending={reports.isPending} onRetry={() => void reports.refetch()}>
+      <section aria-label="已保存的 Trace 诊断报告">{visible.length ? <ul className="trace-app__tasks">{visible.map((item) => {
+        const intent = asRecord(asRecord(item).intent);
+        return <li data-status={item.status} key={item.reportId}><button onClick={() => onOpen(item.reportId)} type="button"><div><h3>{item.title}</h3><p>{item.targets.map((target) => target.title || target.id).join(' · ')}</p><span>{intent.mode === 'distill' ? '从对话沉淀方法' : intent.mode === 'improve' ? '分析并优化' : '历史诊断'} · {item.targets.length} 个来源 · {formatTime(item.updatedAtMs)}</span>{item.failureReason ? <p className="trace-app__task-failure">{item.failureReason}</p> : null}</div><span className="trace-app__task-state">{reportStatusLabel(item.status)}<ArrowUpRight aria-hidden="true" size={16} /></span></button></li>;
+      })}</ul> : <div className="trace-app__empty"><h2>{status === 'all' ? '还没有优化任务' : '没有这个状态的任务'}</h2><p>{status === 'all' ? '选择一段或多段工作对话，分析改进机会，或沉淀值得复用的方法。' : '已有任务保留在其他状态中，可以切换回全部任务。'}</p>{status === 'all' ? <Button onClick={onCreate}>选择工作记录</Button> : null}</div>}</section>
+      {reports.hasNextPage ? <Button loading={reports.isFetchingNextPage} onClick={() => void reports.fetchNextPage()} size="small">加载更早任务</Button> : null}
+    </QueryState>
+  </section>;
+}
 
 function useTraceDiagnosticReports(transport: ReturnType<typeof useControlTransport>) {
   return useInfiniteQuery<TraceDiagnosticReportListV1>({
@@ -201,19 +242,37 @@ function useTraceDiagnosticReport(
     }),
     retry: false,
     refetchOnWindowFocus: false,
-    refetchInterval: (query) => query.state.data?.status === 'generating' ? TRACE_AGENT_DIAGNOSTIC_POLL_INTERVAL_MS : false,
+    refetchInterval: (query) => query.state.data && traceOptimizationNeedsPolling(query.state.data) ? TRACE_AGENT_DIAGNOSTIC_POLL_INTERVAL_MS : false,
   });
 }
 
 function TraceDiagnosticReportPage({ reportId }: { reportId: string }) {
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
+  const [, setSearchParams] = useSearchParams();
+  const pendingStart = readTraceDiagnosticStart<TraceAgentReport>();
   const report = useTraceDiagnosticReport(transport, reportId);
+  const queryClient = useQueryClient();
+  const candidateCommand = useMutation({
+    mutationFn: ({ candidateId, action, cancel }: { candidateId: string; action?: TraceCandidateAction; cancel?: boolean }) => {
+      const operation = cancel ? 'cancel_candidate' : action ? 'candidate_action' : 'run_candidate';
+      const requestKey = `${reportId}:${candidateId}:${operation}:${action || ''}`;
+      const clientRequestId = traceOptimizationCommandId(requestKey);
+      return transport.request<TraceDiagnosticReportV1>({ pathId: 'observability.traceDiagnosticReport.optimizationCommand', params: { reportId }, body: { operation, clientRequestId, candidateId, ...(action ? { action } : {}) }, responseContract: 'trace-diagnostic-report.v1' });
+    },
+    onSuccess: (next, variables) => {
+      const operation = variables.cancel ? 'cancel_candidate' : variables.action ? 'candidate_action' : 'run_candidate';
+      if (!next.optimization?.applications.some((item) => item.candidateId === variables.candidateId && item.status === 'interrupted')) settleTraceOptimizationCommand(`${reportId}:${variables.candidateId}:${operation}:${variables.action || ''}`);
+      queryClient.setQueryData(['trace-agent', 'diagnostic-report', reportId], next);
+    },
+    onSettled: () => { void report.refetch(); },
+  });
   const savedReport = report.data;
   return (
     <ManagementPage
       actions={(
         <>
+        {pendingStart?.report.reportId === reportId ? <Button onClick={() => setSearchParams({ view: 'new' })} size="small" variant="primary">恢复诊断启动</Button> : null}
         {savedReport?.status === 'completed' ? <Button leadingIcon={<FlaskConical size={15} />} onClick={() => openPawOsRoute(desktop, buildTraceLabRoute(savedReport.reportId))} size="small" variant="primary">在 Lab 中批量验证</Button> : null}
         <Button leadingIcon={<RefreshCw size={15} />} loading={report.isFetching} onClick={() => void report.refetch()} size="small">
           刷新报告
@@ -227,6 +286,11 @@ function TraceDiagnosticReportPage({ reportId }: { reportId: string }) {
       <QueryState error={report.error} isPending={report.isPending} onRetry={() => void report.refetch()}>
         {report.data ? (
           <TraceDiagnosticReportDocument
+            actionError={candidateCommand.error ? publicErrorText(candidateCommand.error, '操作结果未确认，请刷新报告核对实际状态。') : undefined}
+            onCandidateAction={(candidateId, action) => candidateCommand.mutate({ candidateId, action })}
+            onRunCandidate={(candidateId) => candidateCommand.mutate({ candidateId })}
+            onCancelCandidate={(candidateId) => candidateCommand.mutate({ candidateId, cancel: true })}
+            pendingCandidateId={candidateCommand.isPending ? candidateCommand.variables?.candidateId : undefined}
             onOpenDiagnosticSession={() => openDiagnosticSession(desktop, report.data.diagnosticSessionId)}
             onOpenTarget={(target) => openReportTarget(desktop, target)}
             onOpenTrace={(traceId) => openTrace(desktop, traceId)}
@@ -243,22 +307,28 @@ function TraceAgentWorkbench() {
   const desktop = usePawOsDesktop();
   const electronHost = pawBrowserHost();
   const [searchParams] = useSearchParams();
-  const incomingHandoff = useMemo(
+  const routeHandoff = useMemo(
     () => parseTraceAgentHandoff(searchParams),
     [searchParams],
   );
+  const retainedHandoff = useRef(routeHandoff);
+  if (routeHandoff) retainedHandoff.current = routeHandoff;
+  const incomingHandoff = routeHandoff || retainedHandoff.current;
   const queryClient = useQueryClient();
   const incomingTarget = useMemo(
     () => incomingHandoff ? traceTargetFromHandoff(incomingHandoff) : null,
     [incomingHandoff],
   );
   const targets = useTraceTargets(transport);
-  const [kind, setKind] = useState<TraceTargetKind>(incomingTarget?.kind ?? 'session');
+  const pendingStart = useRef<TraceDiagnosticStartContext<TraceAgentReport> | null>(readTraceDiagnosticStart<TraceAgentReport>());
+  const [kind, setKind] = useState<TraceTargetKind>(pendingStart.current?.report.primaryTarget.kind ?? incomingTarget?.kind ?? 'session');
   const [selectedKeys, setSelectedKeys] = useState<string[]>(() => (
-    incomingTarget ? [incomingTarget.targetKey] : []
+    pendingStart.current?.report.targets.map((target) => target.targetKey) ?? (incomingTarget ? [incomingTarget.targetKey] : [])
   ));
-  const [focusedKey, setFocusedKey] = useState(incomingTarget?.targetKey ?? '');
-  const [report, setReport] = useState<TraceAgentReport | null>(null);
+  const selectionInitialized = useRef(Boolean(incomingTarget || pendingStart.current));
+  const [focusedKey, setFocusedKey] = useState(pendingStart.current?.report.primaryTarget.targetKey ?? incomingTarget?.targetKey ?? '');
+  const [optimizationIntent, setOptimizationIntent] = useState(() => pendingStart.current?.report.intent ?? defaultTraceOptimizationIntent(incomingHandoff?.summary ?? ''));
+  const [report, setReport] = useState<TraceAgentReport | null>(() => pendingStart.current?.report ?? null);
   const [repairHandoff, setRepairHandoff] = useState<TraceRepairHandoff | null>(null);
   const [evalReceipt, setEvalReceipt] = useState<TraceEvalReceipt | null>(null);
   const [diagnosticPollingExpired, setDiagnosticPollingExpired] = useState(false);
@@ -300,6 +370,8 @@ function TraceAgentWorkbench() {
   );
   const toggleSelectedTarget = (item: TraceTarget) => {
     setFocusedKey(item.targetKey);
+    if (pendingStart.current) return;
+    selectionInitialized.current = true;
     setSelectedKeys((current) => {
       const wasSelected = current.includes(item.targetKey);
       const next = toggleTraceTargetSelection(current, item.targetKey);
@@ -538,80 +610,106 @@ function TraceAgentWorkbench() {
   });
   const start = useMutation({
     mutationFn: async (diagnosticTargets: TraceTarget[]) => {
-      if (!diagnosticTargets.length) throw new Error('至少选择一个诊断对象。');
-      if (diagnosticTargets.length > TRACE_AGENT_MAX_TARGETS) throw new Error(`最多选择 ${TRACE_AGENT_MAX_TARGETS} 个诊断对象。`);
-      const unbound = diagnosticTargets.filter((target) => traceProjectWorkspaceRoots([target]).length === 0);
-      if (unbound.length) {
-        throw new Error(`binding_required: ${unbound.map((target) => target.title || target.id).join('、')} 尚未绑定权威项目，请先选择项目。`);
+      let context = pendingStart.current;
+      if (!context) {
+        const intent = freezeTraceOptimizationIntent(optimizationIntent);
+        if (!diagnosticTargets.length) throw new Error('至少选择一个诊断对象。');
+        if (diagnosticTargets.length > TRACE_AGENT_MAX_TARGETS) throw new Error(`最多选择 ${TRACE_AGENT_MAX_TARGETS} 个诊断对象。`);
+        const unbound = diagnosticTargets.filter((target) => traceProjectWorkspaceRoots([target]).length === 0);
+        if (unbound.length) {
+          throw new Error(`binding_required: ${unbound.map((target) => target.title || target.id).join('、')} 尚未绑定权威项目，请先选择项目。`);
+        }
+        const primaryTarget = diagnosticTargets[0];
+        const reportTitle = diagnosticTargets.length === 1
+          ? `Trace 诊断 · ${primaryTarget.title}`
+          : `Trace 诊断 · ${primaryTarget.title} 等 ${diagnosticTargets.length} 个对象`;
+        const diagnosticPolicy = traceDiagnosticSessionPolicy(diagnosticTargets);
+        const created = await transport.request({
+          pathId: 'agent.sessions.create',
+          body: {
+            _modelRoute: 'traceDiagnostic',
+            surfaceKind: 'extension_app',
+            ownerAppId: TRACE_AGENT_OWNER_APP_ID,
+            surfaceKey: 'diagnostic',
+            title: reportTitle,
+            ...diagnosticPolicy,
+          },
+        });
+        const sessionId = createdSessionId(created);
+        if (!sessionId) throw new Error('诊断 Session 创建失败。');
+        // Carry the same explicit full-trust policy through the normal Session
+        // update seam before the first turn, so transcript and workspace reads
+        // use the profile-authorized scope rather than a UI-only label.
+        await transport.request({
+          pathId: 'agent.session.mode.update',
+          params: { sessionId },
+          body: { ...diagnosticPolicy },
+        });
+        const persistedReport = await transport.request<TraceDiagnosticReportV1>({
+          pathId: 'observability.traceDiagnosticReports.create',
+          body: {
+            diagnosticSessionId: sessionId,
+            title: reportTitle,
+            intent: { ...intent },
+            targets: diagnosticTargets.map((target) => ({
+              kind: target.kind,
+              id: target.id,
+              title: target.title,
+              traceIds: target.handoff?.traceId ? [target.handoff.traceId] : [],
+            })),
+          },
+          responseContract: 'trace-diagnostic-report.v1',
+        });
+        const createdReport = {
+          sessionId,
+          reportId: persistedReport.reportId,
+          targets: diagnosticTargets,
+          primaryTarget,
+          target: primaryTarget,
+          traceId: primaryTarget.handoff?.traceId || latestTraceId,
+          traceIds: diagnosticTargets.flatMap((target) => target.handoff?.traceId ? [target.handoff.traceId] : []),
+          promptAccepted: false,
+          evidence,
+          intent,
+        } satisfies TraceAgentReport;
+        context = {
+          report: createdReport,
+          prompt: { sessionId, clientMessageId: `trace-agent:${persistedReport.reportId}`, message: diagnosticPrompt(diagnosticTargets, latestTraceId, persistedReport.reportId, intent), state: 'ready' },
+        };
+        pendingStart.current = context;
+        saveTraceDiagnosticStart(context);
+        setReport(createdReport);
+        queryClient.setQueryData(['trace-agent', 'diagnostic-report', persistedReport.reportId], persistedReport);
+        void persistedReportsQuery.refetch();
       }
-      const primaryTarget = diagnosticTargets[0];
-      const reportTitle = diagnosticTargets.length === 1
-        ? `Trace 诊断 · ${primaryTarget.title}`
-        : `Trace 诊断 · ${primaryTarget.title} 等 ${diagnosticTargets.length} 个对象`;
-      const diagnosticPolicy = traceDiagnosticSessionPolicy(diagnosticTargets);
-      const created = await transport.request({
-        pathId: 'agent.sessions.create',
-        body: {
-          _modelRoute: 'traceDiagnostic',
-          surfaceKind: 'extension_app',
-          ownerAppId: TRACE_AGENT_OWNER_APP_ID,
-          surfaceKey: 'diagnostic',
-          title: reportTitle,
-          ...diagnosticPolicy,
-        },
+      await deliverTraceDiagnosticPrompt(context.prompt, transport, (prompt) => {
+        context = { ...context!, prompt, report: { ...context!.report, promptAccepted: prompt.state === 'accepted' } };
+        pendingStart.current = prompt.state === 'accepted' ? null : context;
+        saveTraceDiagnosticStart(context);
+        setReport(context.report);
       });
-      const sessionId = createdSessionId(created);
-      if (!sessionId) throw new Error('诊断 Session 创建失败。');
-      // Carry the same explicit full-trust policy through the normal Session
-      // update seam before the first turn, so transcript and workspace reads
-      // use the profile-authorized scope rather than a UI-only label.
-      await transport.request({
-        pathId: 'agent.session.mode.update',
-        params: { sessionId },
-        body: { ...diagnosticPolicy },
-      });
-      const persistedReport = await transport.request<TraceDiagnosticReportV1>({
-        pathId: 'observability.traceDiagnosticReports.create',
-        body: {
-          diagnosticSessionId: sessionId,
-          title: reportTitle,
-          targets: diagnosticTargets.map((target) => ({
-            kind: target.kind,
-            id: target.id,
-            title: target.title,
-            traceIds: target.handoff?.traceId ? [target.handoff.traceId] : [],
-          })),
-        },
-        responseContract: 'trace-diagnostic-report.v1',
-      });
-      await transport.request({
-        pathId: 'agent.session.prompt',
-        params: { sessionId },
-        body: {
-          message: diagnosticPrompt(diagnosticTargets, latestTraceId, persistedReport.reportId),
-          clientMessageId: `trace-agent:${sessionId}:${Date.now()}`,
-          delivery: 'prompt',
-        },
-      });
-      return {
-        sessionId,
-        reportId: persistedReport.reportId,
-        targets: diagnosticTargets,
-        primaryTarget,
-        target: primaryTarget,
-        traceId: primaryTarget.handoff?.traceId || latestTraceId,
-        traceIds: diagnosticTargets.flatMap((target) => target.handoff?.traceId ? [target.handoff.traceId] : []),
-        promptAccepted: true,
-        evidence,
-      } satisfies TraceAgentReport;
+      return context.report;
     },
     onSuccess: (next) => {
       setRepairHandoff(null);
       setEvalReceipt(null);
       setReport(next);
+      setDiagnosticPollingExpired(false);
+      setDiagnosticPollingGeneration((current) => current + 1);
+      void queryClient.invalidateQueries({ queryKey: ['trace-agent', 'diagnostic-session', next.sessionId] });
       void persistedReportsQuery.refetch();
     },
   });
+  useEffect(() => {
+    const context = pendingStart.current;
+    if (start.isPending || !context || !traceDiagnosticPromptAccepted(diagnosticSession.data, context.prompt.sessionId, context.prompt.clientMessageId)) return;
+    const accepted = { ...context, prompt: { ...context.prompt, state: 'accepted' as const }, report: { ...context.report, promptAccepted: true } };
+    pendingStart.current = null;
+    saveTraceDiagnosticStart(accepted);
+    setReport(accepted.report);
+    setDiagnosticPollingExpired(false);
+    setDiagnosticPollingGeneration((current) => current + 1);
+  }, [diagnosticSession.data, start.isPending]);
   const repair = useMutation({
     mutationFn: async (diagnostic: TraceAgentReport) => {
       if (!diagnosticReportReady(diagnosticSession.data)) {
@@ -866,7 +964,8 @@ function TraceAgentWorkbench() {
   });
 
   useEffect(() => {
-    if (!incomingTarget) return;
+    if (!incomingTarget || pendingStart.current) return;
+    selectionInitialized.current = true;
     setKind(incomingTarget.kind);
     setFocusedKey(incomingTarget.targetKey);
     setSelectedKeys((current) => current.includes(incomingTarget.targetKey)
@@ -881,14 +980,15 @@ function TraceAgentWorkbench() {
     } else if (!visibleItems.length && focusedKey && !targetByKey.has(focusedKey)) {
       setFocusedKey('');
     }
+    if (pendingStart.current) return;
     const availableKeys = new Set(catalogTargets.map((item) => item.targetKey));
+    const selectInitialTarget = !selectionInitialized.current && visibleItems.length > 0;
+    if (selectInitialTarget) selectionInitialized.current = true;
     setSelectedKeys((current) => {
       const retained = current.filter((key) => availableKeys.has(key)).slice(0, TRACE_AGENT_MAX_TARGETS);
-      // Preserve the old single-target affordance on first load: the focused
-      // item is selected by default. Once a selection exists in any tab, do
-      // not replace it when the user switches tabs; selections are global to
-      // the catalog, not to the currently visible page.
-      const next = retained.length || !visibleItems.length
+      // Choose the first source only once. An explicit empty selection stays
+      // empty across catalog refreshes and tabs until the user picks a source.
+      const next = retained.length || !selectInitialTarget
         ? retained
         : [visibleItems[0].targetKey];
       return next.length === current.length && next.every((key, index) => key === current[index]) ? current : next;
@@ -896,6 +996,7 @@ function TraceAgentWorkbench() {
   }, [catalogTargetIdentity, catalogTargets, focusedKey, kind, targetByKey, visibleItemIdentity, visibleItems]);
 
   useEffect(() => {
+    if (pendingStart.current) return;
     setReport(null);
     setRepairHandoff(null);
     setEvalReceipt(null);
@@ -929,6 +1030,8 @@ function TraceAgentWorkbench() {
     }
   };
   const error = targets.error as Error | null;
+  const startActionLabel = !report ? '开始诊断' : report.promptAccepted ? '诊断已启动'
+    : ['ready', 'rejected', 'failed'].includes(pendingStart.current?.prompt.state ?? '') ? '重试诊断启动' : '核对启动状态';
 
   return (
     <ManagementPage
@@ -942,26 +1045,15 @@ function TraceAgentWorkbench() {
           刷新对象
         </Button>
       )}
-      description="从一段真实 Session 或 Room 运行记录开始，让诊断 Agent 找到失败、上下文问题、返工和浪费。"
-      eyebrow="Trace / Eval"
+      description="从真实对话和运行记录中发现改进机会，验证候选，沉淀可复用的方法。"
       routeId="trace-agent"
-      title="Trace Agent"
+      title="新建任务"
     >
       <QueryState error={error} isPending={targets.isPending} onRetry={() => void targets.refetch()}>
         <section aria-label="Trace Agent 诊断工作台" className="trace-agent-workspace">
-          <header className="trace-agent-intro">
-            <div className="trace-agent-intro__mark" aria-hidden="true"><Search size={20} /></div>
-            <div>
-              <span className="trace-agent-kicker">选择 → 关联 → 解释</span>
-              <h2>让一段运行记录自己说清楚问题</h2>
-              <p>诊断 Session 使用全信任运行，加载专用 Skill，可读取原始对话与来源对象精确绑定的项目目录，并在证据充分时执行最小、可验证的项目修改。</p>
-            </div>
-            <StatusBadge label="全信任诊断" tone="warning" />
-          </header>
-
           <ManagementSection
             title="选择诊断输入"
-            description="可选当前或历史对象。选择 Room 时会把主持 Session、全部行星、子 Agent、WorkItem、公开流转和相关 Trace 一起交给诊断 Agent。"
+            description="选择要分析的对话或运行，最多 12 个。Room 会带入其真实协作记录。"
             trailing={<StatusBadge label={`${visibleItems.length} 个${kind === 'session' ? ' Session' : kind === 'room' ? ' Room' : '运行'} · 已选 ${selectedTargets.length}/${TRACE_AGENT_MAX_TARGETS}`} tone="neutral" />}
           >
             <div aria-label="诊断对象类型" className="trace-agent-kind-tabs" role="tablist">
@@ -982,106 +1074,6 @@ function TraceAgentWorkbench() {
             {incomingHandoff ? (
               <div className="trace-agent-inline-note" data-testid="trace-agent-incoming-handoff">
                 已从原位置带入：{incomingHandoff.title} · {incomingHandoff.entityId}。启动诊断时会同时提交原对象、错误和证据引用。
-              </div>
-            ) : null}
-            {persistedReports.length ? (
-              <section aria-label="已保存的 Trace 诊断报告" className="trace-agent-persisted-reports">
-                <div className="trace-agent-persisted-reports__heading">
-                  <div>
-                    <strong>已保存的工程审计报告</strong>
-                    <p>报告正文、八维评分和证据引用独立持久化；诊断 Agent 对话保留完整过程与必要修改记录，报告只呈现已持久化证据。</p>
-                  </div>
-                  <StatusBadge label={`${persistedReports.length} 份`} tone="neutral" />
-                </div>
-                <div className="trace-agent-persisted-reports__list" role="list">
-                  {persistedReports.map((item) => (
-                    <div className="trace-agent-persisted-report" data-status={item.status} key={item.reportId} role="listitem">
-                      <div
-                        className="trace-agent-persisted-report__icon"
-                        aria-hidden="true"
-                        style={{ borderColor: item.targets[0] ? traceTargetColorToken(item.targets[0].targetKey) : undefined }}
-                      >
-                        {item.status === 'failed' ? <TriangleAlert size={15} /> : <CheckCircle2 size={15} />}
-                      </div>
-                      <div className="trace-agent-persisted-report__copy">
-                        <strong>{item.title}</strong>
-                        <div className="trace-agent-persisted-report__targets" aria-label="已诊断对象">
-                          {item.targets.map((target) => (
-                            <span key={target.targetKey} style={{ borderColor: traceTargetColorToken(target.targetKey) }}>
-                              {target.title || target.id}
-                            </span>
-                          ))}
-                        </div>
-                        <small>Revision {item.revision} · {reportStatusLabel(item.status)} · 修复：{reportRepairStateLabel(item.repairState)} · {formatTime(item.updatedAtMs)}{item.failureReason || item.status === 'failed' ? ` · 失败原因：${item.failureReason || '未知'}` : ''}</small>
-                      </div>
-                      <Button
-                        leadingIcon={<ArrowUpRight size={14} />}
-                        onClick={() => openDiagnosticReport(desktop, item.reportId)}
-                        size="small"
-                        variant="quiet"
-                      >
-                        打开审计报告
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-                {persistedReportsQuery.hasNextPage ? (
-                  <Button
-                    loading={persistedReportsQuery.isFetchingNextPage}
-                    onClick={() => void persistedReportsQuery.fetchNextPage()}
-                    size="small"
-                    variant="quiet"
-                  >
-                    {persistedReportsQuery.isFetchingNextPage ? '正在加载更早报告' : '加载更早报告'}
-                  </Button>
-                ) : null}
-              </section>
-            ) : null}
-            {selected ? (
-              <div
-                className="trace-agent-diagnostic-action"
-                data-state={report ? 'complete' : start.isPending ? 'loading' : start.error ? 'error' : 'ready'}
-                data-sticky="true"
-                data-testid="trace-agent-diagnostic-action"
-              >
-                <div>
-                  <strong>诊断已选的 {selectedTargets.length} 个对象</strong>
-                  <span>{bindingRequiredTargets.length
-                    ? `binding_required · ${bindingRequiredTargets.length} 个来源没有权威项目绑定；请选择具体项目目录后再诊断。`
-                    : selected.handoffOnly ? '仅依据结构化交接包 · 不伪造 Session / Room / Run 快照' : selected.kind === 'room' ? '当前 Room 会带入全部行星、WorkItems 和公开流转；当前焦点只负责预览' : selected.kind === 'run' ? '当前运行及关联 Trace 负责预览；启动时会提交所有勾选对象' : '当前焦点用于预览；启动时会把所有勾选对象作为一个冻结诊断范围'}</span>
-                </div>
-                {bindingTarget ? (
-                  <Button
-                    disabled={bindProject.isPending}
-                    leadingIcon={bindProject.isPending ? <LoaderCircle className="ui-spin" size={15} /> : <FolderOpen size={15} />}
-                    onClick={() => bindProject.mutate(bindingTarget)}
-                    size="small"
-                    variant="secondary"
-                  >
-                    {bindProject.isPending ? '正在绑定项目' : '选择项目'}
-                  </Button>
-                ) : null}
-                <Button
-                  aria-label={report ? '诊断已启动' : '开始诊断'}
-                  disabled={start.isPending || Boolean(report) || selectedTargets.length === 0 || bindingRequiredTargets.length > 0}
-                  leadingIcon={start.isPending ? <LoaderCircle className="ui-spin" size={15} /> : <Sparkles size={15} />}
-                  onClick={() => start.mutate(selectedTargets)}
-                >
-                  {report ? '诊断已启动' : start.isPending ? '正在启动诊断' : `开始诊断 · ${selectedTargets.length}`}
-                </Button>
-                {report ? (
-                  <Button
-                    leadingIcon={<ArrowUpRight size={14} />}
-                    onClick={() => openDiagnosticSession(desktop, report.sessionId)}
-                    size="small"
-                    variant="quiet"
-                  >
-                    打开诊断 Agent 对话
-                  </Button>
-                ) : null}
-                {bindProject.error ? (
-                  <span aria-live="polite" role="alert">{publicErrorText(bindProject.error, 'binding_required: 项目绑定失败，请重试。')}</span>
-                ) : null}
               </div>
             ) : null}
             {visibleItems.length ? (
@@ -1115,7 +1107,7 @@ function TraceAgentWorkbench() {
                       <input
                         aria-label={`选择 ${item.title}`}
                         checked={selectedKeys.includes(item.targetKey)}
-                        disabled={!selectedKeys.includes(item.targetKey) && selectedKeys.length >= TRACE_AGENT_MAX_TARGETS}
+                        disabled={Boolean(pendingStart.current) || (!selectedKeys.includes(item.targetKey) && selectedKeys.length >= TRACE_AGENT_MAX_TARGETS)}
                         onChange={() => toggleSelectedTarget(item)}
                         onClick={(event) => event.stopPropagation()}
                         type="checkbox"
@@ -1172,6 +1164,54 @@ function TraceAgentWorkbench() {
                 title="没有诊断对象"
               />
             )}
+            <TraceOptimizationSetup disabled={start.isPending || Boolean(report)} intent={optimizationIntent} onChange={setOptimizationIntent} />
+            {selected ? (
+              <div
+                className="trace-agent-diagnostic-action"
+                data-state={report?.promptAccepted ? 'complete' : start.isPending ? 'loading' : report ? 'recovery' : start.error ? 'error' : 'ready'}
+                data-sticky="true"
+                data-testid="trace-agent-diagnostic-action"
+              >
+                <div>
+                  <strong>{report && !report.promptAccepted ? '恢复已创建的诊断任务' : `诊断已选的 ${selectedTargets.length} 个对象`}</strong>
+                  <span>{report && !report.promptAccepted ? '报告与诊断对话已保存；继续核对或重试这一任务。' : bindingRequiredTargets.length
+                    ? `binding_required · ${bindingRequiredTargets.length} 个来源没有权威项目绑定；请选择具体项目目录后再诊断。`
+                    : selected.handoffOnly ? '仅依据结构化交接包 · 不伪造 Session / Room / Run 快照' : selected.kind === 'room' ? '当前 Room 会带入全部行星、WorkItems 和公开流转；当前焦点只负责预览' : selected.kind === 'run' ? '当前运行及关联 Trace 负责预览；启动时会提交所有勾选对象' : '当前焦点用于预览；启动时会把所有勾选对象作为一个冻结诊断范围'}</span>
+                </div>
+                {bindingTarget ? (
+                  <Button
+                    disabled={bindProject.isPending}
+                    leadingIcon={bindProject.isPending ? <LoaderCircle className="ui-spin" size={15} /> : <FolderOpen size={15} />}
+                    onClick={() => bindProject.mutate(bindingTarget)}
+                    size="small"
+                    variant="secondary"
+                  >
+                    {bindProject.isPending ? '正在绑定项目' : '选择项目'}
+                  </Button>
+                ) : null}
+                <Button
+                  aria-label={startActionLabel}
+                  disabled={start.isPending || report?.promptAccepted === true || (!report && (selectedTargets.length === 0 || optimizationIntent.focusAreas.length === 0 || bindingRequiredTargets.length > 0))}
+                  leadingIcon={start.isPending ? <LoaderCircle className="ui-spin" size={15} /> : <Sparkles size={15} />}
+                  onClick={() => start.mutate(report?.targets ?? selectedTargets)}
+                >
+                  {start.isPending ? '正在核对诊断启动' : report ? startActionLabel : `开始诊断 · ${selectedTargets.length}`}
+                </Button>
+                {report ? (
+                  <Button
+                    leadingIcon={<ArrowUpRight size={14} />}
+                    onClick={() => openDiagnosticSession(desktop, report.sessionId)}
+                    size="small"
+                    variant="quiet"
+                  >
+                    打开诊断 Agent 对话
+                  </Button>
+                ) : null}
+                {bindProject.error ? (
+                  <span aria-live="polite" role="alert">{publicErrorText(bindProject.error, 'binding_required: 项目绑定失败，请重试。')}</span>
+                ) : null}
+              </div>
+            ) : null}
           </ManagementSection>
 
           {selected ? (
@@ -1182,12 +1222,6 @@ function TraceAgentWorkbench() {
                   <h2>{selected.title}</h2>
                   <p>{selected.handoffOnly ? '仅结构化交接包；没有可用的 canonical Session / Room / Run' : selected.kind === 'room' ? 'Room 全量协作拓扑' : selected.kind === 'run' ? '单个运行及其关联 Trace' : '单个 Session 对话与运行记录'} · {selected.id}</p>
                 </div>
-              </div>
-              <div className="trace-agent-scope-grid" aria-label="诊断范围">
-                <ScopeCard icon={Wrench} label="Tool / Browser / Runtime" detail="失败、超时、重复调用与运行状态" />
-                <ScopeCard icon={GitBranch} label="Context / Room" detail="上下文质量、分工、返工与等待" />
-                <ScopeCard icon={BrainCircuit} label="Memory / Knowledge / RAG" detail="召回、解析、排序与 Eval 对比" />
-                <ScopeCard icon={Activity} label="Token / 延迟" detail="找出不成比例的流程成本" />
               </div>
               <div className="trace-agent-source-links" aria-label="原始证据入口">
                 <span>原始证据</span>
@@ -1256,10 +1290,10 @@ function TraceAgentWorkbench() {
             </section>
           ) : null}
 
-          {start.error ? (
+          {start.error && !report?.promptAccepted ? (
             <div aria-live="polite" className="trace-agent-result trace-agent-result--error" role="alert">
               <TriangleAlert size={18} />
-              <div><strong>诊断未启动</strong><p>{publicErrorText(start.error, '诊断 Session 暂时无法启动，请稍后重试。')}</p></div>
+              <div><strong>{report ? '诊断启动待恢复' : '诊断未启动'}</strong><p>{publicErrorText(start.error, '诊断 Session 暂时无法启动，请稍后重试。')}</p></div>
             </div>
           ) : null}
           {report ? (
@@ -1267,6 +1301,7 @@ function TraceAgentWorkbench() {
               desktop={desktop}
               onRepair={() => repair.mutate(report)}
               onRerun={() => {
+                if (pendingStart.current) return;
                 setReport(null);
                 setRepairHandoff(null);
                 setEvalReceipt(null);
@@ -1346,14 +1381,14 @@ function TraceAgentReport({
   const diagnosticTimedOut = diagnosticSession.timedOut && !diagnosticReady && !diagnosticSession.error;
   const verificationReceipt = evalReceipt?.verificationReceipt ?? null;
   return (
-    <section aria-label="Trace 诊断报告" className="trace-agent-result trace-agent-result--success">
-      <div className="trace-agent-result__icon" aria-hidden="true"><CheckCircle2 size={20} /></div>
+    <section aria-label="Trace 诊断报告" className={`trace-agent-result trace-agent-result--${report.promptAccepted ? 'success' : 'error'}`}>
+      <div className="trace-agent-result__icon" aria-hidden="true">{report.promptAccepted ? <CheckCircle2 size={20} /> : <TriangleAlert size={20} />}</div>
       <div className="trace-agent-result__body">
         <div className="trace-agent-result__heading">
-          <div><span className="trace-agent-kicker">网页报告</span><h2>{diagnosticReady ? '诊断 Agent 已生成证据报告' : diagnosticFailed ? '诊断失败，已保存失败报告' : diagnosticTimedOut ? '诊断报告读取超时' : '诊断 Session 正在生成证据报告'}</h2></div>
+          <div><span className="trace-agent-kicker">网页报告</span><h2>{!report.promptAccepted ? '诊断任务已保存，启动待确认' : diagnosticReady ? '诊断 Agent 已生成证据报告' : diagnosticFailed ? '诊断失败，已保存失败报告' : diagnosticTimedOut ? '诊断报告读取超时' : '诊断 Session 正在生成证据报告'}</h2></div>
           <StatusBadge
-            label={diagnosticSession.error || finalizeError ? '读取失败' : diagnosticReady ? '已完成' : diagnosticFailed ? '诊断失败' : diagnosticTimedOut ? '读取超时' : '生成中'}
-            tone={diagnosticSession.error || finalizeError || diagnosticFailed || diagnosticTimedOut ? 'danger' : diagnosticReady ? 'success' : 'info'}
+            label={!report.promptAccepted ? '启动待确认' : diagnosticSession.error || finalizeError ? '读取失败' : diagnosticReady ? '已完成' : diagnosticFailed ? '诊断失败' : diagnosticTimedOut ? '读取超时' : '生成中'}
+            tone={!report.promptAccepted || diagnosticSession.error || finalizeError || diagnosticFailed || diagnosticTimedOut ? 'danger' : diagnosticReady ? 'success' : 'info'}
           />
         </div>
         <p>它会先按诊断对象和冻结证据选择主诊断域；无关维度标为不适用，未经重放或 Eval 支持的解释保留为候选/假设。</p>
@@ -1381,7 +1416,7 @@ function TraceAgentReport({
           >
             {repairHandoff ? (repairHandoff.promptAccepted ? '修复 Agent 已就绪' : '修复授权已保存') : repairState.isPending ? '正在交接修复' : '交给 Agent 修复'}
           </Button>
-          <Button leadingIcon={<RefreshCw size={14} />} onClick={onRerun} size="small" variant="quiet">
+          <Button disabled={!report.promptAccepted} leadingIcon={<RefreshCw size={14} />} onClick={onRerun} size="small" variant="quiet">
             {report.traceId ? '回到 Trace 重跑诊断' : '回到原记录重跑诊断'}
           </Button>
         </div>
@@ -1546,9 +1581,6 @@ function openReportTarget(
   });
 }
 
-function ScopeCard({ icon: Icon, label, detail }: { icon: LucideIcon; label: string; detail: string }) {
-  return <div className="trace-agent-scope-card"><Icon aria-hidden="true" size={16} /><div><strong>{label}</strong><small>{detail}</small></div></div>;
-}
 
 type TraceEvidenceItem = {
   id: string;
@@ -1563,20 +1595,18 @@ type TraceEvidenceItem = {
 
 type TraceTimelineKind = 'user' | 'assistant' | 'reasoning' | 'tool_started' | 'tool_finished' | 'room_event';
 
-type TraceTimelineEntry = {
+type TraceTimelineEntry = TraceTimelineOrderEntry & {
   id: string;
   kind: TraceTimelineKind;
   label: string;
   summary: string;
   originalText?: string;
   status?: string;
-  sequence: number;
-  createdAtMs: number;
 };
 
 function TraceSourceTimeline({
   ariaLabel = '原始对话时间线',
-  description = '按 timelineSequence / sequence 保留原始顺序；摘要辅助浏览，长消息可展开全文。',
+  description = '保留原始对话与行动顺序；摘要辅助浏览，长消息可展开全文。',
   heading,
   kind,
   kicker = '原始记录',
@@ -1670,7 +1700,7 @@ function TraceSourceTimeline({
                       {expanded ? '收起' : '展开全文'}
                     </button>
                   ) : null}
-                  <small>#{entry.sequence}</small>
+                  {entry.sequence === undefined ? null : <small>#{Number(entry.sequence.toFixed(6))}</small>}
                 </div>
                 {expanded ? <pre className="trace-agent-timeline__original">{originalText}</pre> : null}
               </div>
@@ -2142,13 +2172,13 @@ function sourceTimeline(kind: 'session' | 'room', source: unknown): TraceTimelin
   };
   if (kind === 'session') sessionTimelineEntries(source, add);
   else roomTimelineEntries(source, add);
-  return [...entries.values()].sort((left, right) => (left.sequence - right.sequence) || (left.createdAtMs - right.createdAtMs));
+  return orderTraceTimelineEntries([...entries.values()]);
 }
 
 function timelineEntryIsNewer(next: TraceTimelineEntry, previous: TraceTimelineEntry): boolean {
   const statusDelta = timelineStatusRank(next.status) - timelineStatusRank(previous.status);
   if (statusDelta !== 0) return statusDelta > 0;
-  const positionDelta = next.sequence - previous.sequence;
+  const positionDelta = (next.sequence ?? -1) - (previous.sequence ?? -1);
   if (positionDelta !== 0) return positionDelta > 0;
   const timestampDelta = next.createdAtMs - previous.createdAtMs;
   return timestampDelta >= 0;
@@ -2177,7 +2207,7 @@ function sessionTimelineEntries(
     const message = asRecord(rawMessage);
     const role = stringValue(message.role);
     if (role !== 'user' && role !== 'assistant') return;
-    const messageSequence = timelinePosition(message, index);
+    const messageSequence = recordedTimelineSequence(message);
     const blocks = Array.isArray(message.blocks) ? message.blocks : [];
     const text = blocks
       .map(asRecord)
@@ -2195,6 +2225,8 @@ function sessionTimelineEntries(
         status: stringValue(message.status),
         sequence: messageSequence,
         createdAtMs: numberValue(message.createdAtMs),
+        turnId: stringValue(message.turnId),
+        messageIndex: index,
       });
     }
     blocks.forEach((rawBlock, blockIndex) => {
@@ -2209,8 +2241,9 @@ function sessionTimelineEntries(
         summary: timelineSummary(blockData, block),
         originalText: timelineOriginalText(blockData),
         status: stringValue(block.status),
-        sequence: timelinePosition(block, messageSequence + (blockIndex + 1) / 100),
+        sequence: recordedTimelineSequence(block, messageSequence === undefined ? undefined : messageSequence + (blockIndex + 1) / 100),
         createdAtMs: numberValue(blockData.createdAtMs, numberValue(message.createdAtMs)),
+        turnId: stringValue(message.turnId),
       });
     });
   });
@@ -2227,8 +2260,9 @@ function sessionTimelineEntries(
       summary: timelineSummary(eventPayload, event),
       originalText: timelineOriginalText(eventPayload),
       status: stringValue(event.status),
-      sequence: timelinePosition(event, index),
+      sequence: recordedTimelineSequence(event),
       createdAtMs: numberValue(event.createdAtMs),
+      turnId: stringValue(event.turnId, stringValue(eventPayload.turnId)),
     });
   });
 }
@@ -2263,8 +2297,9 @@ function roomTimelineEntries(
       summary: timelineSummary(eventPayload, event),
       originalText: timelineOriginalText(eventPayload),
       status: stringValue(event.status),
-      sequence: timelinePosition(event, index),
+      sequence: recordedTimelineSequence(event),
       createdAtMs: numberValue(event.createdAtMs),
+      turnId: stringValue(event.turnId, stringValue(eventPayload.turnId)),
     });
   });
 }
@@ -3024,7 +3059,7 @@ function traceTargetFromHandoff(handoff: TraceAgentHandoff): TraceTarget {
   };
 }
 
-function diagnosticPrompt(targets: TraceTarget[], traceId: string, reportId = ''): string {
+function diagnosticPrompt(targets: TraceTarget[], traceId: string, reportId = '', intent = defaultTraceOptimizationIntent()): string {
   const primaryTarget = targets[0];
   const safeTargetId = redactTraceAgentText(primaryTarget.id, 180);
   const safeTargetTitle = redactTraceAgentText(primaryTarget.title, 180);
@@ -3035,10 +3070,17 @@ function diagnosticPrompt(targets: TraceTarget[], traceId: string, reportId = ''
     `先调用 skill_load 加载 name=trace-agent-diagnostics；SkillRef=${TRACE_AGENT_SKILL_REF}。`,
     '',
     '这是一次全信任诊断与修复。可直接读取选定对象的原始对话、Trace 和根目录 / 下文件，无需逐项审批；确认根因后执行最小、可验证的项目修改，不把报告或猜测当成完成。',
+    `本轮用户任务范围已冻结：${JSON.stringify(intent)}。mode=${intent.mode === 'distill' ? 'distill（从对话沉淀方法）' : 'improve（分析并优化）'}；用户目标：${intent.objective || '根据所选记录的真实任务目标判断改进机会，缺少关键业务判据时再补问'}。`,
+    'focusAreas 约束实际读取、候选修改和评测；all 只表示当前全部受支持方向，仍需按失败证据逐步读取。可读取必要的相邻 Tool 回执排除误判，但不得修改未选方向。目标外阻断因素说明关系与下一步，不静默扩大范围。prompt 对应既有 template 归因；Skill 是技能，不是输出风格。',
+    intent.mode === 'distill' ? '提取模式：归并所选全部对话的任务意图、实际步骤、结果和失败修正；对照现有 Skill/工具目录，说明更新已有能力、新建 Skill、新建真实工具、仅沉淀经验或无需沉淀及其来源。一次成功不自动成为方法；验证须区分新实例与原案例覆盖；未验证的产物是候选草稿。' : '优化模式：把观察事实、Agent 假设、候选实际 diff、同条件前后重测及退化案例串起来；执行完成、效果改善和安装状态分别记录。',
+    '生成实现、构建和验证可以在本轮范围内推进；最终安装、替换或应用已有能力留在报告的版本选择。工具候选必须包含可注册运行的实现、schema、依赖与 Pi Package；只改说明不能称为新增工具。报告输出结构化数据，由 App 渲染和导出，不生成任意 HTML。',
     `Project workspace binding（默认 cwd/context）：${projectRoots.join('、')}。根目录 / 是 full_trust 的读取/Tool 能力，不替代这个项目身份。`,
     `诊断对象：${primaryTarget.kind} ${safeTargetId}（${safeTargetTitle}）`,
     targets.length > 1 ? `本次冻结范围共 ${targets.length} 个对象：${targets.map((target) => `${target.kind}:${redactTraceAgentText(target.id, 120)}`).join('、')}` : '',
     reportId ? `网页报告 ID：${redactTraceAgentText(reportId, 180)}。诊断完成后必须输出结构化结果标记，供服务端持久化。` : '',
+    reportId ? `先调用 trace_diagnostics op=read reportId=${redactTraceAgentText(reportId, 180)}，读取当前报告及有界项目经验。候选通过 trace_diagnostics op=command command=register_version / register_plan / prepare_candidate 登记真实版本、验证计划与候选，具体输入参照 Skill 的 references/optimization-workflow.md。` : '',
+    intent.mode === 'distill' ? '沉淀时先调用 trace_diagnostics op=command command=prepare_distillation 获取真实能力目录与有来源的 packet，再用 command=save_distillation input={proposals:[...]} 保存有证据的提案。由主机校验后记录到报告顶层 distillation；不要在 result 中自由添加沉淀或安装状态。' : '',
+    '候选登记时 findingIds 可暂为空；最终 finding.candidateIds 只引用本报告真实登记的 candidateId，主机建立问题与候选反链。最终安装/替换/应用只由用户在 Trace App 版本选择执行。',
     primaryTarget.handoffOnly
       ? '这是 handoff-only 输入，没有可用的 canonical Session / Room / Run；不要把 entityId 当作 runId，也不要调用 observability.snapshot 伪造查询。'
       : traceId ? `当前已发现的最新 Trace：${safeTraceId}` : '当前尚未发现单一最新 Trace，请从对象范围读取关联 Trace。',
@@ -3072,7 +3114,7 @@ function diagnosticPrompt(targets: TraceTarget[], traceId: string, reportId = ''
       judgeScores: [{ dimensionId: 'task_completion', score: null, authority: 'ai_judge_estimate', explanation: '<只能是估计>', evidenceIds: [] }],
       requirementAssessments: [{ requirementId: '<inspect 返回的 requirementId>', status: 'unverified', owner: '<owner 或空>', authority: 'ai_judge_estimate', evidenceIds: [], note: '<判断边界>' }],
       causalLinks: [{ linkId: '<stable link id>', fromEvidenceId: '<frozen evidenceId>', toEvidenceId: '<frozen evidenceId>', relation: 'caused', authority: 'ai_judge_estimate', confidence: 'unknown', explanation: '<为什么存在因果而不只是时间相邻>' }],
-      findings: [{ findingId: '<finding>', dimensionId: 'tool_runtime', severity: 'medium', observation: '<事实>', hypothesis: '<假设>', conclusion: '<结论或未知>', confidence: 'unknown', evidenceIds: [], candidateRepair: '<候选修复>', verification: '<验证方法>' }],
+      findings: [{ findingId: '<finding>', dimensionId: 'tool_runtime', severity: 'medium', observation: '<事实>', hypothesis: '<假设>', conclusion: '<结论或未知>', confidence: 'unknown', evidenceIds: [], candidateIds: [], candidateRepair: '<候选修复>', verification: '<验证方法>' }],
       presentation: {
         headline: '<普通用户能看懂的结论>',
         impact: '<什么没有完成，以及对用户的影响>',
@@ -3166,6 +3208,7 @@ function repairPrompt(
   };
   return [
     '这是 Trace Agent 的候选修复交接。你是独立的全信任可写 Agent，请先复核证据和诊断 Session，再完成最小修复。',
+    report.intent ? `本轮冻结优化意图：${JSON.stringify(report.intent)}。候选改动与评测只能覆盖 focusAreas 所选方向；可读相邻证据排除误判，不修改未选方向。最终安装、替换和应用由用户在报告中选择。` : '历史报告未记录关注方向；沿用其已记录的原始修复范围。',
     `修复目标是 primary failure：${primaryTarget.kind}:${redactTraceAgentText(primaryTarget.id, 180)}。其余诊断对象只用于比较和定位，不是新的修复目标；这是任务范围，不是文件系统权限限制。`,
     `修复 Session 已继承来源 Project workspace binding（默认 cwd/context）：${projectRoots.join('、')}。根目录 / 仍是 full_trust 的读取/Tool 能力，不是项目身份。`,
     '用户已经在唯一确认中授予根目录 / 的全磁盘权限、全部 Tools 权限，并同意每一个 Tool 和 action 自动批准。不要再询问目录、ENABLE_FULL_TRUST、Tool 批准或任何 PAW 审批。',

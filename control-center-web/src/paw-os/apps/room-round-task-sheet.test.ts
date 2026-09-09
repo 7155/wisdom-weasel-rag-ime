@@ -155,7 +155,7 @@ describe('selectRoomRoundTaskSheets (UR-170/172)', () => {
     expect(second).toHaveLength(1);
     expect(second[0]?.rows.map((row) => row.key)).toEqual(first[0]?.rows.map((row) => row.key));
     expect(second[0]?.rows[0]).toMatchObject({
-      state: 'completed',
+      state: 'running',
       latestProgress: '已经完成 Room 事件投影',
     });
   });
@@ -171,8 +171,10 @@ describe('selectRoomRoundTaskSheets (UR-170/172)', () => {
       state: 'completed',
       postKind: 'progress',
       latestProgress: '主控正在整理汇报',
-      result: '主控正在整理汇报',
+      report: '主控正在整理汇报',
     });
+    expect(row?.result).toBeUndefined();
+    expect(row?.finalMessageId).toBeUndefined();
   });
 
   it('carries a moderator result post kind as the explicit final identity', () => {
@@ -187,7 +189,52 @@ describe('selectRoomRoundTaskSheets (UR-170/172)', () => {
       postKind: 'result',
       latestProgress: '主控最终汇报',
       result: '主控最终汇报',
+      finalMessageId: 'assistant-coordinator-result',
     });
+  });
+
+  it.each([
+    { turnId: 'turn-previous', rootId: 'turn-1' },
+    { turnId: 'turn-1', rootId: 'turn-previous' },
+  ])('rejects a result from another turn or root even when its id is indexed in the current turn: %j', (identity) => {
+    const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
+    const projection = coordinatorPostProjection('result');
+    Object.assign(projection.messagesById['assistant-coordinator-result']!, identity);
+
+    const row = selectRoomRoundTaskSheets(room, projection)[0]?.rows[0];
+
+    expect(row?.report).toBeUndefined();
+    expect(row?.result).toBeUndefined();
+    expect(row?.finalMessageId).toBeUndefined();
+  });
+
+  it('uses typed public answer blocks without falling back to flattened reasoning, tools or private text', () => {
+    const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
+    const projection = coordinatorPostProjection('result');
+    const message = projection.messagesById['assistant-coordinator-result']!;
+    message.text = '过期的扁平摘要：Planning test seam / 命令退出码 0';
+    message.message = {
+      schemaVersion: 'rag-ime.agent-message.v1', id: message.id, sessionId: 'session-earth',
+      turnId: 'session-turn-1', role: 'assistant', status: 'completed', createdAtMs: 5,
+      attachments: [], citations: [],
+      blocks: [
+        { id: 'reasoning', type: 'reasoning_summary', presentationKind: 'markdown', status: 'completed', data: { text: 'Planning test seam' } },
+        { id: 'legacy-reasoning', type: 'text', presentationKind: 'reasoning_summary', status: 'completed', data: { text: 'Checking a tool receipt' } },
+        { id: 'tool', type: 'tool_result', presentationKind: 'tool_result', status: 'completed', data: { text: '命令退出码 0' } },
+        { id: 'private', type: 'text', presentationKind: 'markdown', visibility: 'private_session', status: 'completed', data: { text: '仅在私有 Session 可见' } },
+        { id: 'answer', type: 'text', presentationKind: 'markdown', visibility: 'root_post', status: 'completed', data: { text: '本轮正式结果正文。' } },
+      ],
+    };
+
+    expect(selectRoomRoundTaskSheets(room, projection)[0]?.rows[0]).toMatchObject({
+      report: '本轮正式结果正文。', result: '本轮正式结果正文。', finalMessageId: message.id,
+    });
+
+    message.message.blocks = message.message.blocks.filter((block) => block.id !== 'answer');
+    const withoutAnswer = selectRoomRoundTaskSheets(room, projection)[0]?.rows[0];
+    expect(withoutAnswer?.report).toBeUndefined();
+    expect(withoutAnswer?.result).toBeUndefined();
+    expect(withoutAnswer?.finalMessageId).toBeUndefined();
   });
 
   it('does not poison a running planet row after a recoverable tool failure', () => {
@@ -437,9 +484,10 @@ describe('selectRoomRoundTaskSheets (UR-170/172)', () => {
       key: 'turn-1:participant-earth',
       task: '重试任务',
       state: 'completed',
-      result: '重试结果',
+      report: '重试结果',
       evidenceRefs: ['evidence-original', 'evidence-retry'],
     });
+    expect(row?.result).toBeUndefined();
     expect(row?.history.map((event) => event.summary)).toEqual([
       '原尝试：发现问题',
       '原尝试结果',
@@ -604,8 +652,12 @@ describe('selectRoomRoundTaskSheets (UR-170/172)', () => {
     });
   });
 
-  it('lets a done WorkItem override a lagging running turn and progress receipt', () => {
-    const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
+  it('lets a worker done WorkItem override its lagging running turn and progress receipt', () => {
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-mars', 'session-mars', 1),
+    ]);
+    room.moderatorParticipantId = 'participant-mars';
     room.workItems = [workItem('work-done', 'turn-1', '唯一实现任务已经交付', [], 8)];
     const row = selectRoomRoundTaskSheets(room, runningProjection('当前任务仍在执行'))[0]?.rows[0];
 

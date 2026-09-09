@@ -1,40 +1,35 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { buildTraceOptimizationReadingModel } from './optimization-report-model';
+import { TraceOptimizationReportContent } from './optimization-report-content';
+import optimizationStyles from './optimization-report.css?raw';
 import type { TraceDiagnosticReportV1 } from '@/contracts/generated/trace-diagnostic-report.v1';
 import reportStyles from './engineering-audit-report.css?raw';
 import reportTemplate from './templates/engineering-audit-report.html?raw';
-import { buildTraceAuditReportModel, type TraceAuditDimension, type TraceAuditFinding, type TraceAuditReportModel } from './report-model';
+import { buildTraceAuditReportModel, type TraceAuditDimension, type TraceAuditReportModel } from './report-model';
 
-export interface TraceDiagnosticHtmlOptions { generatedAtMs?: number }
+export interface TraceDiagnosticHtmlOptions { generatedAtMs?: number; appUrl?: string }
 const TEMPLATE_FIELDS = ['__TRACE_AUDIT_TITLE__', '__TRACE_AUDIT_CSS__', '__TRACE_AUDIT_BODY__'] as const;
 
 /** Self-contained, privacy-bounded export of the same two-layer report shown in PAW. */
-export function buildTraceDiagnosticReportHtml(report: TraceDiagnosticReportV1, { generatedAtMs = Date.now() }: TraceDiagnosticHtmlOptions = {}): string {
+export function buildTraceDiagnosticReportHtml(report: TraceDiagnosticReportV1, { generatedAtMs = Date.now(), appUrl = '' }: TraceDiagnosticHtmlOptions = {}): string {
   for (const field of TEMPLATE_FIELDS) {
     if (reportTemplate.split(field).length !== 2) throw new Error(`Trace diagnostic HTML template must contain exactly one ${field}`);
   }
   const model = buildTraceAuditReportModel(report);
   return reportTemplate
     .replace('__TRACE_AUDIT_TITLE__', escapeHtml(`${model.title} · 工程审计报告`))
-    .replace('__TRACE_AUDIT_CSS__', reportStyles)
-    .replace('__TRACE_AUDIT_BODY__', renderReport(model, generatedAtMs));
+    .replace('__TRACE_AUDIT_CSS__', `${reportStyles}\n${optimizationStyles}`)
+    .replace('__TRACE_AUDIT_BODY__', renderReport(model, report, generatedAtMs, safeAppUrl(appUrl)));
 }
 
-function renderReport(model: TraceAuditReportModel, generatedAtMs: number): string {
-  const usesSettlement = [model.plainConclusion, ...model.findings.map((item) => item.conclusion)].some((value) => value.toLowerCase().includes('settlement'));
+function renderReport(model: TraceAuditReportModel, report: TraceDiagnosticReportV1, generatedAtMs: number, appReturnHref: string): string {
+  const reading = buildTraceOptimizationReadingModel(report);
   return `<main class="trace-audit trace-audit--export" data-status="${attr(model.status)}" data-tone="${attr(model.verdict.tone)}">
-  <header class="trace-audit__masthead"><div class="trace-audit__identity"><p class="trace-audit__document-type">PAW Trace Diagnostic · 工程审计报告</p><h1>${escapeHtml(model.title)}</h1><p class="trace-audit__lede">先看结论和影响，再看五层归因、事实与下一步；工程明细统一收在附录。</p></div><dl class="trace-audit__document-meta">${meta('报告状态', model.statusLabel)}${meta('报告修订', `Revision ${model.revision}`)}${meta('更新时间', model.updatedAtLabel)}</dl></header>
-  <div class="trace-audit__scan-layer">
-    <section class="trace-audit__tldr" data-tone="${attr(model.verdict.tone)}" aria-labelledby="trace-audit-tldr-title">
-      <div class="trace-audit__states" aria-label="事故、诊断与修复状态">${model.stateBadges.map((badge) => `<div data-tone="${attr(badge.tone)}"><span>${escapeHtml(badge.label)}</span><strong>${escapeHtml(badge.value)}</strong></div>`).join('')}</div>
-      <div class="trace-audit__tldr-copy"><h2 id="trace-audit-tldr-title">${escapeHtml(model.plainConclusion)}</h2><p>${escapeHtml(model.impact)}</p><p class="trace-audit__glossary">${usesSettlement ? '<span>settlement（会话结算）</span>' : ''}<span>回执（阶段完成凭证）</span><span>冻结（不可变快照）</span></p></div>
-    </section>
-    ${scanSection('failure-attribution', '问题出在哪一层', model.failureAttribution.summary, renderFailureAttribution(model), 'trace-audit__attribution')}
-    ${scanSection('knowledge', '支持这个判断的事实', '把已确认事实和仍缺少的证据放在一起，避免把未知写成结论。', `<div class="trace-audit__knowledge-columns"><section aria-labelledby="trace-audit-known-title"><h3 id="trace-audit-known-title">已知事实</h3><ul>${model.knownFacts.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section><section aria-labelledby="trace-audit-gaps-title"><h3 id="trace-audit-gaps-title">证据缺口</h3><ul>${model.evidenceGaps.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section></div>`, 'trace-audit__knowledge')}
-    ${scanSection('actions', '下一步怎么做', '先确认修复授权，再读取修复 Trace 中已记录的修改与测试证据，由 AI Judge 复检；不声称在复检中重跑命令或进行同案 Trace 回放。', `<ol class="trace-audit__actions">${model.actions.map((action) => `<li data-tone="${attr(action.tone)}"><span aria-hidden="true">${action.step}</span><div><strong>${escapeHtml(action.title)}</strong><p>${escapeHtml(action.description)}</p></div><small>${escapeHtml(action.state)}</small></li>`).join('')}</ol>`, 'trace-audit__actions-section')}
-    ${scanSection('findings', '进一步诊断依据', model.summary, `<div class="trace-audit__findings">${model.findings.length ? model.findings.map((finding) => renderFinding(finding, model)).join('') : '<p class="trace-audit__empty">没有结构化发现；这不等同于已经证明系统没有问题。</p>'}</div>`, 'trace-audit__findings-section')}
-    ${scanSection('cause-chain', '发生过程（证据链）', '只连接报告明确提供的因果关系；没有从错误字符串补写中间环节。', renderCauseChain(model), 'trace-audit__cause-chain')}
-  </div>
+  <header class="trace-audit__masthead"><div class="trace-audit__identity"><h1>${escapeHtml(model.title)}</h1></div><dl class="trace-audit__document-meta">${meta('报告状态', model.statusLabel)}${meta('报告修订', `Revision ${model.revision}`)}${meta('更新时间', model.updatedAtLabel)}</dl></header>
+  ${renderToStaticMarkup(createElement(TraceOptimizationReportContent, { model, reading, exported: true, appReturnHref }))}
   ${renderAppendix(model)}
-  <footer class="trace-audit__provenance"><div><strong>报告身份</strong><span>${escapeHtml(model.reportId)}</span></div><div><strong>冻结检查摘要</strong><span>${escapeHtml(model.inspectionSha256)}</span></div><div><strong>生成时间</strong><span>${escapeHtml(formatTimestamp(generatedAtMs))}</span></div><p>这份文件只包含持久化报告的公开投影，不包含私有推理、原始 Tool 参数、Provider 上下文或机器路径。</p></footer>
+  <footer class="trace-audit__provenance"><div><strong>报告身份</strong><span>${escapeHtml(model.reportId)}</span></div><div><strong>冻结检查摘要</strong><span>${escapeHtml(model.inspectionSha256)}</span></div><div><strong>生成时间</strong><span>${escapeHtml(formatTimestamp(generatedAtMs))}</span></div><p>此文件包含持久化报告的公开证据与候选 diff；版本状态记录到导出时刻。</p></footer>
 </main>`;
 }
 
@@ -46,13 +41,14 @@ function renderFailureAttribution(model: TraceAuditReportModel): string {
   return `<ol class="trace-audit__attribution-list" data-primary-layer="${attr(model.failureAttribution.primaryLayer)}">${model.failureAttribution.layers.map((item) => `<li aria-label="${attr(`${item.label}：${item.verdictLabel}`)}" data-layer="${attr(item.layer)}" data-verdict="${attr(item.verdict)}"><div class="trace-audit__attribution-label"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.verdictLabel)}</span></div><p>${escapeHtml(item.explanation)}</p>${evidenceIds(item.evidenceIds, model)}</li>`).join('')}</ol>`;
 }
 
-function renderFinding(finding: TraceAuditFinding, model: TraceAuditReportModel): string {
-  const open = ['critical', 'high'].includes(finding.severity) ? ' open' : '';
-  return `<details class="trace-audit__finding" data-severity="${attr(finding.severity)}"${open}><summary><span class="trace-audit__finding-index">${escapeHtml(finding.severityLabel)}</span><span><strong>${escapeHtml(finding.questionTitle)}</strong><small>${escapeHtml(finding.dimensionLabel)}</small></span><span class="trace-audit__details-affordance">查看五段证据</span></summary><div class="trace-audit__finding-body">${findingField('事实', finding.observation)}${findingField('假设', finding.hypothesis)}${findingField('结论', finding.conclusion)}${findingField('候选修复', finding.candidateRepair)}${findingField('验证要求', finding.verification)}<section class="trace-audit__evidence"><h3>证据引用</h3>${evidenceIds(finding.evidenceIds, model)}</section></div></details>`;
-}
-
 function renderAppendix(model: TraceAuditReportModel): string {
-  return `<details class="trace-audit__appendix"><summary><span><strong>技术附录</strong><small>扫描指标、时间线、环境、八维评分、Evidence、需求与修复对照</small></span><span class="trace-audit__details-affordance">展开明细</span></summary><div class="trace-audit__appendix-body">
+  return `<details class="trace-audit__appendix"><summary><span><strong>证据详情与技术附录</strong><small>原记录、诊断归因、时间线、版本和评分</small></span><span class="trace-audit__details-affordance">展开明细</span></summary><div class="trace-audit__appendix-body">
+    ${appendixSection('states', '诊断与修复记录', `<dl class="trace-reading__scope">${model.stateBadges.map((badge) => meta(badge.label, badge.value)).join('')}</dl>`)}
+    ${scanSection('failure-attribution', '问题出在哪一层', model.failureAttribution.summary, renderFailureAttribution(model), 'trace-audit__attribution')}
+    ${scanSection('knowledge', '支持这个判断的事实', '把已确认事实和仍缺少的证据放在一起，避免把未知写成结论。', `<div class="trace-audit__knowledge-columns"><section aria-labelledby="trace-audit-known-title"><h3 id="trace-audit-known-title">已知事实</h3><ul>${model.knownFacts.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section><section aria-labelledby="trace-audit-gaps-title"><h3 id="trace-audit-gaps-title">证据缺口</h3><ul>${model.evidenceGaps.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section></div>`, 'trace-audit__knowledge')}
+    ${scanSection('actions', '下一步怎么做', '先确认修复授权，再读取修复 Trace 中已记录的修改与测试证据，由 AI Judge 复检；不声称在复检中重跑命令或进行同案 Trace 回放。', `<ol class="trace-audit__actions">${model.actions.map((action) => `<li data-tone="${attr(action.tone)}"><span aria-hidden="true">${action.step}</span><div><strong>${escapeHtml(action.title)}</strong><p>${escapeHtml(action.description)}</p></div><small>${escapeHtml(action.state)}</small></li>`).join('')}</ol>`, 'trace-audit__actions-section')}
+    ${scanSection('cause-chain', '发生过程（证据链）', '只连接报告明确提供的因果关系；没有从错误字符串补写中间环节。', renderCauseChain(model), 'trace-audit__cause-chain')}
+
     ${appendixSection('verdict', '原始审计判决', `<div class="trace-audit__verdict"><strong>${escapeHtml(model.verdict.title)}</strong><p>${escapeHtml(model.verdict.detail)}</p>${model.failureReason ? `<p><strong>报告失败原因：</strong>${escapeHtml(model.failureReason)}</p>` : ''}</div>`)}
     ${appendixSection('scope', '冻结诊断范围', renderTargets(model))}
     ${appendixSection('requirements', '用户需求完成矩阵 · 需求矩阵', renderRequirements(model))}
@@ -89,9 +85,9 @@ function renderEvidence(model: TraceAuditReportModel): string { const entries = 
 
 function scanSection(id: string, title: string, description: string, body: string, className: string): string { const headingId = `trace-audit-${id}-title`; return `<section class="trace-audit__section ${className}" aria-labelledby="${headingId}"><header class="trace-audit__section-heading"><h2 id="${headingId}">${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></header>${body}</section>`; }
 function appendixSection(id: string, title: string, body: string): string { const headingId = `trace-audit-appendix-${id}-title`; return `<section class="trace-audit__appendix-section" aria-labelledby="${headingId}"><h2 id="${headingId}">${escapeHtml(title)}</h2>${body}</section>`; }
-function findingField(title: string, value: string): string { return `<section><h3>${escapeHtml(title)}</h3><p>${escapeHtml(value)}</p></section>`; }
 function evidenceIds(ids: string[], model: TraceAuditReportModel, full = false): string { if (!ids.length) return '<span class="trace-audit__evidence-empty">无冻结证据引用</span>'; return `<div class="trace-audit__evidence-ids">${ids.map((id) => { const alias = model.evidenceAliases[id] ?? '?'; return `<code>${full ? `[${alias}] ${escapeHtml(id)}` : `[${alias}]`}</code>`; }).join('')}</div>`; }
 function meta(label: string, value: string, mono = false): string { return `<div><dt>${escapeHtml(label)}</dt><dd${mono ? ' data-mono="true"' : ''}>${escapeHtml(value)}</dd></div>`; }
 function formatTimestamp(value: number): string { return value ? new Date(value).toLocaleString('zh-CN') : '时间未知'; }
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character); }
 function attr(value: string): string { return escapeHtml(value).replace(/`/g, '&#96;'); }
+function safeAppUrl(value: string): string { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } }

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Native PAW icon. A quiet porcelain ground and a blue orbital
+       world preserve the brand while giving its silhouette room to breathe.
+       Back orbit, globe, then front orbit establish one coherent perspective. -->
+  <defs>
+    <linearGradient id="porcelain" x1=".16" y1="0" x2=".84" y2="1">
+      <stop stop-color="#fff"/><stop offset=".52" stop-color="#f3f6fc"/><stop offset="1" stop-color="#dce6f5"/>
+    </linearGradient>
+    <radialGradient id="globe" gradientUnits="userSpaceOnUse" cx="393" cy="400" r="364">
+      <stop stop-color="#e0f8ff"/><stop offset=".23" stop-color="#a4e0f6"/><stop offset=".46" stop-color="#60b9ed"/>
+      <stop offset=".66" stop-color="#4c85dc"/><stop offset=".84" stop-color="#3456aa"/><stop offset="1" stop-color="#223365"/>
+    </radialGradient>
+    <linearGradient id="ring" gradientUnits="userSpaceOnUse" x1="-355" y1="100" x2="355" y2="-70">
+      <stop stop-color="#688cbe"/><stop offset=".22" stop-color="#b9d8ee"/><stop offset=".47" stop-color="#f0fbff"/>
+      <stop offset=".7" stop-color="#a8c9e7"/><stop offset="1" stop-color="#4974b2"/>
+    </linearGradient>
+    <linearGradient id="guide" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#edcd89"/><stop offset="1" stop-color="#b4823c"/>
+    </linearGradient>
+    <clipPath id="sphere"><circle cx="482" cy="538" r="218"/></clipPath>
+    <filter id="shadow" x="-40%" y="-70%" width="180%" height="240%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="23"/>
+    </filter>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#porcelain)"/>
+  <ellipse cx="514" cy="760" rx="239" ry="35" fill="#466caa" opacity=".13" filter="url(#shadow)"/>
+  <g transform="translate(482 538) rotate(-28)" fill="none">
+    <ellipse rx="355" ry="116" stroke="url(#ring)" stroke-width="23"/>
+  </g>
+  <circle cx="482" cy="538" r="218" fill="url(#globe)"/>
+  <g clip-path="url(#sphere)">
+    <g transform="translate(482 546) rotate(-28)">
+      <path d="M355 0 A355 116 0 0 1-355 0" fill="none" stroke="#183263" stroke-width="35" opacity=".2"/>
+    </g>
+  </g>
+  <g transform="translate(482 538) rotate(-28)" fill="none">
+    <path d="M355 0 A355 116 0 0 1-355 0" stroke="url(#ring)" stroke-width="23"/>
+  </g>
+  <path d="M766 220 C775 261 781 268 819 278 C781 287 775 296 766 336 C756 296 750 287 712 278 C750 268 756 261 766 220Z" fill="url(#guide)"/>
+</svg>

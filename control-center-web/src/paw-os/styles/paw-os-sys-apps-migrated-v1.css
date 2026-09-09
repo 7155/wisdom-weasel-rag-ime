@@ -181,6 +181,8 @@
   border-right: 1px solid var(--paw-system-line);
 }
 
+.paw-desktop-root .paw-system-app__frame[data-sidebar-collapsed='true'] { --paw-system-rail-w: 48px; }
+
 .paw-desktop-root .paw-system-app__nav nav {
   display: grid;
   align-content: start;
@@ -1280,11 +1282,14 @@
     grid-template-rows: auto minmax(0, 1fr);
   }
   .paw-desktop-root .paw-system-app__nav {
+    flex-direction: row;
+    align-items: center;
     border-right: 0;
     border-bottom: 1px solid var(--paw-system-line);
   }
   .paw-desktop-root .paw-system-app__nav nav {
     display: flex;
+    min-width: 0;
     gap: 4px;
     padding: 5px 8px;
     overflow: auto hidden;

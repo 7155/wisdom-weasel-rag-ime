@@ -434,6 +434,41 @@
   gap: 6px;
 }
 
+/* One assigned planet is a reading flow, not a compressed multi-column row.
+   Keep the current task, live progress and actions in source order so a long
+   assignment cannot stretch an empty progress column or sink the controls. */
+.paw-room-round__standalone--task {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.paw-room-round__standalone--task > .paw-room-round__standalone-task-body {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding-left: 0;
+}
+
+.paw-room-round__standalone--task > .paw-room-round__standalone-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.paw-room-round__standalone-task-body details,
+.paw-room-round__report > details {
+  margin-top: 8px;
+  color: var(--paw-text-secondary, #65758a);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.paw-room-round__standalone-task-body summary,
+.paw-room-round__report > details > summary {
+  cursor: pointer;
+  color: var(--paw-accent, #2878d0);
+}
+
 .paw-room-round__standalone-actions > button {
   display: inline-flex;
   min-height: 32px;

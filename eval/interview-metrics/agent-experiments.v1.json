@@ -2112,7 +2112,7 @@
         },
         {
           "kind": "evaluator",
-          "ref": "eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
+          "ref": "https://github.com/7155/personal-agent-workbench/blob/67b81f89b87b251ff6c2807344901638f15be15a/eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
           "change": "记录 Memory/RAG 的证据边界与下一轮 gold 计划。"
         }
       ],
@@ -2132,7 +2132,7 @@
           "endToEndP95Ms": 37
         },
         "evidenceRefs": [
-          "eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
+          "https://github.com/7155/personal-agent-workbench/blob/67b81f89b87b251ff6c2807344901638f15be15a/eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
           "eval/interview-metrics/evidence-ledger.v1.json"
         ]
       },
@@ -2143,7 +2143,7 @@
           "observation": "当前 shadow 通过结果没有同任务 before/after 对照。",
           "hypothesis": "建立维护 gold 后才能判断候选是否真的提升。",
           "evidenceRefs": [
-            "eval/interview-metrics/MEMORY_AND_RAG_EVAL.md"
+            "https://github.com/7155/personal-agent-workbench/blob/67b81f89b87b251ff6c2807344901638f15be15a/eval/interview-metrics/MEMORY_AND_RAG_EVAL.md"
           ],
           "proposedChange": "冻结 capture/merge/supersede/delete 的小金标，并分别记录质量、安全和成本。",
           "attribution": {
@@ -2195,7 +2195,7 @@
           "endToEndP95Ms": 37
         },
         "evidenceRefs": [
-          "eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
+          "https://github.com/7155/personal-agent-workbench/blob/67b81f89b87b251ff6c2807344901638f15be15a/eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
           "eval/memory_optimizer_cases.jsonl"
         ]
       },

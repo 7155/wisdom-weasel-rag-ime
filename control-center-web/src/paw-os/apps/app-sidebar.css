@@ -1,0 +1,31 @@
+.paw-app-sidebar-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  margin: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--paw-muted, var(--color-text-secondary, #5d6675));
+  cursor: pointer;
+}
+
+.paw-app-sidebar-toggle:hover {
+  background: var(--paw-panel-strong, var(--color-surface, #fff));
+  color: var(--paw-ink, var(--color-text, #171a21));
+}
+
+.paw-app-sidebar-toggle:focus-visible {
+  outline: 2px solid var(--paw-accent, var(--color-focus, #2563eb));
+  outline-offset: -2px;
+}
+
+@media (pointer: coarse) {
+  .paw-app-sidebar-toggle { width: 44px; height: 44px; min-width: 44px; min-height: 44px; margin: 2px; }
+}

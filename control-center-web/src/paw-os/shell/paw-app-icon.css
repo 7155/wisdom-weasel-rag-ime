@@ -28,9 +28,10 @@
    on cold-white system chrome instead of adding a gloss or outer frame. */
 .paw-app-icon__sheen { opacity: .82; }
 
-/* The PAW system mark is monochrome and follows the surrounding text colour.
-   The static orbital mark sits on the wordmark baseline. */
+/* Keep the supplied full-colour system artwork static on the wordmark baseline. */
 .paw-brand-mark {
+  border-radius: 22%;
+  overflow: hidden;
   display: block;
   flex: 0 0 auto;
   translate: 0 -.5px;

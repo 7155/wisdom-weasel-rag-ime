@@ -1,6 +1,6 @@
 ---
 name: trace-agent-diagnostics
-description: Diagnose one or several selected PAW Sessions, Rooms, or runs from canonical public Trace and Eval evidence; use when the Trace Agent App must inspect source conversations, read project and external files, score execution quality, explain failures or waste, persist an evidence-linked report, and apply evidence-backed project repairs under its explicit full-trust policy. Do not use for generic log summarization or unrelated mutation.
+description: Diagnose and improve selected PAW Sessions, Rooms, or runs, or distill reusable Skills and tools across conversations. Use the Trace App's frozen focus, persistent optimization knowledge, real candidate versions and measured comparisons; deliver a readable report with a final user choice to adopt a version.
 ---
 
 # Diagnose Agent Traces
@@ -8,14 +8,40 @@ description: Diagnose one or several selected PAW Sessions, Rooms, or runs from 
 Turn a bounded selection of PAW execution objects into a persisted,
 evidence-linked diagnostic report. The diagnostic Session uses an explicit
 full-trust policy: it may read the selected source conversations and files
-under `/` without per-read approval, and it may apply the smallest
-evidence-backed project change. Never treat a candidate, a generated handoff,
+under `/` without per-read approval, and it may prepare the smallest
+evidence-backed project candidate. Final adoption uses the Trace App action.
+Never treat a candidate, a generated handoff,
 or an Agent claim as an applied fix without a real change receipt and
 verification evidence.
 
 Use `trace_diagnostics.inspect` before diagnosing. It is the model-visible
 public projection owned by Runtime; `session_search` summaries and prompt text
 are not substitutes for the selected transcript/Trace evidence.
+
+## Follow The Selected Goal
+
+The report's `intent` is frozen by the App before the first prompt. `improve`
+means diagnose and test a bounded change; `distill` means compare multiple
+conversations with existing capabilities and propose reusable methods. New
+requests default to all five focus areas: tool, skill, prompt, workflow, model.
+For `scopeMode: selected`, stay within `focusAreas`. The historical attribution
+key `template` means the prompt layer; it does not create a sixth target.
+Evidence may cross owners to explain a cause, but do not silently expand the
+selected intervention. Old reports with no intent remain legacy.
+
+After inspection, use `trace_diagnostics` with `op: read` and the supplied
+`reportId` to retrieve experience summaries and previous attempts. Open a
+specific `patternId` only when relevant. Distinguish historical hypotheses
+from current frozen Evidence IDs; failed, rejected and interrupted attempts
+remain useful and are not erased when a candidate is abandoned.
+
+Read [references/optimization-workflow.md](references/optimization-workflow.md)
+before registering a candidate or distilling conversations. It describes the
+actual command interface, source snapshots, frozen task plans, candidate links
+and final adoption. Generate concrete candidate files in a separate project
+directory, then register their paths. Do not replace the active version while
+preparing it. When execution lacks the needed real adapter, leave the
+candidate pending validation and identify the missing check.
 
 ## Select And Bound The Case
 
@@ -86,7 +112,7 @@ frozen inspection. The object type supplies only a starting hypothesis:
   corresponding source, budget, token, byte, timing, retry, or comparison
   evidence.
 
-After `inspect`, state the active primary lane, optional secondary lanes, and
+After `inspect`, state the selected focus, active primary lane, optional secondary lanes, and
 inactive lanes. A lane with no matching capability is `not_applicable`, not
 `unknown`. Do not emit a `judgeScore` or `finding` for an inactive lane. Keep
 one primary cause and at most three direct consequences or indispensable
@@ -139,7 +165,7 @@ Evidence IDs in the layer entries.
 
 ## Score Without Inventing Certainty
 
-The deterministic web report always renders these eight rows: task completion,
+The diagnostic appendix can render eight rows: task completion,
 evidence and diagnosis, Tool/Runtime reliability, Context, Room collaboration,
 Memory/RAG, efficiency, and repair quality. The diagnostic Agent does not need
 to emit eight `judgeScores`; it emits semantic scores only for active lanes
@@ -179,7 +205,7 @@ with network blocked; an ordinary or model-claimed successful command is not
 sandbox evidence. If no representative replay exists, keep repair quality
 `unknown` or `blocked` and do not mark the candidate verified.
 
-The diagnostic Session uses this exact full-trust policy so its source
+The App creates the diagnostic Session with a full-trust policy so its source
 conversation and external-file reads, as well as project modifications, are
 authorized by one explicit profile:
 
@@ -187,13 +213,17 @@ authorized by one explicit profile:
 - `toolProfileVersion: "control-center-auto-approve-v1"`
 - `executionMode: "full_trust"`
 - `dangerousModeConfirmation: "ENABLE_FULL_TRUST"`
-- `workspaceRoots: ["/"]`
+- concrete source-project roots followed by `/` (the root capability alone,
+  `workspaceRoots: ["/"]`, does not identify an optimization project)
 - `toolAllowlistMode: "profile"`
 - `projectContextEnabled: true`, `piSkillsEnabled: true`, and
   `codexSkillsEnabled: true`
 
-The profile automatically approves every Tool effect; it does not require
-source-workspace equality or PAW workspace-scope/approval hashes. Direct
+The profile supplies diagnostic read and preparation authority. The service
+also verifies the selected sources' concrete project binding, and candidate
+registration stays inside those projects. The local task adapter supplies its
+own network-blocked WorkspaceHarness execution profile; the diagnostic
+Session's full-trust command receipt is not that comparison. Direct
 OS/TCC/Unix permissions can still be the final boundary. The diagnostic Agent
 and any explicitly handed-off repair Agent must not ask the user to type a
 directory or `ENABLE_FULL_TRUST` again, and must not ask for per-Tool

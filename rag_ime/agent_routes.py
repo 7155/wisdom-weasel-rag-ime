@@ -206,6 +206,8 @@ def observability_trace_diagnostic_report_route(path: str) -> tuple[str, str]:
             return parts[0], "repair-authorize"
         if len(parts) == 2 and parts[0] and parts[1] == "repair-verify":
             return parts[0], "repair-verify"
+        if len(parts) == 2 and parts[0] and parts[1] == "optimization":
+            return parts[0], "optimization"
         return "", ""
     return "", ""
 

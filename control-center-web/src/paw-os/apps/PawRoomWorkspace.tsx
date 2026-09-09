@@ -298,7 +298,7 @@ export function PawRoomWorkspace({
     () => record ? roomCollaborationPlanetRequests(record, projection) : [],
     [collaborationParticipantSignature, record, projection],
   );
-  const collaborationParticipantIds = useRef(new Map<string, Set<string>>());
+  const collaborationParticipantIds = useRef(new Map<string, { turnId: string; ids: Set<string> }>());
   const collaborationSyncKeyRef = useRef('');
   const activeWork = record?.workItems?.find((item) => ['queued', 'active', 'review', 'blocked'].includes(item.state));
   // WorkItem lifecycle metadata can outlive its execution Root. Only the
@@ -737,8 +737,8 @@ export function PawRoomWorkspace({
         : new Set(current).add(participantId));
     }
   }, [desktop, record?.participants, recordId]);
-  /* Only an active execution edge opens a new observer. Progress updates do
-   * not reopen a window the user collapsed; terminal edges retain its result. */
+  /* Restore this round's admitted observers even after they have submitted.
+   * Progress and terminal updates do not reopen a window the user collapsed. */
   useEffect(() => {
     if (!collaborationFocusActive || !desktop || !record) {
       if (!collaborationFocusActive) {
@@ -747,11 +747,13 @@ export function PawRoomWorkspace({
       }
       return;
     }
-    const syncKey = `${record.id}:${collaborationParticipantRequests.map((request) => request.target.id).join('\u0000')}`;
+    const turnId = latestTurn?.id ?? '';
+    const syncKey = `${record.id}:${turnId}:${collaborationParticipantRequests.map((request) => request.target.id).join('\u0000')}`;
     if (syncKey === collaborationSyncKeyRef.current) return;
     collaborationSyncKeyRef.current = syncKey;
     const desired = new Set(collaborationParticipantRequests.map((request) => request.target.id));
-    const previous = collaborationParticipantIds.current.get(record.id) ?? new Set<string>();
+    const previousRound = collaborationParticipantIds.current.get(record.id);
+    const previous = previousRound?.turnId === turnId ? previousRound.ids : new Set<string>();
     const failures = new Set<string>();
     for (const request of collaborationParticipantRequests) {
       if (previous.has(request.target.id)) continue;
@@ -761,7 +763,7 @@ export function PawRoomWorkspace({
         failures.add(request.target.id);
       }
     }
-    collaborationParticipantIds.current.set(record.id, desired);
+    collaborationParticipantIds.current.set(record.id, { turnId, ids: desired });
     setCollaborationOpenFailures((current) => new Set([
       ...[...current].filter((id) => desired.has(id) && previous.has(id)), ...failures,
     ]));
@@ -770,6 +772,7 @@ export function PawRoomWorkspace({
     collaborationParticipantSignature,
     collaborationFocusActive,
     desktop,
+    latestTurn?.id,
     record,
   ]);
   useEffect(() => {

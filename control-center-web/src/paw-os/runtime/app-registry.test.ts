@@ -8,6 +8,8 @@ describe('PAWOS App registry', () => {
     expect(pawAppForPath('/rooms')?.id).toBe('agent');
     expect(pawAppForPath('/voice')?.id).toBe('input-studio');
     expect(pawAppForPath('/context-debug')?.id).toBe('system-monitor');
+    expect(pawAppForPath('/trace-agent?view=knowledge')?.id).toBe('trace-agent');
+    expect(pawAppForPath('/trace-agent?reportId=trace-report%3A1')?.id).toBe('trace-agent');
     expect(pawAppForPath('/evolution-report')).toBeNull();
     expect(pawAppForPath('/appearance')?.id).toBe('system-settings');
   });

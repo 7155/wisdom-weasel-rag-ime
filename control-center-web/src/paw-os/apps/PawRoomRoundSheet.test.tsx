@@ -18,6 +18,45 @@ import { PawRoomRoundSheet } from './PawRoomRoundSheet';
 afterEach(cleanup);
 
 describe('PawRoomRoundSheet (UR-170/172)', () => {
+  it('keeps a real reasoning event in expandable progress instead of a coordinator report', async () => {
+    const user = userEvent.setup();
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-mars', 'session-mars', 1),
+    ]);
+    room.workItems = [activeWorkItem('work-mars', 'participant-mars')];
+    const projection = reduceRoomEvent(projectionWithProgress('正在执行当前任务'), parseRoomEvent({
+      schemaVersion: 'rag-ime.agent-room-event.v1', eventId: 'reasoning-source', sequence: 1, resumeToken: 'room-a:1',
+      roomId: 'room-a', turnId: 'turn-1', participantId: 'participant-earth', sourceSessionId: 'session-earth',
+      eventType: 'participant_activity', createdAtMs: 6,
+      payload: { rootId: 'turn-1', dispatchId: 'dispatch-earth', sourceEventType: 'reasoning_summary',
+        source: 'provider_reasoning_summary', state: 'running', summary: 'Planning test seam without browser' },
+    })).state;
+    render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
+    expect(screen.queryByRole('region', { name: 'Earth 主控汇报' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
+    const progress = screen.getByRole('region', { name: 'Earth 主控进展' });
+    expect(within(progress).getByRole('status')).toHaveTextContent('进行中');
+    expect(within(progress).queryByText('Planning test seam without browser')).not.toBeInTheDocument();
+    await user.click(within(progress).getByText('查看工作过程'));
+    expect(within(progress).getByText('Planning test seam without browser')).toBeVisible();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  it('does not promote a coordinator result post or completed WorkItem before this Room turn ends', () => {
+    const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
+    room.workItems = [workItemForOwner('coordinator-work', 'participant-earth', '一个工作步骤已完成')];
+    const projection = projectionWithProgress('主控仍在执行');
+    projection.turnsById['turn-1']!.terminalParticipantIds = ['participant-earth'];
+    appendCoordinatorPost(projection, 'result', '这是已发出的回复，Room 仍在运行。');
+    render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
+    expect(screen.queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
+    const reply = screen.getByRole('region', { name: 'Earth 主控回复' });
+    expect(reply).toHaveTextContent('这是已发出的回复，Room 仍在运行。');
+    expect(within(reply).getByRole('status')).toHaveTextContent('进行中');
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
   it('keeps one unassigned planet out of the task table and preserves its Session actions', () => {
     const projection = projectionWithProgress('尚未分配');
     projection.turnsById['turn-1'] = {
@@ -62,7 +101,38 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(within(task).getByRole('button', { name: '打开 Earth Session' })).toBeInTheDocument();
   });
 
-  it('keeps the coordinator synthesis outside the worker table', () => {
+  it('retains a single worker full assignment behind an explicit disclosure without a table', async () => {
+    const user = userEvent.setup();
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-venus', 'session-venus', 2),
+    ]);
+    room.workItems = [activeWorkItem('work-venus', 'participant-venus')];
+    const projection = projectionWithProgress('主控正在跟进');
+    const fullTask = `${'逐项核对当前任务、证据和失败分支。'.repeat(24)}\n\n任务全文结尾：必须保留这一条验收要求。`;
+    const workerActivity = activityForParticipant(
+      projection.activitiesById['activity-earth']!, 'activity-venus',
+      'participant-venus', 'session-venus', 'Venus 正在核对证据',
+    );
+    workerActivity.payload.task = fullTask;
+    projection.activitiesById['activity-venus'] = workerActivity;
+    projection.activityOrder.push('activity-venus');
+    projection.turnsById['turn-1']!.activityIds.push('activity-venus');
+    projection.turnsById['turn-1']!.participantIds.push('participant-venus');
+
+    render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
+
+    const task = screen.getByRole('region', { name: 'Venus 当前任务' });
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(task).toHaveTextContent('Venus 正在核对证据');
+    expect(task).not.toHaveTextContent('任务全文结尾');
+    await user.click(within(task).getByText('查看完整任务'));
+    expect(within(task).getByText('任务全文结尾：必须保留这一条验收要求。')).toBeVisible();
+    expect(within(task).getByRole('button', { name: '打开 Venus Session' })).toBeInTheDocument();
+  });
+
+  it('keeps the coordinator progress outside the worker table and discloses process text explicitly', async () => {
+    const user = userEvent.setup();
     const room = roomWith([
       participant('participant-earth', 'session-earth', 0),
       participant('participant-mars', 'session-mars', 1),
@@ -96,8 +166,11 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
-    const summary = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    const summary = screen.getByRole('region', { name: 'Earth 主控进展' });
     expect(summary.closest('.paw-room-round')).toBeNull();
+    expect(summary).toHaveTextContent('主控正在执行当前任务，尚未发布面向你的回复。');
+    expect(summary).not.toHaveTextContent('主控已经汇总当前公开进展');
+    await user.click(within(summary).getByText('查看工作过程'));
     expect(summary).toHaveTextContent('主控已经汇总当前公开进展');
     const table = screen.getByRole('table', { name: '完成 Room 任务表 · 行星进展' });
     expect(within(table).getAllByRole('row')).toHaveLength(3);
@@ -129,7 +202,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
-    expect(screen.getByRole('region', { name: 'Earth 主控汇报' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Earth 主控进展' })).toBeInTheDocument();
     const task = screen.getByRole('region', { name: 'Mars 当前任务' });
     expect(task).toHaveTextContent('Mars 正在执行唯一工作');
     expect(task.closest('.paw-room-round')).toBeNull();
@@ -168,7 +241,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
-    const summary = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    const summary = screen.getByRole('region', { name: 'Earth 主控回复' });
     expect(summary).toHaveTextContent('主控正在等待伙伴交付');
     expect(summary).not.toHaveTextContent('最终结果');
     expect(summary).not.toHaveTextContent('已提交');
@@ -188,7 +261,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
-    const report = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    const report = screen.getByRole('region', { name: 'Earth 主控回复' });
     expect(report).toHaveTextContent('流式正文末尾仍然可读。');
     expect(within(report).getByRole('status')).toHaveTextContent('进行中');
     expect(screen.queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
@@ -207,7 +280,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
-    const report = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    const report = screen.getByRole('region', { name: 'Earth 主控回复' });
     expect(report).toHaveTextContent('这是当前问题的回复。');
     expect(within(report).getByRole('status')).toHaveTextContent('进行中');
     expect(screen.queryByRole('region', { name: 'Mars 未分配' })).not.toBeInTheDocument();
@@ -239,10 +312,11 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       ...projection.activitiesById['activity-earth']!,
       status: 'completed',
     };
+    appendCoordinatorPost(projection, 'progress', '主控已汇总两位伙伴的最终结果');
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
-    expect(screen.getByRole('region', { name: 'Earth 主控汇报' })).toHaveTextContent(
+    expect(screen.getByRole('region', { name: 'Earth 主控回复' })).toHaveTextContent(
       '主控已汇总两位伙伴的最终结果',
     );
     expect(screen.getAllByRole('region', { name: /伙伴结果$/u })).toHaveLength(2);
@@ -256,7 +330,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
-  it('keeps a coordinator result outside the worker table while other planets are active', () => {
+  it('keeps a coordinator result post as a current reply while this Room turn and other planets are active', () => {
     const room = roomWith([
       participant('participant-earth', 'session-earth', 0),
       participant('participant-mars', 'session-mars', 1),
@@ -296,8 +370,10 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
-    const result = screen.getByRole('region', { name: 'Earth 最终结果' });
+    const result = screen.getByRole('region', { name: 'Earth 主控回复' });
     expect(result).toHaveTextContent('主控汇报：已确认两位伙伴的当前进展');
+    expect(within(result).getByRole('status')).toHaveTextContent('进行中');
+    expect(screen.queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
     const table = screen.getByRole('table', { name: '完成 Room 任务表 · 行星进展' });
     expect(table).not.toContainElement(result);
     expect(within(table).queryByText('Earth')).not.toBeInTheDocument();
@@ -333,7 +409,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
-    const report = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    const report = screen.getByRole('region', { name: 'Earth 主控回复' });
     expect(report).toHaveTextContent('打开产物继续核对交互。');
     expect(within(report).getByRole('heading', { name: '下一步' })).toBeVisible();
     expect(within(report).getByRole('status')).toHaveTextContent('已停止');
@@ -412,11 +488,13 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
        synthesis stays a standalone card, so this one-worker round must not
        regress to a one-row table. */
     expect(within(surface).queryByRole('columnheader', { name: '行星' })).not.toBeInTheDocument();
-    expect(within(surface).getByRole('region', { name: 'Earth 主控汇报' })).toBeInTheDocument();
+    expect(within(surface).getByRole('region', { name: 'Earth 主控进展' })).toBeInTheDocument();
     expect(within(surface).getByRole('region', { name: 'Mars 当前任务' })).toBeInTheDocument();
     const earthRow = container.querySelector('[data-row-key="turn-1:participant-earth"]');
     expect(earthRow).not.toBeNull();
     expect(earthRow).toHaveAttribute('data-coordinator', 'true');
+    expect(earthRow).not.toHaveTextContent('正在核对 dispatch 回执');
+    await user.click(within(earthRow as HTMLElement).getByText('查看工作过程'));
     expect(earthRow).toHaveTextContent('正在核对 dispatch 回执');
 
     const detailButton = screen.getByRole('button', { name: '展开 Mars 详情' });
@@ -465,7 +543,8 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(updatedEarthRow).toBe(earthRow);
     expect(updatedEarthRow).not.toHaveAttribute('data-flowing-light');
     expect(updatedEarthRow).toHaveTextContent('dispatch 回执已经核对完成');
-    expect(updatedEarthRow).toHaveTextContent('已回复');
+    expect(updatedEarthRow).toHaveTextContent('进行中');
+    expect(updatedEarthRow).not.toHaveTextContent('已回复');
   });
 
   it('keeps the latest objective static and folds only the process with an associated control', async () => {
@@ -839,6 +918,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     const projection = projectionWithProgress('已生成 /work/paw/summary.md');
     projection.turnsById['turn-1'] = {
       ...projection.turnsById['turn-1']!,
+      status: 'completed',
       messageIds: ['user-1', 'assistant-1'],
     };
     projection.messagesById['assistant-1'] = {

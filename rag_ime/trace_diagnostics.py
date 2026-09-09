@@ -18,8 +18,9 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .contracts.json_schema import validate_contract
+from .contracts.json_schema import load_contract, validate_contract
 from .db import apply_database_migrations, sqlite_connection
+from .trace_optimization import normalize_trace_optimization_intent, read_trace_optimization
 
 
 TRACE_DIAGNOSTIC_INSPECTION_SCHEMA_VERSION = "rag-ime.trace-diagnostic-inspection.v1"
@@ -115,6 +116,7 @@ def inspect_trace_targets(
     trace_reader: Reader,
     eval_reader: EvalReader,
     environment_reader: EnvironmentReader | None = None,
+    intent: Mapping[str, object] | None = None,
     now_ms: int | None = None,
 ) -> dict[str, object]:
     """Build one bounded multi-target diagnostic slice.
@@ -124,6 +126,7 @@ def inspect_trace_targets(
     produce an explicit unavailable target rather than a fabricated snapshot.
     """
 
+    normalized_intent = normalize_trace_optimization_intent(intent)
     normalized_targets = _normalize_targets(targets)
     timeline: list[dict[str, object]] = []
     evidence: list[dict[str, object]] = []
@@ -250,6 +253,7 @@ def inspect_trace_targets(
     )
     result = {
         "schemaVersion": TRACE_DIAGNOSTIC_INSPECTION_SCHEMA_VERSION,
+        "intent": normalized_intent,
         "generatedAtMs": captured_at_ms,
         "targets": target_rows,
         "traceIds": trace_ids,
@@ -271,8 +275,9 @@ def inspect_trace_targets(
 class TraceDiagnosticReportStore:
     """Revisioned local persistence for structured Trace diagnostic reports."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, optimization_store=None) -> None:
         self.db_path = Path(db_path)
+        self.optimization_store = optimization_store
 
     def initialize(self) -> int:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -286,6 +291,8 @@ class TraceDiagnosticReportStore:
         title: str,
         targets: Sequence[Mapping[str, object]],
         inspection: Mapping[str, object],
+        intent: Mapping[str, object] | None = None,
+        optimization_project_id: str = "",
         now_ms: int | None = None,
     ) -> dict[str, object]:
         session_id = _required_id(diagnostic_session_id, "diagnosticSessionId", 240)
@@ -293,6 +300,12 @@ class TraceDiagnosticReportStore:
         if not normalized_title:
             raise ValueError("title is required")
         inspection_payload = dict(inspection)
+        normalized_intent = normalize_trace_optimization_intent(
+            intent if intent is not None else inspection_payload.get("intent")
+        )
+        if "intent" in inspection_payload and normalize_trace_optimization_intent(inspection_payload["intent"]) != normalized_intent:
+            raise ValueError("intent must match the frozen inspection")
+        inspection_payload["intent"] = normalized_intent
         validate_contract(inspection_payload, "trace-diagnostic-inspection.v1.json")
         normalized_targets = [dict(item) for item in targets]
         if normalized_targets != inspection_payload.get("targets"):
@@ -312,11 +325,14 @@ class TraceDiagnosticReportStore:
             "traceIds": list(inspection_payload.get("traceIds") or []),
             "inspectionSha256": inspection_hash,
             "inspection": inspection_payload,
+            "intent": normalized_intent,
             "result": None,
             "failureReason": "",
             "createdAtMs": timestamp,
             "updatedAtMs": timestamp,
         }
+        if optimization_project_id:
+            payload["optimizationProjectId"] = _required_id(optimization_project_id, "optimizationProjectId", 256)
         validate_contract(payload, "trace-diagnostic-report.v1.json")
         self.initialize()
         encoded = _canonical_json(payload)
@@ -335,6 +351,7 @@ class TraceDiagnosticReportStore:
                 if (
                     existing_payload.get("diagnosticSessionId") != session_id
                     or existing_payload.get("inspectionSha256") != inspection_hash
+                    or existing_payload.get("optimizationProjectId", "") != payload.get("optimizationProjectId", "")
                 ):
                     raise ValueError("diagnostic Session is already bound to another report")
                 return existing_payload
@@ -391,6 +408,10 @@ class TraceDiagnosticReportStore:
             for evidence_id in _result_evidence_ids(normalized_result):
                 if evidence_id not in evidence_ids:
                     raise ValueError(f"unknown evidenceId: {evidence_id}")
+            candidate_ids = {str(row[0]) for row in conn.execute("SELECT record_id FROM trace_optimization_records WHERE report_id=? AND record_kind='candidate'", (identifier,))}
+            for finding in normalized_result["findings"]:
+                if not set(finding.get("candidateIds", [])) <= candidate_ids:
+                    raise ValueError("finding references a candidate outside this report")
             next_payload = {
                 **current,
                 "revision": revision + 1,
@@ -411,6 +432,55 @@ class TraceDiagnosticReportStore:
             )
             if conn.execute("SELECT changes()").fetchone()[0] != 1:
                 raise ValueError("report revision conflict")
+        return next_payload
+
+    def record_distillation(
+        self,
+        report_id: str,
+        *,
+        expected_revision: int,
+        distillation: Mapping[str, object],
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Persist a source-bound analysis proposal, never an execution result."""
+        identifier = _required_id(report_id, "reportId", 80)
+        schema = load_contract("trace-diagnostic-report.v1.json")
+        validate_contract(distillation, {"$defs": schema["$defs"], "$ref": "#/$defs/distillation"})
+        frozen = json.loads(_canonical_json(distillation))
+        self.initialize()
+        timestamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row, foreign_keys=True) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = _load_report(conn, identifier)
+            if current.get("distillation") == frozen:
+                return current
+            if current.get("distillation") is not None:
+                raise ValueError("Recorded distillation is immutable; start a new report")
+            if int(current["revision"]) != int(expected_revision):
+                raise ValueError("report revision conflict")
+            if _mapping(current.get("intent")).get("mode") != "distill":
+                raise ValueError("Distillation requires a report with frozen distill intent")
+            if frozen["sourceInspectionSha256"] != current["inspectionSha256"]:
+                raise ValueError("Distillation does not match the frozen inspection")
+            evidence = {item["evidenceId"]: item for item in _mapping_sequence(current["inspection"].get("evidence"))}
+            target_keys = {target["targetKey"] for target in current["targets"]}
+            candidates = {row[0] for row in conn.execute("SELECT record_id FROM trace_optimization_records WHERE report_id=? AND record_kind='candidate'", (identifier,))}
+            for item in frozen["items"]:
+                if not set(item["evidenceIds"]) <= set(evidence):
+                    raise ValueError("Distillation references unknown current evidence")
+                if not set(item["candidateIds"]) <= candidates:
+                    raise ValueError("Distillation references another report's candidate")
+                if {source["evidenceId"] for source in item["sourceRefs"]} != set(item["evidenceIds"]):
+                    raise ValueError("Distillation sources must match its cited evidence")
+                for source in item["sourceRefs"]:
+                    row = evidence[source["evidenceId"]]
+                    if source["sourceSha256"] != _sha256(_canonical_json(row)) or source["sourceRef"] != row.get("sourceRef", ""):
+                        raise ValueError("Distillation source identity changed")
+                    associated_targets = {target["targetKey"] for target in current["targets"] if row.get("targetKey") == target["targetKey"] or row.get("traceId") in target["traceIds"]}
+                    if not set(source["targetKeys"]) <= target_keys or set(source["targetKeys"]) != associated_targets:
+                        raise ValueError("Distillation source is outside this report")
+            next_payload = {**current, "revision": int(current["revision"]) + 1, "distillation": frozen, "updatedAtMs": timestamp}
+            _persist_report_revision(conn, identifier, int(current["revision"]), next_payload, timestamp)
         return next_payload
 
     def authorize_repair(
@@ -768,7 +838,7 @@ class TraceDiagnosticReportStore:
                 "SELECT 1 FROM trace_diagnostic_reports WHERE report_id=?",
                 (identifier,),
             ).fetchone()
-            return _load_report(conn, identifier) if row is not None else None
+            return _project_report(conn, _load_report(conn, identifier), self.optimization_store) if row is not None else None
 
     def for_diagnostic_session(
         self,
@@ -790,7 +860,7 @@ class TraceDiagnosticReportStore:
                 (session_id,),
             ).fetchone()
             return (
-                _load_report(conn, str(row["report_id"]))
+                _project_report(conn, _load_report(conn, str(row["report_id"])), self.optimization_store)
                 if row is not None
                 else None
             )
@@ -901,7 +971,7 @@ class TraceDiagnosticReportStore:
                 """,
                 (normalized_kind, identifier, safe_limit),
             ).fetchall()
-            return [_load_report(conn, str(row["report_id"])) for row in rows]
+            return [_project_report(conn, _load_report(conn, str(row["report_id"])), self.optimization_store) for row in rows]
 
 
 def _normalize_targets(targets: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
@@ -1744,6 +1814,8 @@ def _validate_result(
                 "verification": _public_text(finding.get("verification"), 2000),
             }
         )
+        if "candidateIds" in finding:
+            findings[-1]["candidateIds"] = _strict_evidence_ids(finding["candidateIds"], "candidateIds", maximum=32)
     presentation = None
     if "presentation" not in normalized:
         if require_governed:
@@ -2020,6 +2092,14 @@ def _result_evidence_ids(result: Mapping[str, object]) -> list[str]:
     return values
 
 
+def _project_report(conn: sqlite3.Connection, payload: dict[str, object], optimization_store=None) -> dict[str, object]:
+    optimization = (optimization_store.read(str(payload["reportId"])) if optimization_store is not None else read_trace_optimization(conn, str(payload["reportId"])))
+    if any(optimization.get(key) for key in ("candidates", "comparisons", "applications", "executions")):
+        payload = {**payload, "optimization": optimization}
+    validate_contract(payload, "trace-diagnostic-report.v1.json")
+    return payload
+
+
 def _load_report(conn: sqlite3.Connection, report_id: str) -> dict[str, object]:
     row = conn.execute(
         """
@@ -2124,7 +2204,7 @@ def _report_summary(report: Mapping[str, object]) -> dict[str, object]:
         if authorization.get("state") == "authorized"
         else "not_recorded"
     )
-    return {
+    summary = {
         "reportId": str(report.get("reportId") or ""),
         "revision": int(report.get("revision") or 0),
         "status": str(report.get("status") or ""),
@@ -2138,6 +2218,10 @@ def _report_summary(report: Mapping[str, object]) -> dict[str, object]:
         "createdAtMs": int(report.get("createdAtMs") or 0),
         "updatedAtMs": int(report.get("updatedAtMs") or 0),
     }
+    for field in ("intent", "optimizationProjectId"):
+        if field in report:
+            summary[field] = report[field]
+    return summary
 
 
 def _unwrap_trace(value: Mapping[str, object] | None) -> Mapping[str, object] | None:

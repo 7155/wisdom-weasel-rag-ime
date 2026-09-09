@@ -97,7 +97,33 @@ describe('room collaboration mode planet expansion (UR-184)', () => {
     expect(roomCollaborationPlanetRequests(room)).toEqual([]);
     const settled = runningProjection(['participant-a', 'participant-b']);
     settled.turnsById['root']!.status = 'completed';
-    expect(roomCollaborationPlanetRequests(room, settled)).toEqual([]);
+    expect(roomCollaborationPlanetRequests(room, settled).map((request) => request.target.id))
+      .toEqual(['participant-a', 'participant-b']);
+  });
+
+  it('restores submitted partners in the current round without opening idle or historical partners', () => {
+    const room = roomWith([
+      participant('participant-old', 0),
+      participant('participant-a', 1),
+      participant('participant-b', 2),
+      participant('participant-idle', 3),
+    ]);
+    const projection = runningProjection(['participant-a', 'participant-b']);
+    projection.turnsById.root!.terminalParticipantIds = ['participant-a', 'participant-b'];
+    projection.turnOrder.unshift('old-root');
+    projection.turnsById['old-root'] = {
+      ...projection.turnsById.root!, id: 'old-root', rootId: 'old-root', status: 'completed',
+      participantIds: ['participant-old'], terminalParticipantIds: ['participant-old'],
+      messageIds: ['old-user'],
+    };
+
+    expect(roomCollaborationPlanetRequests(room, projection).map((request) => request.target.id))
+      .toEqual(['participant-a', 'participant-b']);
+    // A settled snapshot must recover the same windows and their results.
+    projection.turnsById.root!.status = 'completed';
+    expect(roomCollaborationPlanetRequests(room, projection).map((request) => request.target.id))
+      .toEqual(['participant-a', 'participant-b']);
+    expect([...roomProjectionRuntimeActiveParticipantIds(projection)]).toEqual([]);
   });
 
   it('unions disjoint partners from every running public root but excludes terminal and detached lanes', () => {

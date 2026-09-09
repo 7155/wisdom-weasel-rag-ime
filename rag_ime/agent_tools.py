@@ -371,20 +371,20 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "id": "trace_diagnostics",
         "domain": "agents",
-        "displayName": "Trace 诊断取证",
-        "description": "按最多 12 个 Session、Room 或运行读取公开 Runtime 记录，返回稳定证据 ID、关联 Trace 与八维客观评分输入",
+        "displayName": "Trace 诊断与改进",
+        "description": "按用户冻结的目标取证，检索持久经验，登记真实候选版本，并通过 Lab 运行验证；最终采用由 Trace App 用户操作",
         "when": (
             "任务需要诊断一个或多个 Agent 运行，比较失败、上下文、协作、Memory/RAG 或效率证据",
             "Trace Agent Skill 需要读取原对话，而不是只依赖 Session 搜索摘要",
         ),
         "notFor": (
-            "修改代码、配置、Prompt、评测标签或生产数据",
+            "直接安装候选、替换当前版本或由模型声明验证通过",
             "读取私密思维、原始 Provider context、密钥、完整 Tool 参数或机器 transcript 路径",
         ),
-        "input": "1 到 12 个有 kind、id、title 与可选 traceIds 的诊断对象",
-        "output": "有界时间线、canonical evidence ID、Trace/Eval 引用、硬门禁和八维确定性指标；缺失项明确为不可评分",
-        "does": "从 Runtime owner 读取并冻结多对象诊断切片；AI Judge 不能覆盖确定性指标。",
-        "operations": ("inspect",),
+        "input": "inspect: 1 到 12 个诊断对象；read/command: 当前诊断 reportId，以及有界检索参数或 command、clientRequestId、input",
+        "output": "冻结证据、持久经验、实际源码候选、Lab 工作与主机计算的比较结果；缺失验证明确标为待验证",
+        "does": "共用 Runtime 证据、Lab 执行和版本资源 owner；模型不提供评分回执，最终安装在 App 触发。",
+        "operations": ("inspect", "read", "command"),
         "alwaysAvailable": True,
         "resultPresentation": "citation",
     },
@@ -883,6 +883,29 @@ _KNOWLEDGE_RETRIEVAL_PARAMETER_SCHEMA: dict[str, object] = {
 }
 
 _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
+    "trace_diagnostics": {
+        "type": "object", "additionalProperties": False, "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["inspect", "read", "command"]},
+            "targets": {"type": "array", "minItems": 1, "maxItems": 12, "items": {
+                "type": "object", "additionalProperties": False, "required": ["kind", "id", "title"],
+                "properties": {"kind": {"type": "string", "enum": ["session", "room", "run"]},
+                    "id": {"type": "string"}, "title": {"type": "string"},
+                    "traceIds": {"type": "array", "items": {"type": "string"}}}}},
+            "reportId": {"type": "string", "minLength": 1},
+            "query": {"type": "string", "maxLength": 1000},
+            "patternId": {"type": "string"}, "revision": {"type": "integer", "minimum": 1},
+            "offset": {"type": "integer", "minimum": 0},
+            "command": {"type": "string", "enum": ["register_version", "register_plan", "prepare_candidate", "propose", "save_pattern", "prepare_distillation", "save_distillation", "run_candidate", "cancel_candidate", "compare"]},
+            "clientRequestId": {"type": "string", "minLength": 1, "maxLength": 240},
+            "input": {"type": "object"}, "candidateId": {"type": "string"},
+        },
+        "oneOf": [
+            {"properties": {"op": {"const": "inspect"}}, "required": ["op", "targets"]},
+            {"properties": {"op": {"const": "read"}}, "required": ["op", "reportId"]},
+            {"properties": {"op": {"const": "command"}}, "required": ["op", "reportId", "command", "clientRequestId"]},
+        ],
+    },
     "lab_project": {
         "type": "object",
         "oneOf": [
@@ -2440,7 +2463,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "runId", "batchId", "targetRunId", "message", "artifactId", "limit",
     ),
     "session_search": ("query", "limit", "includeArchived"),
-    "trace_diagnostics": ("targets",),
+    "trace_diagnostics": ("targets", "reportId", "query", "patternId", "revision", "offset", "command", "clientRequestId", "input", "candidateId"),
     "plugins": (
         "draftId", "manifest", "packageJson", "files", "sourcePath",
         "packageSource", "catalogId", "catalogVersion",
@@ -2516,6 +2539,8 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("memory", "review"): ("draftId",),
     ("agent_role_book", "propose_revision"): ("updates",),
     ("trace_diagnostics", "inspect"): ("targets",),
+    ("trace_diagnostics", "read"): ("reportId",),
+    ("trace_diagnostics", "command"): ("reportId", "command", "clientRequestId"),
     ("models", "profile_preview"): ("slot",),
     ("models", "profile_apply"): ("slot",),
     ("models", "profile_rollback"): ("sourceApprovalId",),
@@ -2942,6 +2967,10 @@ class TraceDiagnosticsService(Protocol):
         payload: Mapping[str, object],
     ) -> Mapping[str, object]: ...
 
+    def trace_optimization_read(self, report_id: str, payload: Mapping[str, object], *, session_id: str) -> Mapping[str, object]: ...
+
+    def trace_optimization_command(self, report_id: str, payload: Mapping[str, object], *, session_id: str) -> Mapping[str, object]: ...
+
 
 class ControlToolGateway:
     """Capability-scoped gateway over the existing control-plane services.
@@ -3088,6 +3117,14 @@ class ControlToolGateway:
             "sessionId": session_id,
             **self.workspace_harness.save_file(session, dict(payload or {})),
         }
+
+    def trace_optimization_capability_catalog(self) -> list[dict]:
+        """Installed built-in capabilities; this catalog grants no Session access."""
+        return [{"id": str(spec["id"]), "name": str(spec.get("displayName") or spec["id"]),
+                 "kind": "tool", "status": "installed", "version": "control-center-v1",
+                 "summary": str(spec.get("description") or ""),
+                 "capabilityKeys": [str(spec["id"]), *[str(op) for op in spec.get("operations", ())]]}
+                for spec in _TOOL_SPECS]
 
     def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
         # The runtime callback may retain a Prompt-time Session mapping. Reload
@@ -4098,10 +4135,27 @@ class ControlToolGateway:
         service = self.trace_diagnostics
         if service is None:
             raise ValueError("Trace diagnostics service is unavailable")
-        if operation != "inspect":
+        session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        report_id = _bounded_text(args.get("reportId"), maximum=240)
+        if operation in {"read", "command"} and not report_id:
+            raise ValueError("Trace optimization requires reportId")
+        if operation == "inspect":
+            targets = _strict_trace_diagnostic_targets(args.get("targets"))
+            payload = service.trace_diagnostic_inspection({"targets": targets, "_sessionId": session_id})
+        elif operation == "read":
+            payload = service.trace_optimization_read(
+                report_id,
+                {key: args[key] for key in ("query", "patternId", "revision", "offset") if key in args},
+                session_id=session_id,
+            )
+        elif operation == "command":
+            payload = service.trace_optimization_command(
+                report_id,
+                {key: args[key] for key in ("command", "clientRequestId", "input", "candidateId") if key in args},
+                session_id=session_id,
+            )
+        else:
             raise ValueError("unsupported trace_diagnostics operation")
-        targets = _strict_trace_diagnostic_targets(args.get("targets"))
-        payload = service.trace_diagnostic_inspection({"targets": targets})
         if not isinstance(payload, Mapping):
             raise ValueError("Trace diagnostics inspector returned an invalid payload")
         return dict(payload)
@@ -10484,7 +10538,7 @@ def _tool_profile_allows(
             }
         ),
         "session_search": frozenset({"search"}),
-        "trace_diagnostics": frozenset({"inspect"}),
+        "trace_diagnostics": frozenset({"inspect", "read"}),
         # Formal Room operations do not widen the workspace policy. Delegation,
         # stopping-point reads, evidence-backed review transitions, public
         # receipts, and direct intercom mutate Room collaboration state rather

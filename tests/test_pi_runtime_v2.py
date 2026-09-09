@@ -85,6 +85,7 @@ for line in sys.stdin:
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
                          "sessionControlState": True,
                          "sessionSkillAllowlist": True,
+                         "sessionCandidateSkillPaths": True,
                          "sessionPromptSettings": True,
                          "transientContext": True,
                          "statelessCompletion": True,
@@ -1104,6 +1105,53 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(opened["params"]["noContextFiles"])
         self.assertTrue(opened["params"]["piSkillsEnabled"])
         self.assertTrue(opened["params"]["codexSkillsEnabled"])
+
+    def test_candidate_skill_paths_reach_host_only_from_frozen_owner_policy(self) -> None:
+        workspace = self.root / "evaluation"
+        skill = workspace / ".pi" / "skills" / "candidate"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("---\nname: candidate\n---\nUse the frozen method.")
+        session_id = str(self.first["id"])
+        self.store.set_runtime_policy(session_id, mode="coordinator", tool_profile_version="subagent-readonly-v1", execution_mode="read_only", allowed_tools=[], workspace_roots=[str(workspace)], project_context_enabled=False, pi_skills_enabled=True, codex_skills_enabled=False)
+        self.runtime._skill_allowlist_provider = lambda _: ["candidate"]
+        self.runtime._candidate_skill_paths_provider = lambda _: [str(skill)]
+        opened = self.runtime.ensure(session_id)
+        self.assertEqual(opened["resourceSnapshot"]["candidateSkillPaths"], [str(skill.resolve())])
+        self.runtime.close_session(session_id)
+        self.runtime._candidate_skill_paths_provider = lambda _: [str(self.root / "outside")]
+        self.runtime.ensure(session_id)
+        requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        opens = [request["params"] for request in requests if request["method"] == "session.open"]
+        self.assertTrue(all(item["candidateSkillPaths"] == [str(skill.resolve())] for item in opens))
+        self.assertEqual(opens[0]["provider"], "openai-codex")
+
+    def test_candidate_skill_paths_reject_workspace_escape_and_unsupported_host(self) -> None:
+        workspace = self.root / "evaluation"
+        workspace.mkdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "SKILL.md").write_text("outside")
+        with self.assertRaisesRegex(PiRuntimeError, "isolated Session"):
+            self.runtime._candidate_skill_paths([str(outside)], str(workspace))
+        linked = workspace / "linked"
+        linked.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(PiRuntimeError, "isolated Session"):
+            self.runtime._candidate_skill_paths([str(linked)], str(workspace))
+        session_id = str(self.first["id"])
+        (workspace / "SKILL.md").write_text("not a scoped resource")
+        self.runtime._session_context_provider = lambda _: {"candidateSkillPaths": [str(outside)]}
+        self.runtime.ensure(session_id)
+        requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        self.assertNotIn("candidateSkillPaths", next(row["params"] for row in requests if row["method"] == "session.open"))
+        isolated = workspace / "skills" / "candidate"
+        isolated.mkdir(parents=True)
+        (isolated / "SKILL.md").write_text("candidate")
+        third = self.store.create(title="candidate", mode="coordinator", tool_profile_version="subagent-readonly-v1", execution_mode="read_only", workspace_roots=[str(workspace)], pi_skills_enabled=True)
+        self.runtime._skill_allowlist_provider = lambda _: ["candidate"]
+        self.runtime._candidate_skill_paths_provider = lambda _: [str(isolated)]
+        self.runtime._host_capabilities["sessionCandidateSkillPaths"] = False
+        with self.assertRaisesRegex(PiRuntimeError, "does not support isolated"):
+            self.runtime.ensure(str(third["id"]))
 
     def test_session_skill_allowlist_reaches_pi_session_open(self) -> None:
         session_id = str(self.first["id"])

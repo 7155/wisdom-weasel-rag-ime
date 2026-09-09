@@ -161,6 +161,8 @@ from .trace_runtime import (
     validate_trace_envelope,
 )
 from .trace_store import TraceStore
+from .trace_optimization import TraceOptimizationStore
+from .trace_optimization_versions import TraceOptimizationVersionStore
 from .trace_diagnostics import (
     TraceDiagnosticReportStore,
     extract_trace_diagnostic_result,
@@ -397,7 +399,19 @@ class AgentService:
             initialize_trace_store()
         self.eval_runs = EvalRunStore(db_path)
         self.eval_runs.initialize()
-        self.trace_diagnostic_reports = TraceDiagnosticReportStore(db_path)
+        self.trace_optimization_versions = TraceOptimizationVersionStore(db_path)
+        self.trace_optimizations = TraceOptimizationStore(
+            db_path,
+            version_reader=self.trace_optimization_versions.resolve,
+            application_reader=self.trace_optimization_versions.application_receipt,
+        )
+        self._trace_optimization_app = None
+        self._trace_optimization_lock = RLock()
+        self._trace_optimization_extensions = None
+        self._trace_optimization_capability_reader = None
+        self.trace_diagnostic_reports = TraceDiagnosticReportStore(
+            db_path, optimization_store=self.trace_optimizations,
+        )
         self.trace_diagnostic_reports.initialize()
         # Trace repair evidence and receipts are a Runtime-owned authority,
         # separate from the bounded Observation journal.  The HTTP surface
@@ -448,6 +462,7 @@ class AgentService:
                 tool_gateway_url=self.tool_gateway_url,
                 tool_manifest_provider=self._runtime_tool_manifest,
                 skill_allowlist_provider=self._runtime_skill_allowlist,
+                candidate_skill_paths_provider=self._runtime_candidate_skill_paths,
                 compaction_observer=self._checkpoint_runtime_compaction,
                 prompt_settings_provider=self._runtime_prompt_settings,
             ),
@@ -1122,6 +1137,9 @@ class AgentService:
         session_id = str(session.get("id") or "").strip()
         if session_id:
             session = self.sessions.get(session_id)
+        optimization_policy = self._optimization_application().session_policy(session)
+        if optimization_policy is not None:
+            return list(optimization_policy["skillIds"])
         if (
             session_id
             and not str(session.get("ownerAppId") or "").strip()
@@ -1483,7 +1501,14 @@ class AgentService:
         }
 
     def _runtime_prompt_settings(self, _session: Mapping[str, object]) -> Mapping[str, object]:
+        optimization_policy = self._optimization_application().session_policy(_session)
+        if optimization_policy is not None:
+            return dict(optimization_policy["promptSettings"])
         return self.configuration_store.snapshot()["configuration"]["prompts"]
+
+    def _runtime_candidate_skill_paths(self, session: Mapping[str, object]) -> list[str]:
+        optimization_policy = self._optimization_application().session_policy(session)
+        return list(optimization_policy["candidateSkillPaths"]) if optimization_policy is not None else []
 
     def update_configuration(self, payload: Mapping[str, object]) -> dict[str, object]:
         with self._configuration_lock:
@@ -4710,6 +4735,14 @@ class AgentService:
         if not isinstance(raw_targets, Sequence) or isinstance(raw_targets, (str, bytes, bytearray)):
             raise ValueError("Trace diagnostic targets must be an array")
         targets = _strict_trace_diagnostic_targets(raw_targets)
+        session_id = str(payload.get("_sessionId") or "")
+        if session_id:
+            owned = self.trace_diagnostic_reports.for_diagnostic_session(session_id)
+            if owned is not None:
+                identity = lambda rows: [(row["kind"], row["id"], tuple(row.get("traceIds") or [])) for row in rows]
+                if identity(targets) != identity(owned["targets"]):
+                    raise ValueError("inspection targets differ from the user-selected report")
+                return dict(owned["inspection"])
 
         def trace_reader(trace_id: str) -> Mapping[str, object] | None:
             try:
@@ -4737,6 +4770,7 @@ class AgentService:
             trace_reader=trace_reader,
             eval_reader=eval_reader,
             environment_reader=environment_reader,
+            intent=payload.get("intent"),
         )
 
     def create_trace_diagnostic_report(
@@ -4767,11 +4801,16 @@ class AgentService:
             ],
         )
         title = str(payload.get("title") or "Trace 诊断报告")
+        project_id = self._optimization_application().ensure_project(
+            self._trace_diagnostic_project_roots(inspection["targets"])
+        )
         return self.trace_diagnostic_reports.create(
             diagnostic_session_id=diagnostic_session_id,
             title=title,
             targets=inspection["targets"],
             inspection=inspection,
+            intent=inspection.get("intent"),
+            optimization_project_id=project_id,
         )
 
     def finalize_trace_diagnostic_report(
@@ -4826,11 +4865,13 @@ class AgentService:
                 reason="诊断 Session 未生成可校验的结构化报告。",
             )
         try:
-            return self.trace_diagnostic_reports.complete(
+            completed = self.trace_diagnostic_reports.complete(
                 report_id,
                 expected_revision=expected_revision,
                 result=result,
             )
+            self._optimization_application().record_report(completed)
+            return completed
         except ValueError as exc:
             if not str(exc).startswith("unknown evidenceId:"):
                 raise
@@ -5151,7 +5192,59 @@ class AgentService:
         report = self.trace_diagnostic_reports.get(report_id)
         if report is None:
             raise KeyError(report_id)
-        return self._reconcile_trace_diagnostic_report(report)
+        report = self._reconcile_trace_diagnostic_report(report)
+        if report.get("optimizationProjectId"):
+            app = self._optimization_application()
+            app.reconcile(report_id)
+            app.record_report(report)
+            return self.trace_diagnostic_reports.get(report_id)
+        return report
+
+    def bind_trace_optimization_services(self, extensions, capability_reader) -> None:
+        self._trace_optimization_extensions = extensions
+        self._trace_optimization_capability_reader = capability_reader
+
+    def _optimization_application(self):
+        from .trace_optimization_application import TraceOptimizationApplication
+        with self._trace_optimization_lock:
+            if self._trace_optimization_app is None:
+                self._trace_optimization_app = TraceOptimizationApplication(self)
+            return self._trace_optimization_app
+
+    def trace_optimization_library(self, payload: Mapping[str, object]) -> dict:
+        return self._optimization_application().library(payload)
+
+    def trace_optimization_capabilities(self) -> dict:
+        return self._optimization_application().capabilities()
+
+    def _assert_trace_optimization_session(self, report_id: str, session_id: str) -> dict:
+        report = self.trace_diagnostic_reports.get(report_id)
+        if report is None:
+            raise KeyError(report_id)
+        if session_id != report["diagnosticSessionId"]:
+            raise ValueError("Trace optimization requires this report's diagnostic Session")
+        session = self.sessions.get(session_id)
+        if not _trace_diagnostic_session_policy_active(session, expected_surface_key="diagnostic"):
+            raise ValueError("Trace optimization requires the diagnostic Session policy")
+        self._assert_trace_diagnostic_project_binding(
+            session, report["targets"],
+            frozen_environment=report["inspection"].get("environment"),
+        )
+        return report
+
+    def trace_optimization_read(self, report_id: str, payload: Mapping[str, object], *, session_id: str) -> dict:
+        self._assert_trace_optimization_session(report_id, session_id)
+        return self._optimization_application().read(report_id, payload)
+
+    def trace_optimization_command(self, report_id: str, payload: Mapping[str, object], *, session_id: str = "") -> dict:
+        operation = str(payload.get("operation") or payload.get("command") or "")
+        if session_id:
+            self._assert_trace_optimization_session(report_id, session_id)
+            if operation == "candidate_action":
+                raise ValueError("installation and adoption are owned by the user's Trace App action")
+        elif operation not in {"candidate_action", "run_candidate", "cancel_candidate"}:
+            raise ValueError("this operation requires the bound diagnostic Session")
+        return self._optimization_application().command(report_id, payload)
 
     def list_trace_diagnostic_reports(
         self,
@@ -6507,6 +6600,7 @@ class AgentService:
                 tool_gateway_url=self.tool_gateway_url,
                 tool_manifest_provider=self._runtime_tool_manifest,
                 skill_allowlist_provider=self._runtime_skill_allowlist,
+                candidate_skill_paths_provider=self._runtime_candidate_skill_paths,
                 compaction_observer=self._checkpoint_runtime_compaction,
                 prompt_settings_provider=self._runtime_prompt_settings,
             ),
@@ -6529,6 +6623,7 @@ class AgentService:
                 tool_gateway_url=self.tool_gateway_url,
                 tool_manifest_provider=self._runtime_tool_manifest,
                 skill_allowlist_provider=self._runtime_skill_allowlist,
+                candidate_skill_paths_provider=self._runtime_candidate_skill_paths,
                 compaction_observer=self._checkpoint_runtime_compaction,
                 prompt_settings_provider=self._runtime_prompt_settings,
             ),

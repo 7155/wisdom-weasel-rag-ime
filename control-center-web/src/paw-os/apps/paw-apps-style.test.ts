@@ -823,7 +823,7 @@ describe('PAWOS semantic type roles', () => {
     expect(roomMigratedCss).not.toContain('filter: saturate(.82)');
     expect(roomMigratedCss).not.toContain('opacity: .88');
     expect(roomMigratedCss).toMatch(
-      /\.paw-window-shell\[data-frame-mode='planet'\] > \.paw-planet-surface\s*\{[^}]*background:\s*#fff;[^}]*color:\s*#202834;/s,
+      /\.paw-window-shell\[data-frame-mode='planet'\] > \.paw-planet-surface\s*\{[^}]*background:\s*var\(--paw-stellar-surface, #fff\);[^}]*color:\s*var\(--paw-stellar-ink, #202834\);/s,
     );
   });
 

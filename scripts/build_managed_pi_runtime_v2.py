@@ -146,6 +146,35 @@ _SESSION_RUNTIME_SOURCE_KEYS = (
 # is a PAW policy that must execute inside the Host loader. Apply this
 # fail-closed overlay only to the copied build input. This script is included
 # in the content-addressed Runtime version digest.
+_CANDIDATE_SKILL_PATHS_SOURCE = r'''async function optionalCandidateSkillPaths(params: Record<string, unknown>, cwd: string): Promise<string[] | undefined> {
+    const value = params.candidateSkillPaths;
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length < 1 || value.length > 8
+        || params.piSkillsEnabled !== true || params.noContextFiles !== true
+        || !Array.isArray(params.skillAllowlist) || params.skillAllowlist.length < 1) {
+        throw new RuntimeProtocolError("INVALID_PARAMS", "Candidate Skills require an isolated explicit Session resource policy");
+    }
+    const root = await realpath(cwd);
+    const paths: string[] = [];
+    for (const item of value) {
+        if (typeof item !== "string" || item.length > 4096 || !pathIsAbsolute(item)) {
+            throw new RuntimeProtocolError("INVALID_PARAMS", "Candidate Skill path must be absolute");
+        }
+        const canonical = await realpath(item);
+        const entry = await realpath(join(canonical, "SKILL.md"));
+        if (canonical === root || !isInside(root, canonical) || !isInside(canonical, entry)
+            || !(await stat(canonical)).isDirectory() || !(await stat(entry)).isFile()
+            || paths.includes(canonical)) {
+            throw new RuntimeProtocolError("INVALID_PARAMS", "Candidate Skill must stay inside its isolated Session workspace");
+        }
+        paths.push(canonical);
+    }
+    return paths;
+}
+
+'''
+
+
 _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
     str,
     tuple[tuple[str, str], ...],
@@ -156,7 +185,13 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\tactivePluginDir: string;\n"
             "\tskillPaths: string[];\n"
             "\tskillAllowlist?: string[];\n"
+            "\tcandidateSkillPaths?: string[];\n"
             "\tcompactionInstructions?: string;",
+        ),
+        (
+            "\t\tconst selectedSkillPaths = [",
+            "\t\t// Only authenticated Session resource policy can replace these roots.\n"
+            "\t\tconst selectedSkillPaths = options.candidateSkillPaths ?? [",
         ),
         (
             "\t\tconst settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: true });",
@@ -242,13 +277,15 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\t}\n"
             "\treturn names;\n"
             "}\n\n"
-            "function requiredBoolean",
+            + _CANDIDATE_SKILL_PATHS_SOURCE
+            + "function requiredBoolean",
         ),
         (
             "\t\t\t\t\t\tsessionControlState: true,\n"
             "\t\t\t\t\t\tsessionSnapshot: true,",
             "\t\t\t\t\t\tsessionControlState: true,\n"
             "\t\t\t\t\t\tsessionSkillAllowlist: true,\n"
+            "\t\t\t\t\t\tsessionCandidateSkillPaths: true,\n"
             "\t\t\t\t\t\tsessionPromptSettings: true,\n"
             "\t\t\t\t\t\tsessionSnapshot: true,",
         ),
@@ -259,6 +296,7 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\t\t\t\t\t\tcodexSkillsEnabled: optionalBoolean("
             'params, "codexSkillsEnabled"),\n'
             "\t\t\t\t\t\tskillAllowlist: optionalSkillAllowlist(params),\n"
+            "\t\t\t\t\t\tcandidateSkillPaths: await optionalCandidateSkillPaths(params, cwd),\n"
             "\t\t\t\t\t\tcompactionInstructions: optionalCompactionInstructions(params),\n"
             "\t\t\t\t\t\tmodelRuntime: this.modelRuntime,",
         ),

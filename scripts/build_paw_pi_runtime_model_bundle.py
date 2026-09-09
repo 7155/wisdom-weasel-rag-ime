@@ -24,11 +24,11 @@ APP_SUPPORT = Path.home() / "Library" / "Application Support" / "RagIme"
 
 AUTHORITY_FILES = (
     "AGENTS.md",
-    "PROJECT.md",
-    "OUTCOMES.md",
-    "CONTEXT.md",
-    "DECISIONS.md",
-    "ARCHITECTURE.md",
+    "docs/project/PROJECT.md",
+    "docs/project/OUTCOMES.md",
+    "docs/project/CONTEXT.md",
+    "docs/project/DECISIONS.md",
+    "docs/project/ARCHITECTURE.md",
     "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md",
 )
 AUTHORITY_GLOBS = (

@@ -125,7 +125,8 @@ The final envelope contains exactly:
       "confidence": "high | medium | low | unknown",
       "evidenceIds": [],
       "candidateRepair": "unapplied proposal",
-      "verification": "checks required after authorization"
+      "verification": "checks required to establish the effect",
+      "candidateIds": []
     }
   ]
 }

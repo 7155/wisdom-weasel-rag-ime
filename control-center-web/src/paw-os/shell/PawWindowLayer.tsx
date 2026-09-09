@@ -123,21 +123,10 @@ export function PawWindowLayer() {
     [focusedRoomId, windows],
   );
   const focusedRoomMain = focusedRoomNodes.find((node) => node.target?.kind === 'room' && !node.target.panel);
-  const roomFocusRail = useMemo(() => {
-    const main = focusedRoomMain && focusFrames.get(focusedRoomMain.id);
-    if (!main || overviewOpen) return null;
-    const entries = focusedRoomPlanets.flatMap((node) => {
-      const frame = focusFrames.get(node.id);
-      return frame ? [{ id: node.id, frame }] : [];
-    });
-    if (!entries.length || !entries.every(({ frame }) => frame.y >= main.y + main.height)) return null;
-    const top = Math.min(...entries.map(({ frame }) => frame.y));
-    return {
-      ids: new Set(entries.map(({ id }) => id)), top,
-      height: Math.max(...entries.map(({ frame }) => frame.y + frame.height)) - top + 12,
-      width: Math.max(viewport.width, ...entries.map(({ frame }) => frame.x + frame.width + 10)),
-    };
-  }, [focusFrames, focusedRoomMain, focusedRoomPlanets, overviewOpen, viewport.width]);
+  const roomFocusRegions = useMemo(() => focusedRoomMain && !overviewOpen
+    ? roomFocusPartnerRegions(computedFocusFrames, viewport)
+    : [], [computedFocusFrames, focusedRoomMain, overviewOpen, viewport]);
+  const roomFocusRegionIds = useMemo(() => new Set(roomFocusRegions.flatMap((region) => region.windowIds)), [roomFocusRegions]);
   const focusedRoomProjection = focusedRoomId ? projections[focusedRoomId] : undefined;
   const focusedRoomStatus = roomFocusStatus(focusedRoomProjection);
   const flowWindows = useMemo(() => Object.fromEntries(Object.entries(windows).map(([id, node]) => [
@@ -257,7 +246,7 @@ export function PawWindowLayer() {
             {keptRoomIds.map((roomId) => <PawRoomProjectionKeeper key={roomId} roomId={roomId} />)}
           </Suspense>
         ) : null}
-        {ids.filter((id) => !roomFocusRail?.ids.has(id)).map((id) => (
+        {ids.filter((id) => !roomFocusRegionIds.has(id)).map((id) => (
           <PawWindow
             collaborationFocusGroup={collaborationFocusGroup}
             flowState={flowPulse.targetWindowIds.has(id) ? 'arrival' : flowPulse.sourceWindowIds.has(id) ? 'source' : undefined}
@@ -271,27 +260,29 @@ export function PawWindowLayer() {
             windowId={id}
           />
         ))}
-        {roomFocusRail ? <section
-          aria-label={`伙伴窗口，横向滚动查看全部 ${roomFocusRail.ids.size} 个窗口`}
+        {roomFocusRegions.map((region) => <section
+          aria-label={`${region.key === 'left' ? '左侧' : region.key === 'right' ? '右侧' : ''}伙伴窗口，纵向滚动查看全部 ${region.windowIds.length} 个窗口`}
           className="paw-room-focus-satellite-rail"
+          data-position={region.key}
+          key={region.key}
           onKeyDown={(event) => {
-            if (event.target !== event.currentTarget || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+            if (event.target !== event.currentTarget || !['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(event.key)) return;
             event.preventDefault();
-            event.currentTarget.scrollBy({ left: (event.key === 'ArrowLeft' ? -1 : 1) * event.currentTarget.clientWidth * .8 });
+            event.currentTarget.scrollBy({ top: (['ArrowUp', 'PageUp'].includes(event.key) ? -1 : 1) * event.currentTarget.clientHeight * .8 });
           }}
-          style={{ height: roomFocusRail.height, top: roomFocusRail.top }}
+          style={{ left: region.bounds.x, top: region.bounds.y, width: region.bounds.width, height: region.bounds.height }}
           tabIndex={0}
-        ><div className="paw-room-focus-satellite-track" style={{ width: roomFocusRail.width }}>
-          {[...roomFocusRail.ids].map((id) => {
+        ><div className="paw-room-focus-satellite-track" style={{ height: region.contentHeight }}>
+          {region.windowIds.map((id) => {
             const frame = focusFrames.get(id)!;
             return <PawWindow collaborationFocusGroup={collaborationFocusGroup}
               flowState={flowPulse.targetWindowIds.has(id) ? 'arrival' : flowPulse.sourceWindowIds.has(id) ? 'source' : undefined}
-              focusFrame={{ ...frame, y: frame.y - roomFocusRail.top }} key={id}
-              onFocusFrameCommit={(windowId, bounds) => commitFocusFrame(windowId, { ...bounds, y: bounds.y + roomFocusRail.top })}
+              focusFrame={{ ...frame, x: frame.x - region.bounds.x, y: frame.y - region.bounds.y }} key={id}
+              onFocusFrameCommit={(windowId, bounds) => commitFocusFrame(windowId, { ...bounds, x: bounds.x + region.bounds.x, y: bounds.y + region.bounds.y })}
               onDismissInspector={closeFocusInspector} onDetachInspector={detachFocusInspector}
               overview={false} windowId={id} />;
           })}
-        </div></section> : null}
+        </div></section>)}
       </div>
     </FeatureDesktopProvider>
   );
@@ -627,44 +618,98 @@ export function layoutCollaborationFocus(
   return frames;
 }
 
-/** Each admitted or explicitly opened partner has its own retained window.
- * Keep the main composer outside the partner area at every viewport size. */
+const ROOM_FOCUS_INSET = 10;
+const ROOM_FOCUS_GAP = 12;
+const ROOM_FOCUS_SCROLL_GUTTER = 16;
+const ROOM_FOCUS_PARTNER_HEIGHT = 280;
+
+/** Keep a centered reading column, with retained partners on both sides.
+ * A narrow viewport moves partners into a bounded, vertically scrolling grid. */
 function layoutRoomCollaborationFocus(
   nodes: PawWindowNode[],
   main: PawWindowNode,
   viewport: { width: number; height: number },
   reserved: CollaborationFocusReservation,
 ): Map<string, PawWindowBounds> {
-  const inset = 10;
-  const gap = 12;
+  const inset = ROOM_FOCUS_INSET;
+  const gap = ROOM_FOCUS_GAP;
   const top = Math.max(0, reserved.modeBarHeight ?? 0) + 48 + inset;
   const width = Math.max(PAW_WINDOW_MIN_WIDTH, viewport.width - inset * 2);
   const height = Math.max(PAW_WINDOW_MIN_HEIGHT, viewport.height - top - inset);
   const partners = nodes.filter((node) => node.target?.kind === 'participant' && !node.minimized);
   const frames = new Map<string, PawWindowBounds>([[main.id, { x: inset, y: top, width, height }]]);
   if (!partners.length) return frames;
-  const rowsAvailable = Math.max(1, Math.floor((height + gap) / (PAW_WINDOW_MIN_HEIGHT + gap)));
-  const columns = Math.ceil(partners.length / rowsAvailable);
-  const partnerWidth = Math.min(420, (width - 640 - columns * gap) / columns);
-  if (partnerWidth >= PAW_WINDOW_MIN_WIDTH) {
-    const mainWidth = width - columns * (partnerWidth + gap);
-    frames.set(main.id, { x: inset, y: top, width: mainWidth, height });
-    const rows = Math.ceil(partners.length / columns);
-    const partnerHeight = (height - (rows - 1) * gap) / rows;
-    partners.forEach((node, index) => frames.set(node.id, {
-      x: inset + mainWidth + gap + (index % columns) * (partnerWidth + gap),
-      y: top + Math.floor(index / columns) * (partnerHeight + gap), width: partnerWidth, height: partnerHeight,
-    }));
+  const minimumSideWidth = PAW_WINDOW_MIN_WIDTH + ROOM_FOCUS_SCROLL_GUTTER;
+  if (width >= 640 + 2 * (minimumSideWidth + gap)) {
+    const mainWidth = Math.min(800, Math.max(640, width * .48), width - 2 * (minimumSideWidth + gap));
+    const mainX = (viewport.width - mainWidth) / 2;
+    const sideWidth = Math.min(440, (width - mainWidth - gap * 2) / 2);
+    const rows = Math.ceil(partners.length / 2);
+    const partnerHeight = Math.max(ROOM_FOCUS_PARTNER_HEIGHT, Math.min(480, (height - (rows - 1) * gap) / rows));
+    frames.set(main.id, { x: mainX, y: top, width: mainWidth, height });
+    partners.forEach((node, index) => {
+      const side = index % 2;
+      const sideCount = side ? Math.floor(partners.length / 2) : rows;
+      const sideHeight = sideCount * partnerHeight + (sideCount - 1) * gap;
+      frames.set(node.id, {
+        x: side ? mainX + mainWidth + gap : mainX - gap - sideWidth,
+        y: top + Math.max(0, (height - sideHeight) / 2) + Math.floor(index / 2) * (partnerHeight + gap),
+        width: sideWidth - ROOM_FOCUS_SCROLL_GUTTER,
+        height: partnerHeight,
+      });
+    });
   } else {
-    const partnerHeight = Math.max(PAW_WINDOW_MIN_HEIGHT, Math.min(260, Math.round(height * .36)));
-    const railTop = viewport.height - inset - partnerHeight - 12;
-    frames.set(main.id, { x: inset, y: top, width, height: Math.max(PAW_WINDOW_MIN_HEIGHT, railTop - top - gap) });
-    const railWidth = Math.min(360, width);
+    const mainWidth = Math.min(800, width);
+    const partnerAreaHeight = Math.min(360, Math.max(ROOM_FOCUS_PARTNER_HEIGHT, height * .42));
+    const mainHeight = Math.max(PAW_WINDOW_MIN_HEIGHT, height - partnerAreaHeight - gap);
+    const columns = Math.min(partners.length, width >= 2 * 320 + gap + ROOM_FOCUS_SCROLL_GUTTER ? 2 : 1);
+    const gridWidth = Math.min(width, columns * 520 + (columns - 1) * gap + ROOM_FOCUS_SCROLL_GUTTER);
+    const gridX = (viewport.width - gridWidth) / 2;
+    const partnerWidth = (gridWidth - ROOM_FOCUS_SCROLL_GUTTER - (columns - 1) * gap) / columns;
+    const partnerHeight = Math.max(ROOM_FOCUS_PARTNER_HEIGHT, Math.min(360, viewport.height - inset - top - mainHeight - gap));
+    frames.set(main.id, { x: (viewport.width - mainWidth) / 2, y: top, width: mainWidth, height: mainHeight });
     partners.forEach((node, index) => frames.set(node.id, {
-      x: inset + index * (railWidth + gap), y: railTop, width: railWidth, height: partnerHeight,
+      x: gridX + (index % columns) * (partnerWidth + gap),
+      y: top + mainHeight + gap + Math.floor(index / columns) * (partnerHeight + gap),
+      width: partnerWidth, height: partnerHeight,
     }));
   }
   return frames;
+}
+
+export type RoomFocusPartnerRegion = {
+  key: 'left' | 'right' | 'bottom';
+  windowIds: string[];
+  bounds: PawWindowBounds;
+  contentHeight: number;
+};
+
+/** Region geometry comes from the automatic layout, so resizing an observer
+ * cannot move a scrolling region or cover the main Room composer. */
+export function roomFocusPartnerRegions(
+  frames: ReadonlyMap<string, PawWindowBounds>,
+  viewport: { width: number; height: number },
+): RoomFocusPartnerRegion[] {
+  const [mainEntry, ...partners] = [...frames];
+  if (!mainEntry || !partners.length) return [];
+  const main = mainEntry[1];
+  const groups = new Map<RoomFocusPartnerRegion['key'], Array<[string, PawWindowBounds]>>();
+  for (const entry of partners) {
+    const frame = entry[1];
+    const key = frame.x + frame.width <= main.x ? 'left'
+      : frame.x >= main.x + main.width ? 'right' : 'bottom';
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+  return [...groups].map(([key, entries]) => {
+    const x = Math.min(...entries.map(([, frame]) => frame.x));
+    const y = key === 'bottom' ? main.y + main.height + ROOM_FOCUS_GAP : main.y;
+    const width = Math.max(...entries.map(([, frame]) => frame.x + frame.width)) - x + ROOM_FOCUS_SCROLL_GUTTER;
+    const height = Math.max(1, viewport.height - ROOM_FOCUS_INSET - y);
+    return {
+      key, windowIds: entries.map(([id]) => id), bounds: { x, y, width, height },
+      contentHeight: Math.max(height, ...entries.map(([, frame]) => frame.y + frame.height - y)),
+    };
+  });
 }
 
 function usesHorizontalFocusRail(
@@ -747,14 +792,16 @@ export function normalizeCollaborationFocusFrames(
 ): Map<string, PawWindowBounds> {
   const entries = [...computed];
   const main = entries[0]?.[1];
+  const regions = containRoomFrames ? roomFocusPartnerRegions(computed, viewport) : [];
   return new Map(entries.map(([id, frame], index) => {
     if (!containRoomFrames) return [id, overrides[id] ?? frame];
     if (!main || index === 0 || !overrides[id]) return [id, frame];
-    const rail = frame.y >= main.y + main.height;
-    const left = rail ? 0 : main.x + main.width + 12;
-    const top = rail ? main.y + main.height + 12 : main.y;
-    const right = rail ? Math.max(viewport.width, ...entries.map(([, value]) => value.x + value.width + 10)) : viewport.width - 10;
-    const bottom = viewport.height - (rail ? 22 : 10);
+    const region = regions.find((value) => value.windowIds.includes(id));
+    if (!region) return [id, frame];
+    const left = region.bounds.x;
+    const top = region.bounds.y;
+    const right = region.bounds.x + region.bounds.width - ROOM_FOCUS_SCROLL_GUTTER;
+    const bottom = region.bounds.y + region.contentHeight;
     const bounds = overrides[id]!;
     const width = Math.min(Math.max(PAW_WINDOW_MIN_WIDTH, bounds.width), right - left);
     const height = Math.min(Math.max(PAW_WINDOW_MIN_HEIGHT, bounds.height), bottom - top);
@@ -1049,8 +1096,10 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
           <div className="paw-planet-surface" data-flow-state={flowState}>
             <header className="paw-planet-identity" onPointerDown={focusLocked ? undefined : drag}>
               <span aria-hidden="true" className="paw-planet-identity-mark" />
-              <strong>{title}</strong>
-              {subtitle ? <small>{subtitle}</small> : null}
+              <div className="paw-planet-identity-copy">
+                <strong>{title}</strong>
+                {subtitle ? <small title={subtitle}>{subtitle}</small> : null}
+              </div>
               <div className="paw-planet-model-slot" ref={setWindowChromeTarget} />
               {onDetach ? <button aria-label={`在独立窗口打开${title}`} className="paw-planet-detach" onClick={onDetach} type="button"><ExternalLink aria-hidden="true" size={14} /></button> : null}
               <button

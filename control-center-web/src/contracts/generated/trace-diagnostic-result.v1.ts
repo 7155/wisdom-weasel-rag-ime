@@ -154,6 +154,10 @@ export interface CausalLink {
   explanation: string;
 }
 export interface Finding {
+  /**
+   * @maxItems 32
+   */
+  candidateIds?: string[];
   findingId: string;
   dimensionId: DimensionId;
   severity: 'critical' | 'high' | 'medium' | 'low';

@@ -197,7 +197,7 @@ describe('Trace diagnostic report reading contract', () => {
     expect(report?.textContent).toContain('模板提示');
     expect(report?.textContent).toContain('模型能力');
     expect(report?.textContent).toContain('下一步怎么做');
-    expect(report?.textContent).toContain('为什么失败？');
+    expect(report?.textContent).toContain('发现了什么，为什么这样判断');
     expect(report?.textContent).toContain('[E1]');
     expect(report?.textContent).toContain('settlement（会话结算）');
     expect(appendix?.textContent).toContain('完整时间线');
@@ -210,18 +210,20 @@ describe('Trace diagnostic report reading contract', () => {
     const scanLayer = document.querySelector('.trace-audit__scan-layer');
     expect(scanLayer?.textContent).not.toContain('evidence:runtime-timeout');
     expect(scanLayer?.textContent).not.toContain('11 分钟');
-    expect(scanLayer?.textContent).toContain('当前报告契约没有单独冻结阶段回执');
+    expect(scanLayer?.textContent).toContain('未记录关注方向');
+    expect(scanLayer?.textContent).toContain('尚无同条件的原版 / 候选对照');
+    expect(scanLayer?.querySelector('.trace-audit__attribution')).toBeNull();
     expect(appendix?.textContent).toContain('11 分钟');
     expect(appendix?.textContent).toContain('阶段回执');
     expect(appendix?.textContent).toContain('evidence:runtime-timeout');
 
     const scanOrder = [
-      '.trace-audit__tldr',
-      '.trace-audit__attribution',
-      '.trace-audit__knowledge',
-      '.trace-audit__actions',
-      '.trace-audit__findings',
-      '.trace-audit__cause-chain',
+      '#trace-reading-objective',
+      '#trace-reading-conclusion',
+      '#trace-reading-findings',
+      '#trace-reading-changes',
+      '#trace-reading-validation',
+      '#trace-reading-decision',
     ].map((selector) => document.querySelector(selector));
     expect(scanOrder.every(Boolean)).toBe(true);
     scanOrder.slice(0, -1).forEach((element, index) => {
@@ -231,7 +233,7 @@ describe('Trace diagnostic report reading contract', () => {
 
     document.querySelectorAll('[aria-labelledby]').forEach((element) => {
       const id = element.getAttribute('aria-labelledby');
-      expect(id).toMatch(/^trace-audit-[a-z0-9-]+$/);
+      expect(id).toMatch(/^trace-(audit|reading)-[a-z0-9-]+$/);
       expect(document.getElementById(id ?? '')).not.toBeNull();
     });
   });

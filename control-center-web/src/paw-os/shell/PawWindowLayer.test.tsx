@@ -163,7 +163,7 @@ describe('PAWOS compositor window frame', () => {
     expect(groups[0]?.packets.map((packet) => packet.id)).toEqual(['activity:dispatch-a']);
   });
 
-  it.each([{ width: 1280, height: 720 }, { width: 934, height: 867 }])(
+  it.each([{ width: 1280, height: 720 }, { width: 934, height: 867 }, { width: 390, height: 720 }])(
     'restores every opened partner at $width×$height and activates or collapses only its own window',
     async ({ width, height }) => {
       const original = { width: window.innerWidth, height: window.innerHeight };
@@ -193,8 +193,9 @@ describe('PAWOS compositor window frame', () => {
         fireEvent.keyDown(within(first).getByRole('button', { name: '调整窗口右边缘' }), { key: 'ArrowLeft' });
         expect(Number.parseFloat(first.style.width)).toBeLessThan(firstWidth);
         const inspectedMainWidth = main.style.width;
-        if (width < 1120) expect(screen.getByRole('region', { name: '伙伴窗口，横向滚动查看全部 4 个窗口' })).toBeInTheDocument();
-        else expect(Number.parseFloat(inspectedMainWidth)).toBeGreaterThanOrEqual(640);
+        expect(screen.getAllByRole('region', { name: /伙伴窗口，纵向滚动查看/ })).toHaveLength(width >= 1260 ? 2 : 1);
+        expect(screen.queryByRole('region', { name: /横向滚动查看/ })).not.toBeInTheDocument();
+        expect(Number.parseFloat(inspectedMainWidth)).toBeGreaterThanOrEqual(Math.min(640, width - 20));
 
         fireEvent.click(within(bar).getByRole('button', { name: '伙伴 2' }));
         const second = await screen.findByRole('region', { name: '伙伴 2窗口' });
@@ -215,7 +216,7 @@ describe('PAWOS compositor window frame', () => {
         for (let index = 1; index <= 4; index += 1) {
           const restored = screen.getByRole('region', { name: `伙伴 ${index}窗口` });
           expect(restored).not.toHaveAttribute('data-focus-layout');
-          expect(restored.style.width).toBe('420px');
+          expect(restored.style.width).toBe(`${Math.min(420, width - 16)}px`);
         }
       } finally {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: original.width });

@@ -8,6 +8,7 @@ export type PawOsAppId =
   | 'input-studio'
   | 'app-center'
   | 'system-monitor'
+  | 'trace-agent'
   | 'eval-lab'
   | 'system-settings'
   | 'files'
@@ -106,11 +107,21 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     id: 'system-monitor',
     label: 'System Monitor',
     shortLabel: '监控',
-    routeIds: ['context-debug', 'observability', 'trace-agent', 'diagnostics'],
+    routeIds: ['context-debug', 'observability', 'diagnostics'],
     defaultRouteId: 'observability',
     presentation: 'system',
     accent: 'cyan',
     tagline: '上下文、运行记录与问题排查',
+  },
+  {
+    id: 'trace-agent',
+    label: 'Trace Agent',
+    shortLabel: '优化',
+    routeIds: ['trace-agent'],
+    defaultRouteId: 'trace-agent',
+    presentation: 'workspace',
+    accent: 'green',
+    tagline: '工作对话、经验沉淀与可验证的能力改进',
   },
   {
     id: 'eval-lab',

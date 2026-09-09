@@ -481,7 +481,7 @@ function isStandaloneResult(row: RoomRoundTaskRow, room: RoomSummary): boolean {
      post can open the standalone final card. Worker result/evidence cards keep
      their existing projection rules. */
   if (isCoordinatorRow(row, room)) {
-    return row.postKind === 'result' && Boolean(row.result);
+    return Boolean(row.finalMessageId && row.result);
   }
   return Boolean(row.result || row.evidenceRefs.length);
 }
@@ -525,10 +525,16 @@ function StandaloneCoordinatorSummary({
   row: RoomRoundTaskRow;
   selected: boolean;
 }) {
-  const summary = row.report || row.result || row.latestProgress || row.task;
+  const [processOpen, setProcessOpen] = useState(false);
+  const title = row.report ? '主控回复' : '主控进展';
+  const summary = row.report || (row.state === 'running'
+    ? '主控正在执行当前任务，尚未发布面向你的回复。'
+    : row.state === 'completed'
+      ? '本轮已结束，等待对应的正式结果记录。'
+      : progressFallback(row.state));
   return (
     <section
-      aria-label={`${row.celestialName} 主控汇报`}
+      aria-label={`${row.celestialName} ${title}`}
       className="paw-room-round__report"
       data-coordinator="true"
       data-row-key={row.key}
@@ -536,10 +542,18 @@ function StandaloneCoordinatorSummary({
       data-state={row.state}
       role="region"
     >
-      <ReportHeading onOpenParticipant={onOpenParticipant} row={row} title="主控汇报" />
+      <ReportHeading onOpenParticipant={onOpenParticipant} row={row} title={title} />
       <div className="paw-room-round__prose">
         <MarkdownBody documentKey={`${row.key}:summary:${row.updatedAtMs}`} sessionId={row.sessionId} text={summary} />
       </div>
+      {row.history.length ? <details onToggle={(event) => setProcessOpen(event.currentTarget.open)}>
+        <summary>查看工作过程</summary>
+        {processOpen ? <ol>{row.history.filter((event) => event.kind === 'activity').map((event) => (
+          <li data-state={event.status} key={event.id}>
+            <MarkdownBody documentKey={`${row.key}:process:${event.id}`} sessionId={row.sessionId} text={event.summary} />
+          </li>
+        ))}</ol> : null}
+      </details> : null}
       <ResultReferences desktop={desktop} room={room} row={row} />
     </section>
   );
@@ -593,7 +607,7 @@ function StandaloneTaskPlanet({
       <div className="paw-room-round__standalone-body paw-room-round__standalone-task-body">
         <section>
           <small>当前任务</small>
-          <MarkdownBody documentKey={`${row.key}:task`} sessionId={row.sessionId} text={row.task} />
+          <CurrentTaskBody row={row} />
         </section>
         <section>
           <small>最新公开进展</small>
@@ -679,6 +693,20 @@ function StandaloneTaskPlanet({
       ) : null}
     </section>
   );
+}
+
+function CurrentTaskBody({ row }: { row: RoomRoundTaskRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const fullText = row.taskBody || row.task;
+  const longTask = fullText.length > 240;
+  const preview = longTask ? `${fullText.slice(0, 237).trimEnd()}…` : fullText;
+  return <>
+    <MarkdownBody documentKey={`${row.key}:task`} sessionId={row.sessionId} text={preview} />
+    {longTask ? <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
+      <summary>查看完整任务</summary>
+      {expanded ? <MarkdownBody documentKey={`${row.key}:task:full`} sessionId={row.sessionId} text={fullText} /> : null}
+    </details> : null}
+  </>;
 }
 
 function StandaloneStarterPlanet({

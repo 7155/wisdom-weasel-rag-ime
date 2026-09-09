@@ -831,6 +831,7 @@ class PiRuntimeDriverFactory:
             skill_allowlist_provider=context.skill_allowlist_provider,
             compaction_observer=context.compaction_observer,
             prompt_settings_provider=context.prompt_settings_provider,
+            candidate_skill_paths_provider=context.candidate_skill_paths_provider,
         )
 
     def reconfigure(self, config: object) -> None:
@@ -1067,6 +1068,7 @@ class PiRuntimeManager:
         skill_allowlist_provider: SkillAllowlistProvider | None = None,
         compaction_observer: CompactionObserver | None = None,
         prompt_settings_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
+        candidate_skill_paths_provider: Callable[[Mapping[str, object]], list[str]] | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
@@ -1077,6 +1079,7 @@ class PiRuntimeManager:
         self._skill_allowlist_provider = skill_allowlist_provider
         self._compaction_observer = compaction_observer
         self._prompt_settings_provider = prompt_settings_provider
+        self._candidate_skill_paths_provider = candidate_skill_paths_provider
         self._lifecycle_lock = threading.RLock()
         self._lock = threading.RLock()
         self._client: PiRpcClient | None = None
@@ -1172,6 +1175,8 @@ class PiRuntimeManager:
                 "Pi Runtime protocol v1 does not support per-Session Skill allowlists"
             )
         session = dict(self.sessions.get(session_id))
+        if self._candidate_skill_paths_provider is not None and self._candidate_skill_paths_provider(session):
+            raise PiRuntimeError("Pi Runtime protocol v1 does not support isolated candidate Skill loading")
         runtime_binding = self.sessions.runtime_binding(session_id)
         if runtime_binding is not None:
             session["_runtimeBinding"] = runtime_binding

@@ -97,7 +97,7 @@ export const CONTROL_ROUTES = {
   'observability.traceDiagnosticReports.create': {
     method: 'POST',
     path: '/api/observability/trace-diagnostic-reports',
-    body: ['diagnosticSessionId', 'title', 'targets'],
+    body: ['diagnosticSessionId', 'title', 'targets', 'intent'],
     requiredBody: ['diagnosticSessionId', 'targets'],
     responseContract: 'trace-diagnostic-report.v1',
   },
@@ -106,6 +106,23 @@ export const CONTROL_ROUTES = {
     path: '/api/observability/trace-diagnostic-reports/:reportId',
     params: { reportId: null },
     responseContract: 'trace-diagnostic-report.v1',
+  },
+  'observability.traceDiagnosticReport.optimizationCommand': {
+    method: 'POST',
+    path: '/api/observability/trace-diagnostic-reports/:reportId/optimization',
+    params: { reportId: null },
+    body: ['operation', 'clientRequestId', 'candidateId', 'action', 'input'],
+    requiredBody: ['operation', 'clientRequestId'],
+    responseContract: 'trace-diagnostic-report.v1',
+  },
+  'observability.traceOptimization.library': {
+    method: 'GET',
+    path: '/api/observability/trace-optimization',
+    query: ['projectId', 'query', 'patternId', 'revision', 'offset'],
+  },
+  'observability.traceOptimization.capabilities': {
+    method: 'GET',
+    path: '/api/observability/trace-optimization/capabilities',
   },
   'observability.traceDiagnosticReport.finalize': {
     method: 'POST',

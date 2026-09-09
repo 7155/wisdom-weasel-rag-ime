@@ -15,6 +15,28 @@ from rag_ime.public_release import (
 
 
 class PublicReleaseAuditTests(unittest.TestCase):
+    def test_local_development_documents_cannot_enter_public_candidates(self) -> None:
+        private_paths = (
+            "docs/project/PROJECT.md",
+            "docs/project/OUTCOMES.md",
+            "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md",
+            "control-center-web/CLOUD_MODEL.md",
+        )
+        with tempfile.TemporaryDirectory(prefix="rag-ime-public-release-") as tmp:
+            root = Path(tmp)
+            tracked = self._write_public_metadata(root, ready=False, include_license=True)
+            for relative in private_paths:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("local development record\n", encoding="utf-8")
+            report = audit_public_release(
+                root, tracked_files=tracked,
+                candidate_files=(*tracked, *private_paths), dirty=False,
+            )
+
+        self.assertFalse(report["repositoryReady"])
+        self.assertTrue(set(private_paths) <= set(report["forbiddenCandidates"]))
+
     def test_clean_public_tree_with_verified_manifest_passes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-public-release-") as tmp:
             root = Path(tmp)
@@ -281,7 +303,6 @@ class PublicReleaseAuditTests(unittest.TestCase):
     @staticmethod
     def _write_public_metadata(root: Path, *, ready: bool, include_license: bool) -> tuple[str, ...]:
         for name in (
-            "ARCHITECTURE.md",
             "CHANGELOG.md",
             "CODE_OF_CONDUCT.md",
             "CONTRIBUTING.md",
@@ -314,7 +335,6 @@ class PublicReleaseAuditTests(unittest.TestCase):
             encoding="utf-8",
         )
         tracked = [
-            "ARCHITECTURE.md",
             "CHANGELOG.md",
             "CODE_OF_CONDUCT.md",
             "CONTRIBUTING.md",
