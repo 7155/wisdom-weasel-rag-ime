@@ -10,11 +10,8 @@ from rag_ime.agent_message_snapshot import _merge_tool_events
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeManager
 from rag_ime.pi_runtime_public import public_reasoning_summaries
-from rag_ime.pi_runtime_v2 import (
-    PiRuntimeHostManager,
-    _pi_durable_branch_messages,
-    _pi_tool_history_events,
-)
+from rag_ime.pi_runtime_v2 import PiRuntimeHostManager
+from rag_ime.pi_runtime_transcript import durable_branch_messages, durable_tool_history_events
 
 
 class PiReasoningProjectionTests(unittest.TestCase):
@@ -106,8 +103,8 @@ class PiReasoningProjectionTests(unittest.TestCase):
              "message": {"role": "user", "timestamp": 100, "content": "Check"}},
             {"type": "message", "id": "entry-assistant", "timestamp": 250, "message": message},
         ]
-        messages, selected = _pi_durable_branch_messages(entries)
-        history = _pi_tool_history_events(messages, session_id=self.session_id, raw_entries=selected)
+        messages, selected = durable_branch_messages(entries)
+        history = durable_tool_history_events(messages, session_id=self.session_id, raw_entries=selected)
         live = self.summaries("v2")[-1].to_payload()
         self.assertEqual(history[0]["payload"]["requestId"], live["payload"]["requestId"])
         self.assertEqual(history[0]["payload"]["sourceMessageId"], live["payload"]["sourceMessageId"])

@@ -193,7 +193,8 @@ PAW 管理业务与持久记录，Pi 管理模型和工具执行；界面通过�
 | PAWOS | 桌面、窗口、扩展清单与页面加载 | [src/paw-os](control-center-web/src/paw-os/) |
 | 功能页面 | Agent、Memory、Knowledge、Lab、Trace 等交互 | [src/features](control-center-web/src/features/) |
 | Gateway / 应用服务 | API、持久化事件、Room 协作与能力配置 | [rag_ime](rag_ime/) |
-| Pi 接入 | Session、模型/工具循环、压缩、停止与恢复 | [Pi 适配器](rag_ime/pi_runtime_v2.py) · [Pi 契约](integrations/pi/) |
+| HTTP 适配 | 请求参数、合约与错误响应 | [路由表](rag_ime/control_api/route_table.py) · [Lab 错误映射](rag_ime/control_api/lab_errors.py) |
+| Pi 接入 | Session、模型/工具循环、压缩、停止与恢复 | [Pi 适配器](rag_ime/pi_runtime_v2.py) · [历史纯投影](rag_ime/pi_runtime_transcript.py) · [Pi 契约](integrations/pi/) |
 | Agent Lab | 项目接入、Trial、场景适配、比较与应用交付 | [模块说明](rag_ime/agent_lab/README.md) |
 | 数据与平台 | 数据库、浏览器、桌面、语音与输入适配 | [db](rag_ime/db/) · [integrations](integrations/) · [squirrel-patches](squirrel-patches/) |
 

@@ -19,7 +19,8 @@ from rag_ime.codex_conversation_import import (
 )
 from rag_ime.pi_runtime_public import pi_message_is_public
 from rag_ime.pi_runtime import PiRuntimeConfig
-from rag_ime.pi_runtime_v2 import PiRuntimeHostManager, _pi_durable_branch_messages
+from rag_ime.pi_runtime_v2 import PiRuntimeHostManager
+from rag_ime.pi_runtime_transcript import durable_branch_messages
 
 
 class CodexConversationImportTests(unittest.TestCase):
@@ -250,7 +251,7 @@ class CodexConversationImportTests(unittest.TestCase):
         self.assertEqual(rows[0]["type"], "session")
         self.assertEqual(rows[0]["version"], 3)
         self.assertEqual(rows[1]["customType"], "paw.external-conversation.v1")
-        messages, _entries = _pi_durable_branch_messages(
+        messages, _entries = durable_branch_messages(
             rows,
             leaf_id=str(rows[-1]["id"]),
         )

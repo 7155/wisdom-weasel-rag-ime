@@ -179,6 +179,7 @@ PI_FAMILY_MODULES = (
     "rag_ime.pi_runtime_v2",
     "rag_ime.pi_runtime_public",
     "rag_ime.pi_runtime_values",
+    "rag_ime.pi_runtime_transcript",
     "rag_ime.pi_runtime_protocols",
     "rag_ime.agent_runtime_driver",
 )

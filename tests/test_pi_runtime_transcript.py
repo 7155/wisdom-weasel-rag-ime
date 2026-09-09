@@ -1,0 +1,559 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import unittest
+from copy import deepcopy
+from pathlib import Path
+
+from rag_ime.pi_runtime_transcript import (
+    DURABLE_TURN_ID_KEY,
+    durable_branch_messages,
+    durable_tool_history_events,
+    recent_messages_from_proven_tail,
+    recent_public_message_window,
+    recent_tool_history_events,
+)
+
+
+class PiRuntimeTranscriptTests(unittest.TestCase):
+    def test_projection_can_import_and_run_without_starting_host_or_opening_storage(
+        self,
+    ) -> None:
+        process = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import sys
+from unittest.mock import patch
+for name in (
+    'rag_ime.pi_runtime', 'rag_ime.pi_runtime_v2',
+    'rag_ime.pi_runtime_protocols', 'rag_ime.agent_service',
+):
+    sys.modules[name] = None
+with patch('sqlite3.connect', side_effect=AssertionError('database opened')), \
+     patch('subprocess.Popen', side_effect=AssertionError('Host started')):
+    from rag_ime.pi_runtime_transcript import durable_branch_messages, durable_tool_history_events
+    assert durable_branch_messages([]) == ([], [])
+    assert durable_tool_history_events([], session_id='isolated') == []
+""",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_bound_history_preserves_identity_order_and_inputs_across_projections(
+        self,
+    ) -> None:
+        entries = [
+            {"type": "session", "id": "root"},
+            {
+                "type": "custom",
+                "id": "binding",
+                "parentId": "root",
+                "customType": "rag-ime.pi-turn-binding",
+                "data": {
+                    "schemaVersion": "rag-ime.pi-turn-binding.v1",
+                    "turnId": "accepted-turn",
+                    "clientMessageId": "client-message",
+                },
+            },
+            {
+                "type": "message",
+                "id": "user",
+                "parentId": "binding",
+                "timestamp": 100,
+                "message": {"role": "user", "timestamp": 100, "content": "修改文件"},
+            },
+            {
+                "type": "message",
+                "id": "tool-call",
+                "parentId": "user",
+                "timestamp": 200,
+                "message": {
+                    "role": "assistant",
+                    "timestamp": 120,
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "write-1",
+                            "name": "write",
+                            "arguments": {"path": "file.txt"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "message",
+                "id": "tool-result",
+                "parentId": "tool-call",
+                "timestamp": 300,
+                "message": {
+                    "role": "toolResult",
+                    "timestamp": 130,
+                    "toolCallId": "write-1",
+                    "toolName": "write",
+                    "content": [{"type": "text", "text": "done"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "answer",
+                "parentId": "tool-result",
+                "timestamp": 400,
+                "message": {
+                    "role": "assistant",
+                    "timestamp": 140,
+                    "stopReason": "stop",
+                    "content": [{"type": "text", "text": "完成"}],
+                },
+            },
+        ]
+        original = deepcopy(entries)
+        messages, selected = durable_branch_messages(entries, leaf_id="answer")
+        original_messages = deepcopy(messages)
+        events = durable_tool_history_events(
+            messages, session_id="session-a", raw_entries=selected
+        )
+        replay = durable_tool_history_events(
+            messages, session_id="session-a", raw_entries=selected
+        )
+        other = durable_tool_history_events(
+            messages, session_id="session-b", raw_entries=selected
+        )
+        window = recent_public_message_window(
+            messages,
+            session_id="session-a",
+            raw_entries=selected,
+            media_resolver=None,
+        )
+        recent_events = recent_tool_history_events(
+            messages,
+            session_id="session-a",
+            raw_entries=selected,
+            projected_messages=window,
+        )
+
+        self.assertEqual(messages[0][DURABLE_TURN_ID_KEY], "accepted-turn")
+        self.assertEqual(messages[0]["clientMessageId"], "client-message")
+        self.assertEqual(
+            [message["id"] for message in messages],
+            ["user", "tool-call", "tool-result", "answer"],
+        )
+        self.assertEqual([event["createdAtMs"] for event in events], [200, 300])
+        self.assertEqual([event["timelineSequence"] for event in events], [2.2, 3.8])
+        self.assertEqual({event["turnId"] for event in events}, {"accepted-turn"})
+        self.assertEqual({message["turnId"] for message in window}, {"accepted-turn"})
+        self.assertEqual(replay, events)
+        self.assertEqual(recent_events, events)
+        self.assertTrue(
+            {event["eventId"] for event in events}.isdisjoint(
+                event["eventId"] for event in other
+            )
+        )
+        self.assertEqual(entries, original)
+        self.assertEqual(messages, original_messages)
+
+    def test_tail_projection_distinguishes_complete_partial_and_unproven_branches(
+        self,
+    ) -> None:
+        entries = [
+            {
+                "type": "message",
+                "id": "user",
+                "parentId": "root",
+                "message": {"role": "user", "content": "继续"},
+            },
+        ]
+        complete = recent_messages_from_proven_tail(
+            entries, leaf_id="user", header_id="root"
+        )
+        self.assertIsNotNone(complete)
+        self.assertTrue(complete[2])
+        partial = recent_messages_from_proven_tail(
+            entries, leaf_id="user", header_id="older-root"
+        )
+        self.assertIsNotNone(partial)
+        self.assertFalse(partial[2])
+        self.assertIsNone(
+            recent_messages_from_proven_tail(
+                entries, leaf_id="missing", header_id="root"
+            )
+        )
+        entries[0]["parentId"] = "user"
+        self.assertIsNone(
+            recent_messages_from_proven_tail(entries, leaf_id="user", header_id="root")
+        )
+
+    def test_transcript_tool_failure_keeps_pi_error_content_in_public_receipt(
+        self,
+    ) -> None:
+        raw_messages = [
+            {
+                "id": "user-validation",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "修改文件"}],
+            },
+            {
+                "id": "assistant-validation",
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "tool-validation",
+                        "name": "write",
+                        "arguments": {"path": "file.txt"},
+                    }
+                ],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "tool-validation",
+                "toolName": "write",
+                "isError": True,
+                "details": {},
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Validation failed: resourceRevision: must have required properties resourceRevision",
+                    }
+                ],
+            },
+        ]
+
+        events = durable_tool_history_events(
+            raw_messages,
+            session_id="session-validation",
+        )
+        finished = next(
+            event for event in events if event["eventType"] == "tool_finished"
+        )
+
+        self.assertTrue(finished["payload"]["isError"])
+        self.assertIn(
+            "resourceRevision",
+            json.dumps(finished["payload"]["result"], ensure_ascii=False),
+        )
+
+    def test_failed_provider_message_does_not_project_unexecuted_tool_draft(
+        self,
+    ) -> None:
+        raw_messages = [
+            {
+                "id": "user-provider-retry",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "委派一次覆盖审查"}],
+            },
+            {
+                "id": "assistant-provider-failed",
+                "role": "assistant",
+                "timestamp": 101,
+                "stopReason": "error",
+                "errorMessage": "fetch failed",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call-never-executed",
+                        "name": "agents",
+                        "arguments": {
+                            "op": "delegate",
+                            "agent": "reviewer",
+                            "version": "1",
+                            "task": "partial provider draft",
+                        },
+                    }
+                ],
+            },
+            {
+                "id": "assistant-provider-recovered",
+                "role": "assistant",
+                "timestamp": 102,
+                "stopReason": "toolUse",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call-executed",
+                        "name": "agents",
+                        "arguments": {
+                            "op": "delegate",
+                            "tasks": [{"agent": "reviewer", "version": "1"}],
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 103,
+                "toolCallId": "call-executed",
+                "toolName": "agents",
+                "isError": False,
+                "details": {"schemaVersion": "rag-ime.agent-delegation.v1"},
+            },
+        ]
+
+        events = durable_tool_history_events(
+            raw_messages,
+            session_id="session-provider-retry-tool-draft",
+        )
+
+        tool_ids = [
+            str(event["payload"].get("toolCallId") or "")
+            for event in events
+            if event["eventType"] in {"tool_started", "tool_finished"}
+        ]
+        self.assertEqual(["call-executed", "call-executed"], tool_ids)
+
+    def test_snapshot_history_uses_only_the_selected_durable_branch(self) -> None:
+        entries = [
+            {"type": "session", "id": "root"},
+            {
+                "type": "message",
+                "id": "entry-user",
+                "parentId": "root",
+                "timestamp": "1970-01-01T00:00:00.100Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "保留的提问"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "entry-answer",
+                "parentId": "entry-user",
+                "timestamp": "1970-01-01T00:00:00.200Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "保留的回答"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "entry-other-branch",
+                "parentId": "entry-user",
+                "timestamp": "1970-01-01T00:00:00.300Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "另一分支"}],
+                },
+            },
+        ]
+
+        messages, selected_entries = durable_branch_messages(
+            entries,
+            leaf_id="entry-answer",
+        )
+
+        self.assertEqual(
+            [message["content"][0]["text"] for message in messages],
+            ["保留的提问", "保留的回答"],
+        )
+        self.assertEqual(
+            [entry["id"] for entry in selected_entries], ["entry-user", "entry-answer"]
+        )
+        self.assertEqual(messages[0]["id"], "entry-user")
+        self.assertEqual(messages[0]["timestamp"], 100)
+
+    def test_transcript_tool_messages_rebuild_an_inspectable_durable_timeline(
+        self,
+    ) -> None:
+        raw_messages = [
+            {
+                "id": "user-1",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "检查项目"}],
+            },
+            {
+                "id": "assistant-tool-1",
+                "role": "assistant",
+                "api": "openai-codex-responses",
+                "timestamp": 101,
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "**Planning project inspection**",
+                    },
+                    {
+                        "type": "toolCall",
+                        "id": "tool-1",
+                        "name": "workspace_read",
+                        "arguments": {
+                            "path": "/Users/private/project/README.md",
+                            "apiKey": "top-secret",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "tool-1",
+                "toolName": "workspace_read",
+                "isError": False,
+                "details": {
+                    "summary": "读取 /Users/private/project/README.md",
+                    "token": "secret",
+                },
+            },
+        ]
+        events = durable_tool_history_events(
+            raw_messages,
+            session_id="session-1",
+            raw_entries=[
+                {
+                    "type": "message",
+                    "timestamp": "1970-01-01T00:00:00.100Z",
+                    "message": raw_messages[0],
+                },
+                {
+                    "type": "message",
+                    "timestamp": "1970-01-01T00:00:00.501Z",
+                    "message": raw_messages[1],
+                },
+                {
+                    "type": "message",
+                    "timestamp": "1970-01-01T00:00:00.902Z",
+                    "message": raw_messages[2],
+                },
+            ],
+        )
+
+        self.assertEqual(
+            [event["eventType"] for event in events],
+            ["reasoning_summary", "tool_started", "tool_finished"],
+        )
+        self.assertEqual(
+            [event["turnId"] for event in events],
+            ["history:user-1", "history:user-1", "history:user-1"],
+        )
+        self.assertEqual([event["createdAtMs"] for event in events], [501, 502, 902])
+        self.assertEqual(events[0]["payload"]["items"], ["Planning project inspection"])
+        self.assertEqual(events[1]["payload"]["publicResult"]["fileName"], "README.md")
+        serialized = json.dumps(events, ensure_ascii=False)
+        self.assertNotIn("top-secret", serialized)
+        self.assertIn("/Users/private/project/README.md", serialized)
+        self.assertIn("[REDACTED_SECRET]", serialized)
+
+    def test_transcript_bash_failure_uses_the_structured_exit_receipt(self) -> None:
+        raw_messages = [
+            {
+                "id": "user-bash",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "运行测试"}],
+            },
+            {
+                "id": "assistant-bash",
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "tool-bash-failed",
+                        "name": "bash",
+                        "arguments": {"command": "python3 -m unittest"},
+                    }
+                ],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "tool-bash-failed",
+                "toolName": "bash",
+                "isError": False,
+                "content": [{"type": "text", "text": "FAILED"}],
+                "details": {
+                    "receipt": {
+                        "exitCode": 1,
+                        "timedOut": False,
+                    }
+                },
+            },
+        ]
+
+        events = durable_tool_history_events(
+            raw_messages,
+            session_id="session-bash-history",
+        )
+
+        finished = next(
+            event for event in events if event["eventType"] == "tool_finished"
+        )
+        self.assertTrue(finished["payload"]["isError"])
+
+    def test_tool_history_applies_one_bounded_public_budget_per_session_snapshot(
+        self,
+    ) -> None:
+        raw_messages: list[dict[str, object]] = [
+            {
+                "id": "user-tool-budget",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "执行多项检查"}],
+            }
+        ]
+        for index in range(20):
+            tool_call_id = f"tool-budget-{index + 1}"
+            raw_messages.extend(
+                [
+                    {
+                        "id": f"assistant-{index + 1}",
+                        "role": "assistant",
+                        "timestamp": 101 + index * 2,
+                        "content": [
+                            {
+                                "type": "toolCall",
+                                "id": tool_call_id,
+                                "name": "bash",
+                                "arguments": {"command": f"probe-{index + 1}"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "toolResult",
+                        "timestamp": 102 + index * 2,
+                        "toolCallId": tool_call_id,
+                        "toolName": "bash",
+                        "isError": False,
+                        "details": {"output": "X" * 5_000},
+                    },
+                ]
+            )
+
+        events = durable_tool_history_events(
+            raw_messages,
+            session_id="session-tool-budget",
+        )
+        serialized = json.dumps(
+            events,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        tool_ids = {str(event["payload"].get("toolCallId") or "") for event in events}
+
+        self.assertLessEqual(len(serialized), 50_000)
+        self.assertIn("tool-budget-20", tool_ids)
+        self.assertNotIn("tool-budget-1", tool_ids)
+        for tool_call_id in tool_ids:
+            self.assertEqual(
+                [
+                    event["eventType"]
+                    for event in events
+                    if event["payload"].get("toolCallId") == tool_call_id
+                ],
+                ["tool_started", "tool_finished"],
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

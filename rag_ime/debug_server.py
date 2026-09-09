@@ -41,11 +41,6 @@ from .active_rag_service import (
 )
 from .activity_timeline import DailyActivityTimelineStore, activity_timeline_date_range
 from .agent_extensions import AgentExtensionService
-from .agent_lab.scene_recipes import (
-    AgentLabSceneRecipeConflict,
-    AgentLabSceneRecipeServiceUnavailable,
-    AgentLabSceneRecipeUnavailable,
-)
 from .agent_lifecycle_hooks import AgentLifecycleHookService
 from .agent_runtime_driver import AgentRuntimeError
 from .agent_surface_runtime import AgentSurfaceRuntime, PiSurfaceCompletionProvider
@@ -101,6 +96,12 @@ from .control_api import (
     default_route_policy,
 )
 from .control_api.gateway_access import GatewayAccessDecision, resolve_gateway_access
+from .control_api.lab_errors import (
+    lab_trial_error_response,
+    lab_golden_error_response,
+    lab_project_error_response,
+    lab_scene_recipe_error_response,
+)
 from .control_api.route_table import build_arguments, find_route
 from .models import InputEvent, InputSuggestion
 from .model_profiles import canonical_runtime_profile_id, profile_by_id
@@ -7781,84 +7782,6 @@ def _agent_session_runtime_error_payload(
     }
 
 
-def _agent_lab_scene_recipe_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
-    if isinstance(exc, (AgentLabSceneRecipeConflict, AgentLabSceneRecipeUnavailable, AgentLabSceneRecipeServiceUnavailable)):
-        return HTTPStatus(exc.http_status), exc.response_payload()
-    if isinstance(exc, (sqlite3.Error, OSError)):
-        unavailable = AgentLabSceneRecipeServiceUnavailable("storage_unavailable")
-        return HTTPStatus.SERVICE_UNAVAILABLE, unavailable.response_payload()
-    if isinstance(exc, ValueError):
-        return HTTPStatus.BAD_REQUEST, {
-            "ok": False, "code": "AGENT_LAB_SCENE_RECIPE_INVALID_REQUEST",
-            "error": "场景操作参数无效，请核对后重试。",
-        }
-    return HTTPStatus.INTERNAL_SERVER_ERROR, {
-        "ok": False, "code": "AGENT_LAB_SCENE_RECIPE_INTERNAL_ERROR",
-        "error": "场景配置服务暂不可用，请刷新查看状态。",
-    }
-
-
-def _agent_lab_trial_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
-    from .agent_lab.trials import AgentLabTrialConflict, AgentLabTrialNotFound, AgentLabTrialServiceUnavailable
-    if isinstance(exc, (AgentLabTrialConflict, AgentLabTrialServiceUnavailable)):
-        return HTTPStatus(exc.http_status), exc.response_payload()
-    if isinstance(exc, AgentLabTrialNotFound):
-        return HTTPStatus.NOT_FOUND, {
-            "ok": False, "code": "AGENT_LAB_TRIAL_NOT_FOUND", "error": "未找到这次场景试验。",
-        }
-    if isinstance(exc, (sqlite3.Error, OSError)):
-        return HTTPStatus.SERVICE_UNAVAILABLE, {
-            "ok": False, "code": "AGENT_LAB_TRIAL_UNAVAILABLE",
-            "error": "场景试验暂时无法读取或保存，请保留原请求后重试。",
-        }
-    if isinstance(exc, (TypeError, ValueError)):
-        return HTTPStatus.UNPROCESSABLE_ENTITY, {
-            "ok": False, "code": "AGENT_LAB_TRIAL_INVALID_REQUEST",
-            "error": "场景试验参数无效，请核对后重试。",
-        }
-    return HTTPStatus.INTERNAL_SERVER_ERROR, {
-        "ok": False, "code": "AGENT_LAB_TRIAL_INTERNAL_ERROR",
-        "error": "场景试验服务暂时不可用；已保存的执行记录仍会保留。",
-    }
-
-
-def _agent_lab_project_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
-    from .agent_lab.projects import AgentLabProjectValidationError, AgentLabProjectUnavailable
-    if isinstance(exc, AgentLabProjectValidationError):
-        return HTTPStatus(exc.http_status), exc.response_payload()
-    if isinstance(exc, (sqlite3.Error, OSError)):
-        return HTTPStatus.SERVICE_UNAVAILABLE, AgentLabProjectUnavailable().response_payload()
-    if isinstance(exc, ValueError):
-        return HTTPStatus.UNPROCESSABLE_ENTITY, {
-            "ok": False, "code": "AGENT_LAB_PROJECT_INVALID_REQUEST", "message": "项目操作参数无效，请核对后重试。",
-        }
-    return HTTPStatus.INTERNAL_SERVER_ERROR, {
-        "ok": False, "code": "AGENT_LAB_PROJECT_INTERNAL_ERROR", "message": "项目服务暂时不可用；已保存的成果仍会保留。",
-    }
-
-
-def _agent_lab_golden_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
-    from .agent_lab.golden import (
-        AgentLabGoldenConflict, AgentLabGoldenServiceUnavailable, AgentLabGoldenValidationError,
-    )
-    if isinstance(exc, (AgentLabGoldenConflict, AgentLabGoldenServiceUnavailable, AgentLabGoldenValidationError)):
-        return HTTPStatus(exc.http_status), exc.response_payload()
-    if isinstance(exc, (sqlite3.Error, OSError)):
-        return HTTPStatus.SERVICE_UNAVAILABLE, {
-            "ok": False, "code": "AGENT_LAB_GOLDEN_UNAVAILABLE",
-            "message": "评测集暂时无法读取或保存，请稍后重试。",
-        }
-    if isinstance(exc, ValueError):
-        return HTTPStatus.UNPROCESSABLE_ENTITY, {
-            "ok": False, "code": "AGENT_LAB_GOLDEN_INVALID_REQUEST",
-            "message": "评测操作参数无效，请核对后重试。",
-        }
-    return HTTPStatus.INTERNAL_SERVER_ERROR, {
-        "ok": False, "code": "AGENT_LAB_GOLDEN_INTERNAL_ERROR",
-        "message": "评测服务暂时不可用；已保存的记录仍会保留。",
-    }
-
-
 class DebugRequestHandler(BaseHTTPRequestHandler):
     service: DebugImeService
     static_dir: Path
@@ -7873,28 +7796,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         descriptor_route = find_route("GET", parsed.path)
         if descriptor_route is not None:
-            if descriptor_route.handler == "agent.eval_lab_trials":
+            if descriptor_route.error_response is not None:
                 try:
                     self._dispatch_descriptor_route(descriptor_route, query=parse_qs(parsed.query or ""))
                 except Exception as exc:
-                    self._write_json(*_agent_lab_trial_error_response(exc))
-            elif descriptor_route.handler == "agent.eval_lab_golden":
+                    self._write_json(*descriptor_route.error_response(exc))
+            elif descriptor_route.handler in {"agent.eval_lab_apps", "agent.eval_lab_app_download"}:
                 try:
                     self._dispatch_descriptor_route(descriptor_route, query=parse_qs(parsed.query or ""))
                 except Exception as exc:
-                    self._write_json(*_agent_lab_golden_error_response(exc))
-            elif descriptor_route.handler in {"agent.eval_lab_projects", "agent.eval_lab_apps", "agent.eval_lab_app_download"}:
-                try:
-                    self._dispatch_descriptor_route(descriptor_route, query=parse_qs(parsed.query or ""))
-                except Exception as exc:
-                    self._write_json(*_agent_lab_project_error_response(exc))
-            elif descriptor_route.handler == "agent.eval_lab_scene_recipes":
-                try:
-                    self._dispatch_descriptor_route(
-                        descriptor_route, query=parse_qs(parsed.query or "")
-                    )
-                except Exception as exc:
-                    self._write_json(*_agent_lab_scene_recipe_error_response(exc))
+                    self._write_json(*lab_project_error_response(exc))
             else:
                 self._dispatch_descriptor_route(
                     descriptor_route, query=parse_qs(parsed.query or "")
@@ -9811,7 +9722,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     try:
                         self._dispatch_descriptor_route(descriptor_route, payload=payload)
                     except Exception as exc:
-                        self._write_json(*_agent_lab_trial_error_response(exc))
+                        self._write_json(*lab_trial_error_response(exc))
                 else:
                     self._dispatch_descriptor_route(descriptor_route, payload=payload)
                 return
@@ -9917,21 +9828,21 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 try:
                     response = self.service.agent.eval_lab_golden_command(payload)
                 except Exception as exc:
-                    self._write_json(*_agent_lab_golden_error_response(exc))
+                    self._write_json(*lab_golden_error_response(exc))
                 else:
                     self._write_json(HTTPStatus.OK, response)
             elif path == "/api/agent/eval-lab/projects/command":
                 try:
                     response = self.service.agent.eval_lab_project_command(payload)
                 except Exception as exc:
-                    self._write_json(*_agent_lab_project_error_response(exc))
+                    self._write_json(*lab_project_error_response(exc))
                 else:
                     self._write_json(HTTPStatus.OK, response)
             elif path == "/api/agent/eval-lab/apps/command":
                 try:
                     response = self.service.agent.eval_lab_app_command(payload)
                 except Exception as exc:
-                    self._write_json(*_agent_lab_project_error_response(exc))
+                    self._write_json(*lab_project_error_response(exc))
                 else:
                     self._write_json(HTTPStatus.OK, response)
             elif path in ("/api/agent/eval-lab/scene-recipes/apply", "/api/agent/eval-lab/scene-recipes/rollback"):
@@ -9942,7 +9853,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         else self.service.agent.eval_lab_scene_recipe_rollback(payload)
                     )
                 except Exception as exc:
-                    self._write_json(*_agent_lab_scene_recipe_error_response(exc))
+                    self._write_json(*lab_scene_recipe_error_response(exc))
                 else:
                     self._write_json(HTTPStatus.OK, response)
             elif path == "/api/agent/extensions/drafts":

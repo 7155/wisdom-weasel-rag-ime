@@ -55,7 +55,9 @@ files = [
     "rag_ime/agent_runtime_driver.py",
     "rag_ime/pi_runtime_public.py",
     "rag_ime/pi_runtime_values.py",
+    "rag_ime/pi_runtime_transcript.py",
     "rag_ime/control_api/models.py",
+    "rag_ime/control_api/lab_errors.py",
     "rag_ime/control_api/route_table.py",
     "rag_ime/agent_room_turn_registry.py",
 ]

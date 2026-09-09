@@ -194,6 +194,20 @@ class ImportBoundaryTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
+    def test_transcript_exports_are_enforced_for_both_protocols(self) -> None:
+        self.assertIn("rag_ime.pi_runtime_transcript", PI_FAMILY_MODULES)
+        for consumer in ("rag_ime.pi_runtime", "rag_ime.pi_runtime_v2"):
+            for imported, expected_count in (
+                ("durable_branch_messages", 0), ("undeclared", 1), ("_private", 1),
+            ):
+                with self.subTest(consumer=consumer, imported=imported), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    self._write_pi_family(root, {
+                        consumer: f"__all__ = []\nfrom .pi_runtime_transcript import {imported}\n",
+                        "rag_ime.pi_runtime_transcript": "__all__ = ['durable_branch_messages', '_private']\n",
+                    })
+                    self.assertEqual(len(check_pi_family_public_contracts(root)), expected_count)
+
     def _write_pi_family(
         self,
         root: Path,

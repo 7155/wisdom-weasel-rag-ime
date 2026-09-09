@@ -21,11 +21,28 @@ ENTRY_AND_COMPOSITION = (
     "rag_ime.cli",
 )
 OWNER_RULES = {
+    "rag_ime.control_api": ENTRY_AND_COMPOSITION,
     "rag_ime.agent_lab": ENTRY_AND_COMPOSITION,
     "rag_ime.knowledge_library": ENTRY_AND_COMPOSITION + ("rag_ime.agent_lab",),
     "rag_ime.db": ENTRY_AND_COMPOSITION + (
         "rag_ime.agent_lab",
         "rag_ime.knowledge_library",
+    ),
+    "rag_ime.pi_runtime_transcript": ENTRY_AND_COMPOSITION + (
+        "rag_ime.pi_runtime",
+        "rag_ime.agent_sessions",
+        "rag_ime.db",
+        "sqlite3",
+        "subprocess",
+    ),
+}
+# The transcript owner may consume these shared contracts within the otherwise
+# forbidden pi_runtime family. Match exact modules (and their exported names),
+# not similarly prefixed implementation modules.
+OWNER_IMPORT_PORTS = {
+    "rag_ime.pi_runtime_transcript": (
+        "rag_ime.pi_runtime_public",
+        "rag_ime.pi_runtime_values",
     ),
 }
 
@@ -41,6 +58,11 @@ class OwnerImportViolation:
 
 def _matches(module: str, prefix: str) -> bool:
     return module == prefix or module.startswith(prefix + ".") or module.startswith(prefix + "_")
+
+
+def _owner_path(root: Path, owner: str) -> Path:
+    path = root.joinpath(*owner.split("."))
+    return path if path.is_dir() else path.with_suffix(".py")
 
 
 def _absolute_import(module: str, level: int, package: str) -> str:
@@ -118,8 +140,9 @@ def check_owner_boundaries(root: Path) -> list[OwnerImportViolation]:
     violations: list[OwnerImportViolation] = []
     seen: set[tuple[str, int, str]] = set()
     for owner, forbidden in OWNER_RULES.items():
-        directory = root.joinpath(*owner.split("."))
-        for path in sorted(directory.rglob("*.py")):
+        owner_path = _owner_path(root, owner)
+        paths = [owner_path] if owner_path.is_file() else sorted(owner_path.rglob("*.py"))
+        for path in paths:
             if "__pycache__" in path.parts:
                 continue
             relative = path.relative_to(root)
@@ -132,6 +155,11 @@ def check_owner_boundaries(root: Path) -> list[OwnerImportViolation]:
             module = ".".join(parts)
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative))
             for line, imported in _import_targets(tree, package):
+                if any(
+                    imported == port or imported.startswith(port + ".")
+                    for port in OWNER_IMPORT_PORTS.get(owner, ())
+                ):
+                    continue
                 for prefix in forbidden:
                     key = (relative.as_posix(), line, prefix)
                     if _matches(imported, prefix) and key not in seen:
@@ -150,7 +178,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Emit a machine-readable report.")
     args = parser.parse_args()
     root = Path(args.root).resolve()
-    missing = [owner for owner in OWNER_RULES if not root.joinpath(*owner.split(".")).is_dir()]
+    missing = [owner for owner in OWNER_RULES if not _owner_path(root, owner).exists()]
     # A partial checkout is not evidence that all boundaries passed.
     violations = check_owner_boundaries(root) if not missing else []
     report = {
@@ -164,12 +192,12 @@ def main() -> int:
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     elif missing:
-        print("Missing owner directories: " + ", ".join(missing))
+        print("Missing owners: " + ", ".join(missing))
     elif violations:
         for item in violations:
             print(f"{item.path}:{item.line}: {item.reason} ({item.imported})")
     else:
-        print("Agent Lab, Knowledge and database owner boundaries OK")
+        print("Control API, Agent Lab, Knowledge, database and Pi transcript owner boundaries OK")
     return 0 if report["ok"] else 1
 
 

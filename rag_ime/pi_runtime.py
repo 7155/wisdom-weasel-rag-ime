@@ -62,6 +62,7 @@ from .pi_runtime_public import (
     ui_confirmation_value,
     visible_message_text,
 )
+from .pi_runtime_transcript import durable_branch_messages, durable_tool_history_events
 from .pi_runtime_values import (
     PiRuntimeCommandRejected,
     PiRuntimeError,
@@ -1454,14 +1455,6 @@ class PiRuntimeManager:
         entries = self._persisted_transcript_entries(session_id)
         if entries is None:
             raise PiRuntimeError("evaluation snapshot transcript is unavailable")
-        # These are pure transcript projection helpers.  The import is local
-        # because the v2 Runtime module itself imports this compatibility
-        # manager during module initialization.
-        from .pi_runtime_v2 import (  # pylint: disable=import-outside-toplevel
-            durable_branch_messages,
-            durable_tool_history_events,
-        )
-
         binding = self.sessions.runtime_binding(session_id) or {}
         raw_messages, selected_entries = durable_branch_messages(
             entries,

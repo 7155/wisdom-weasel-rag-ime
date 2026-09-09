@@ -22,7 +22,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import Any
+
+from .lab_errors import (
+    lab_golden_error_response,
+    lab_project_error_response,
+    lab_scene_recipe_error_response,
+    lab_trial_error_response,
+)
+
+
+ErrorResponseAdapter = Callable[[Exception], tuple[HTTPStatus, dict[str, object]]]
 
 
 @dataclass(frozen=True)
@@ -72,6 +83,13 @@ class RouteDescriptor:
 
     Passing an empty dict to those would be a TypeError, so the descriptor has
     to say which shape the handler expects rather than the dispatcher guessing.
+    """
+    error_response: ErrorResponseAdapter | None = None
+    """Opt-in HTTP error projection for migrated reads.
+
+    Covers parsing through response serialization, as the original GET branch
+    did. An absent adapter keeps the route's existing exception propagation.
+    Authentication and special transports remain outside this boundary.
     """
 
 
@@ -352,6 +370,7 @@ def _get(
     takes_arguments: bool = False,
     response_contract: str = "",
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    error_response: ErrorResponseAdapter | None = None,
 ) -> RouteDescriptor:
     """Most migrated reads take no request data, so that is the default here."""
 
@@ -359,6 +378,7 @@ def _get(
         method="GET", path=path, handler=handler, aliases=aliases,
         query_args=query_args, takes_arguments=takes_arguments,
         response_contract=response_contract, transform=transform,
+        error_response=error_response,
     )
 
 
@@ -366,6 +386,7 @@ AGENT_LAB_TRIAL_ROUTES: tuple[RouteDescriptor, ...] = (
     _get(
         "/api/agent/eval-lab/trials", "agent.eval_lab_trials",
         query_args=("jobId",), takes_arguments=True,
+        error_response=lab_trial_error_response,
     ),
     RouteDescriptor(
         method="POST", path="/api/agent/eval-lab/trials/start",
@@ -409,18 +430,21 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
         "agent.eval_lab_scene_recipes",
         query_args=("sceneId", "experimentId"),
         takes_arguments=True,
+        error_response=lab_scene_recipe_error_response,
     ),
     _get(
         "/api/agent/eval-lab/golden",
         "agent.eval_lab_golden",
         query_args=("suiteId",),
         takes_arguments=True,
+        error_response=lab_golden_error_response,
     ),
     _get(
         "/api/agent/eval-lab/projects",
         "agent.eval_lab_projects",
         query_args=("projectId", "materialSetId", "artifactId", "artifactRevision"),
         takes_arguments=True,
+        error_response=lab_project_error_response,
     ),
     _get('/api/agent/eval-lab/apps','agent.eval_lab_apps',query_args=('appId','projectId','version','callId'),takes_arguments=True),
     _get('/api/agent/eval-lab/apps/download','agent.eval_lab_app_download',query_args=('appId','version','target'),takes_arguments=True),
