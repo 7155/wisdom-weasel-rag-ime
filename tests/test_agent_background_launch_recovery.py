@@ -203,9 +203,12 @@ class BackgroundLaunchRecoveryTests(unittest.TestCase):
             title="restricted startup fixture", mode="coordinator", workspace_roots=[str(workspace)],
         )
         harness = WorkspaceHarness()
-        # This probe needs only stdlib. A private host venv is intentionally
-        # outside the command's workspace, including its pyvenv.cfg file.
-        interpreter = str(Path(getattr(sys, "_base_executable", sys.executable)).resolve())
+        # This stdlib-only probe must launch from a system-readable location.
+        # A uv base interpreter can live under /Users or /Volumes and is then
+        # correctly denied before the probe can check its outside-file fence.
+        interpreter = "/usr/bin/python3"
+        if not Path(interpreter).is_file():
+            self.skipTest("system Python is unavailable for the native sandbox probe")
         prepared = harness.prepare_background_command(session, {
             "command": shlex.join([interpreter, str(script)]), "cwd": str(workspace), "timeoutSeconds": 10,
         })

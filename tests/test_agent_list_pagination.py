@@ -10,11 +10,11 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from rag_ime.agent_rooms import AgentRoomStore
+from rag_ime.rooms.store import AgentRoomStore
 from rag_ime.agent_service import AgentService
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.debug_server import DebugRequestHandler
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 class AgentListPaginationTests(unittest.TestCase):

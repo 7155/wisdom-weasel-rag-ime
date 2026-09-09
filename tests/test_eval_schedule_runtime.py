@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_service import AgentService
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 from rag_ime.trace_runtime import EvidenceRef, build_eval_run, build_trace_envelope, make_span
 from rag_ime.vertical_agent_harness import load_builtin_manifests
 from rag_ime.vertical_agent_suite import evaluate_vertical_agent_case_trace

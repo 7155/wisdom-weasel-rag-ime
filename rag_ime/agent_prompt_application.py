@@ -124,6 +124,38 @@ class AgentPromptApplicationService:
                 client_message_id=client_message_id,
             )
 
+    def prompt_rewritten_session(
+        self,
+        *,
+        session_id: str,
+        message: str,
+        checkpoint_text: str,
+        attachment_ids: list[str],
+        client_message_id: str,
+        context_source: str,
+    ) -> dict[str, object]:
+        """Admit the replacement after rewind, using the same Stop fence as send."""
+
+        request = {"clientMessageId": client_message_id}
+        runtime = self._reserve_prompt_admission(session_id, request)
+        try:
+            response = dict(self.dispatch_checkpoint(
+                session_id=session_id,
+                message=message,
+                checkpoint_text=checkpoint_text,
+                attachment_ids=attachment_ids,
+                client_message_id=client_message_id,
+                context_source=context_source,
+            ))
+        except (AgentPromptAcceptanceUnknown, AgentPromptPostAcceptanceFailure):
+            # Preserve an uncertain dispatched admission until Host reconciliation.
+            raise
+        except Exception:
+            self._release_prompt_admission(runtime, session_id, request)
+            raise
+        self._release_prompt_admission(runtime, session_id, request)
+        return response
+
     def prompt(
         self,
         session_id: str,

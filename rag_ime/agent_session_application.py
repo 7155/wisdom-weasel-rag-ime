@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from .agent_runtime_driver import RuntimeSessionLifecycle
+from .agent_sessions import AgentSessionStore
+from .agent_runtime_driver import RuntimeDriverFactory
+from .agent_configuration import AgentConfigurationStore
+from rag_ime.rooms.store import AgentRoomStore
+from .agent_delegation import AgentDelegationCoordinator
+from .agent_media import AgentMediaStore
+from .agent_events import AgentEventHub
+
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
 
 from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
@@ -35,14 +43,14 @@ class AgentSessionApplicationService:
     def __init__(
         self,
         *,
-        sessions: Any,
-        runtime_provider: Callable[[], Any],
-        runtime_factory: Any,
-        configuration_store: Any,
-        rooms: Any,
-        delegation: Any,
-        media: Any,
-        events: Any,
+        sessions: AgentSessionStore,
+        runtime_provider: Callable[[], RuntimeSessionLifecycle],
+        runtime_factory: RuntimeDriverFactory,
+        configuration_store: AgentConfigurationStore,
+        rooms: AgentRoomStore,
+        delegation: AgentDelegationCoordinator,
+        media: AgentMediaStore,
+        events: AgentEventHub,
         runtime_status: Callable[[], Mapping[str, object]],
         pending_memory_bootstrap: Callable[[Mapping[str, object]], Mapping[str, object]],
         probe_memory_maintenance: Callable[..., Mapping[str, object]],
@@ -60,7 +68,7 @@ class AgentSessionApplicationService:
         self.probe_memory_maintenance = probe_memory_maintenance
 
     @property
-    def runtime(self) -> Any:
+    def runtime(self) -> RuntimeSessionLifecycle:
         return self._runtime_provider()
 
     def ensure_runtime(self, payload: Mapping[str, object]) -> dict[str, object]:

@@ -24,7 +24,7 @@ from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_execution_policy import APPROVAL_AUTO, APPROVAL_DENY, approval_strategy
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_templates import AgentTemplateBudget, agent_template as real_agent_template
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 _TASK_CONTRACT = {
     "expectedOutput": "一份可供主持会话核验的有界结果",

@@ -68,6 +68,32 @@ Native or input-method changes also require the relevant build and an attended
 foreground test. A backend JSON response is not proof that a candidate was
 visible and selectable in Squirrel.
 
+## Extension Contracts
+
+Use the existing owner for each extension. Do not add another plugin registry or
+an execution loop beside Pi.
+
+| Extension | Entry and contract | Verification |
+| --- | --- | --- |
+| Lab scene | `TrialAdapter.prepare/execute`, registered in the supplied adapter mapping | [Runnable offline example](examples/lab/README.md); execution, cancellation, cleanup and persisted replay |
+| Tool or Skill | Pi/Package resources with declared arguments and current dispatch permissions | Tool contract and permission tests; Pi keeps the model/Tool loop |
+| Workbench page | `registerProductExtensionHosts`, a lazy page loader and manifest host type | Host registration/restore tests; feature code stays outside window management |
+| Model on an existing protocol | Pi Provider configuration and its existing adapter | Model catalog/configuration tests; Session, Room and Lab orchestration stay unchanged |
+
+For a page, keep rendering in the feature, interaction state with the page,
+HTTP/SSE adaptation in the transport, and host wiring in `src/app`. Test and
+preview transports must satisfy the same request/event contracts. Preview is an
+explicit mode; a failed production request must not silently become a successful
+Mock response. Start with `control-transport-variants`, `http-transport`,
+`mock-transport` and `host-registry` tests when changing these boundaries.
+
+The resume workflows under `.agents/skills` are project-scoped resources for
+this workspace, discovered through the existing project Skill catalog. Their
+upstream source and paths are recorded in [skills-lock.json](skills-lock.json).
+They are optional for backend/frontend setup; keep real resume facts and outputs
+outside the source tree, as their workflow contract requires. The product's Pi
+Skills remain under `integrations/pi/skills`.
+
 ## Pull Requests
 
 Describe:

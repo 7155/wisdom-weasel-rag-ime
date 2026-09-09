@@ -63,7 +63,7 @@ PACKAGE_RULES = {
 #                             -> domain (agent_room_*, agent_definitions)
 ENTRY_MODULES = ("rag_ime.debug_server", "rag_ime.cli")
 APPLICATION_SUFFIXES = ("_service", "_application")
-DOMAIN_PREFIXES = ("rag_ime.agent_room_", "rag_ime.agent_definitions")
+DOMAIN_PREFIXES = ("rag_ime.rooms.", "rag_ime.agent_room_", "rag_ime.agent_definitions")
 
 V1_CORE_FILES = (
     Path("rag_ime/contracts/key_policy.py"),
@@ -175,18 +175,29 @@ def check_import_boundaries(root: Path) -> list[ImportViolation]:
 # Module-level and deferred imports are both checked, because hiding an import
 # inside a function does not make it a private implementation detail.
 PI_FAMILY_MODULES = (
-    "rag_ime.pi_runtime",
-    "rag_ime.pi_runtime_v2",
-    "rag_ime.pi_runtime_public",
-    "rag_ime.pi_runtime_values",
-    "rag_ime.pi_runtime_transcript",
-    "rag_ime.pi_runtime_protocols",
+    "rag_ime.pi.config",
+    "rag_ime.pi.factory",
+    "rag_ime.pi.host_client",
+    "rag_ime.pi.runtime",
+    "rag_ime.pi.public",
+    "rag_ime.pi.values",
+    "rag_ime.pi.transcript",
+    "rag_ime.pi.transcript_io",
+    "rag_ime.pi.event_projection",
+    "rag_ime.pi.ui_requests",
+    "rag_ime.pi.protocols",
     "rag_ime.agent_runtime_driver",
 )
 
 
 def check_pi_family_public_contracts(root: Path) -> list[ImportViolation]:
     violations: list[ImportViolation] = []
+    retired_path = root / "rag_ime/pi_runtime.py"
+    if retired_path.exists():
+        violations.append(ImportViolation(
+            path="rag_ime/pi_runtime.py", module="rag_ime.pi_runtime", imported="",
+            reason="The retired Pi v1 adapter must not be restored; use config, factory and Host owners",
+        ))
     trees: dict[str, ast.Module] = {}
     public_exports: dict[str, frozenset[str]] = {}
 
@@ -258,50 +269,6 @@ def check_pi_family_public_contracts(root: Path) -> list[ImportViolation]:
                         )
                     )
 
-    registry_module = "rag_ime.pi_runtime_protocols"
-    registry_tree = trees.get(registry_module)
-    if registry_tree is not None:
-        targets = _literal_protocol_targets(registry_tree)
-        registry_path = root / Path(registry_module.replace(".", "/") + ".py")
-        if targets is None:
-            violations.append(
-                ImportViolation(
-                    path=str(registry_path.relative_to(root)),
-                    module=registry_module,
-                    imported="",
-                    reason=(
-                        "Pi protocol registry must be a literal mapping so "
-                        "its manager contracts can be checked statically"
-                    ),
-                )
-            )
-        else:
-            for version, target_module, attribute in targets:
-                target_exports = public_exports.get(target_module)
-                if target_module not in PI_FAMILY_MODULES or target_exports is None:
-                    violations.append(
-                        ImportViolation(
-                            path=str(registry_path.relative_to(root)),
-                            module=registry_module,
-                            imported=f"{target_module}.{attribute}",
-                            reason=(
-                                f"Pi protocol {version} targets a module "
-                                "outside the checked public family"
-                            ),
-                        )
-                    )
-                elif attribute not in target_exports:
-                    violations.append(
-                        ImportViolation(
-                            path=str(registry_path.relative_to(root)),
-                            module=registry_module,
-                            imported=f"{target_module}.{attribute}",
-                            reason=(
-                                f"Pi protocol {version} manager must be "
-                                "declared by the target module's __all__"
-                            ),
-                        )
-                    )
     return violations
 
 
@@ -326,46 +293,6 @@ def _literal_module_exports(tree: ast.Module) -> frozenset[str] | None:
                 return None
             exports.append(element.value)
         return frozenset(exports)
-    return None
-
-
-def _literal_protocol_targets(
-    tree: ast.Module,
-) -> tuple[tuple[str, str, str], ...] | None:
-    """Read the static protocol registry without importing either runtime."""
-
-    for node in tree.body:
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        if not any(
-            isinstance(target, ast.Name) and target.id == "PROTOCOL_MANAGERS"
-            for target in targets
-        ):
-            continue
-        value = node.value
-        if not isinstance(value, ast.Dict):
-            return None
-        entries: list[tuple[str, str, str]] = []
-        for key, target in zip(value.keys, value.values, strict=True):
-            if (
-                not isinstance(key, ast.Constant)
-                or not isinstance(key.value, str)
-                or not isinstance(target, ast.Tuple)
-                or len(target.elts) != 2
-                or not all(
-                    isinstance(element, ast.Constant)
-                    and isinstance(element.value, str)
-                    for element in target.elts
-                )
-            ):
-                return None
-            module_name = target.elts[0]
-            attribute = target.elts[1]
-            assert isinstance(module_name, ast.Constant)
-            assert isinstance(attribute, ast.Constant)
-            entries.append((key.value, module_name.value, attribute.value))
-        return tuple(entries)
     return None
 
 

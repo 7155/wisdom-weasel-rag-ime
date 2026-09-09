@@ -23,7 +23,6 @@ from rag_ime.agent_tools import (
 )
 from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.contracts.json_schema import validate_contract
-from rag_ime.pi_runtime import _tools_for_session
 
 
 class _Runtime:
@@ -816,34 +815,6 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         ):
             self.assertTrue(read_only_blocks_effect(blocked_tool, operation))
         self.assertFalse(read_only_blocks_effect("workspace_shell", "run"))
-        selected = _tools_for_session(
-            (
-                "workspace_list",
-                "workspace_read",
-                "workspace_search",
-                "workspace_lsp",
-                "workspace_patch",
-                "workspace_edit",
-                "workspace_write",
-                "workspace_shell",
-                "workspace_job",
-            ),
-            {
-                "mode": "coordinator",
-                "toolProfileVersion": "control-center-v1",
-                "executionMode": "read_only",
-            },
-        )
-        self.assertEqual(
-            selected,
-            (
-                "workspace_list",
-                "workspace_read",
-                "workspace_search",
-                "workspace_lsp",
-                "workspace_shell",
-            ),
-        )
 
     def test_read_only_workspace_shell_executes_without_a_write_approval(self) -> None:
         session = self.sessions.create(

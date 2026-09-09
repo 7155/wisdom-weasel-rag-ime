@@ -5,15 +5,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_room_participants import project_room_participant_policy
-from rag_ime.agent_rooms import AgentRoomStore
+from rag_ime.rooms.participants import project_room_participant_policy
+from rag_ime.rooms.store import AgentRoomStore
 from rag_ime.agent_service import AgentService
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tool_ids import (
     FULL_ACCESS_TOOL_PROFILE,
     READONLY_TOOL_PROFILE,
 )
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 from rag_ime.room_permission_policy import (
     ROOM_PERMISSION_POLICY_SCHEMA_VERSION,
     default_room_permission_policy,

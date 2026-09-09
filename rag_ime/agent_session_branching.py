@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+from .agent_runtime_driver import RuntimeSessionBranching
+from .agent_sessions import AgentSessionStore
+from .agent_runtime_driver import RuntimeDriverFactory
+from rag_ime.rooms.store import AgentRoomStore
+from .agent_delegation import AgentDelegationCoordinator
+from .agent_media import AgentMediaStore
+from .agent_events import AgentEventHub
+from .agent_command_receipts import AgentCommandReceiptStore
+
 from collections.abc import Callable, Mapping
-from typing import Any
 
 from .contracts.json_schema import validate_contract
 
@@ -12,14 +20,14 @@ class AgentSessionBranchingService:
     def __init__(
         self,
         *,
-        sessions: Any,
-        runtime_provider: Callable[[], Any],
-        runtime_factory: Any,
-        rooms: Any,
-        delegation: Any,
-        media: Any,
-        events: Any,
-        command_receipts: Any,
+        sessions: AgentSessionStore,
+        runtime_provider: Callable[[], RuntimeSessionBranching],
+        runtime_factory: RuntimeDriverFactory,
+        rooms: AgentRoomStore,
+        delegation: AgentDelegationCoordinator,
+        media: AgentMediaStore,
+        events: AgentEventHub,
+        command_receipts: AgentCommandReceiptStore,
         prompt_with_checkpoint: Callable[..., Mapping[str, object]],
     ) -> None:
         self.sessions = sessions
@@ -33,7 +41,7 @@ class AgentSessionBranchingService:
         self.prompt_with_checkpoint = prompt_with_checkpoint
 
     @property
-    def runtime(self) -> Any:
+    def runtime(self) -> RuntimeSessionBranching:
         return self._runtime_provider()
 
     def fork_candidates(self, session_id: str) -> dict[str, object]:

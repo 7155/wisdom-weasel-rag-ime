@@ -46,7 +46,8 @@ from .agent_templates import (
 from .agent_workspace_roots import existing_workspace_roots, system_wide_workspace_roots
 from .contracts.json_schema import validate_contract, validate_json_schema
 from .db import apply_database_migrations
-from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory, PiRuntimeManager
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.factory import PiRuntimeDriverFactory
 
 
 _TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "timed_out"})
@@ -1880,7 +1881,7 @@ class AgentDelegationCoordinator:
         events: AgentEventHub,
         context_runtime: AgentContextRuntime,
         media_resolver: Callable[[str, str, str], str] | None = None,
-        runtime_factory: Callable[..., PiRuntimeManager] | None = None,
+        runtime_factory: Callable[..., AgentRuntimeDriver] | None = None,
         runtime_driver_factory: RuntimeDriverFactory | None = None,
         runtime_provider: Callable[[], AgentRuntimeDriver] | None = None,
         tool_gateway_token: str = "",

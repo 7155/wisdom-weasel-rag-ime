@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
-from typing import Any, Protocol
+from collections.abc import Callable, Mapping
+
+from .agent_sessions import AgentSessionStore
+from .agent_events import AgentEventHub
+from .agent_memory_sources import AgentMemorySourceStore
 
 from .external_actions import (
     PORTABLE_RESTORE_ACTION,
@@ -11,29 +14,32 @@ from .external_actions import (
 )
 
 
-class ExternalApprovalHost(Protocol):
-    sessions: Any
-    events: Any
-    memory_sources: Any
-    _process_id_provider: Any
-
-    def _record_tool_receipt_evidence_safely(
-        self,
-        approval: Mapping[str, object],
-    ) -> dict[str, object]: ...
-
 class ExternalApprovalFinalizer:
     """Verify supervisor receipts and close external approval operations."""
 
-    def __init__(self, host: ExternalApprovalHost) -> None:
-        self.host = host
+    def __init__(
+        self,
+        *,
+        sessions: AgentSessionStore,
+        events: AgentEventHub,
+        memory_sources: AgentMemorySourceStore,
+        process_id_provider: Callable[[], int],
+        record_tool_receipt_evidence: Callable[
+            [Mapping[str, object]], dict[str, object]
+        ],
+    ) -> None:
+        self.sessions = sessions
+        self.events = events
+        self.memory_sources = memory_sources
+        self._process_id_provider = process_id_provider
+        self._record_tool_receipt_evidence_safely = record_tool_receipt_evidence
 
     def finalize(
         self,
         approval_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        current = self.host.sessions.get_approval(approval_id)
+        current = self.sessions.get_approval(approval_id)
         if current.get("state") != "external_pending":
             raise ValueError(
                 "approval is not waiting for an external supervisor"
@@ -66,7 +72,7 @@ class ExternalApprovalFinalizer:
             minimum=0,
             maximum=2_147_483_647,
         )
-        current_process_id = int(self.host._process_id_provider())
+        current_process_id = int(self._process_id_provider())
         restore_result = self._restore_result(
             pending_receipt,
             action=action,
@@ -91,7 +97,7 @@ class ExternalApprovalFinalizer:
             current_process_id=current_process_id,
             restore_result=restore_result,
         )
-        final = self.host.sessions.finalize_external_approval(
+        final = self.sessions.finalize_external_approval(
             approval_id,
             state="applied" if succeeded else "failed",
             receipt=final_receipt,
@@ -102,7 +108,7 @@ class ExternalApprovalFinalizer:
         if succeeded:
             try:
                 memory_checkpoint = (
-                    self.host.memory_sources.checkpoint_tool_receipt(
+                    self.memory_sources.checkpoint_tool_receipt(
                         final
                     )
                 )
@@ -117,9 +123,9 @@ class ExternalApprovalFinalizer:
                     "error": _public_error(exc),
                 }
             memory_evidence = (
-                self.host._record_tool_receipt_evidence_safely(final)
+                self._record_tool_receipt_evidence_safely(final)
             )
-        self.host.events.publish(
+        self.events.publish(
             str(final.get("sessionId") or ""),
             "approval_resolved",
             {

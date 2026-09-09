@@ -6,8 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from rag_ime.agent_protocol import AgentEventEnvelope
-from rag_ime.agent_room_partner_application import RoomPartnerApplicationService
-from rag_ime.agent_room_partner_dispatch_store import (
+from rag_ime.rooms.partner_application import RoomPartnerApplicationService
+from rag_ime.rooms.partner_dispatch_store import (
     AgentRoomPartnerDispatchStore,
 )
 from rag_ime.agent_wake_scheduler import AgentWakeScheduleStore

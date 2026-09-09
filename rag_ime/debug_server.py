@@ -200,9 +200,9 @@ from .personal_context_maintenance import (
     PersonalContextMaintenanceConfig,
     PersonalContextMaintenanceRunner,
 )
-from .pi_provider_auth import PiProviderAuthError, PiProviderAuthService
-from .pi_runtime import PiRuntimeConfig
-from .pi_runtime_values import PiRuntimeCommandRejected
+from rag_ime.pi.provider_auth import PiProviderAuthError, PiProviderAuthService
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.values import PiRuntimeCommandRejected
 from .personal_context_observability import PersonalContextObservability
 from .prediction_anchors import build_prediction_anchors_from_snapshot
 from .predictor import (

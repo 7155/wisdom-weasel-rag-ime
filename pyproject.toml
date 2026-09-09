@@ -44,22 +44,30 @@ testpaths = ["tests"]
 
 [tool.mypy]
 # Strict checking for the stable boundary contracts only -- the modules other
-# code programs against: protocol selection, the runtime-neutral driver
+# code programs against: protocol validation, the runtime-neutral driver
 # contract, control-api models, the route descriptor table and the Room turn
 # registry. Everything below is strict-clean today, so a failure means a new
 # contract break rather than pre-existing debt. This is deliberately NOT the
 # start of whole-repository typing: large application modules stay unchecked
 # until a boundary they own stabilises enough to join this list.
 files = [
-    "rag_ime/pi_runtime_protocols.py",
+    "rag_ime/pi/protocols.py",
+    "rag_ime/pi/config.py",
+    "rag_ime/pi/factory.py",
+    "rag_ime/pi/host_client.py",
     "rag_ime/agent_runtime_driver.py",
-    "rag_ime/pi_runtime_public.py",
-    "rag_ime/pi_runtime_values.py",
-    "rag_ime/pi_runtime_transcript.py",
+    "rag_ime/pi/public.py",
+    "rag_ime/pi/values.py",
+    "rag_ime/pi/transcript.py",
+    "rag_ime/pi/transcript_io.py",
+    "rag_ime/pi/event_projection.py",
+    "rag_ime/pi/ui_requests.py",
     "rag_ime/control_api/models.py",
     "rag_ime/control_api/lab_errors.py",
     "rag_ime/control_api/route_table.py",
-    "rag_ime/agent_room_turn_registry.py",
+    "rag_ime/rooms/turn_registry.py",
+    "rag_ime/rooms/work_application.py",
+    "rag_ime/agent_composition.py",
 ]
 python_version = "3.12"
 strict = true
@@ -81,12 +89,10 @@ target-version = "py312"
 # overrides live code, which this repository had two real instances of.
 # No formatting or style rules: reformatting the repository is out of scope.
 #
-# Known non-zero and deliberately NOT enabled yet, with counts measured at
-# this commit, so the gate is never mistaken for full coverage:
-#   F401 unused-import      32   (removal touches many files; needs its own pass)
-#   B904 raise-without-from-inside-except  3  (changes exception chaining)
-#   F841 unused-variable     5
-#   F541 f-string-no-placeholder  2
+# Deferred lint rules require an ownership/effect audit before enabling:
+# F401 includes deliberate public re-exports; F841 can contain an effectful
+# right-hand side; B904 changes exception chaining. Do not auto-delete these
+# merely to reach a numeric lint target. No whole-repository formatting gate.
 # F821 is now enabled: both findings were real and are fixed.
 # B023 is now enabled: its one finding was in a test lambda closing over a loop
 # variable, which is now bound explicitly.

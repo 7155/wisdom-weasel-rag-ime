@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from rag_ime.agent_command_receipts import AgentCommandReceiptFailed
 from rag_ime.agent_service import AgentService
-from rag_ime.pi_runtime import PiRuntimeConfig
-from rag_ime.pi_runtime_values import PiRuntimeCommandRejected
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.values import PiRuntimeCommandRejected
 
 
 class AgentServiceRoomPartnerWakeTest(unittest.TestCase):

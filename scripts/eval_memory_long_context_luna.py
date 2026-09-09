@@ -41,7 +41,7 @@ from rag_ime.memory_long_context_evaluation import (
     redacted_marker_summary,
 )
 from rag_ime.memory_model_executor import build_governed_memory_model_executor
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 from pi_canary_support import (
     OPENAI_CODEX_PROXY_ENV,

@@ -69,7 +69,7 @@ class ManagedPiRuntimeInstallation:
     extension_path: Path
     tools: tuple[str, ...]
     manifest_sha256: str
-    protocol_version: str = "1"
+    protocol_version: str = "2"
     runtime_methods: tuple[str, ...] = ()
 
 
@@ -171,6 +171,7 @@ def snapshot_managed_pi_runtime(
         except ManagedPiRuntimeError:
             continue
         if pointer_after == pointer_before:
+            _require_supported_protocol(installation.protocol_version)
             return installation
     raise ManagedPiRuntimeError(
         "managed Pi runtime pointer changed during read-only snapshot"
@@ -203,7 +204,7 @@ def snapshot_managed_pi_runtime_payload(
         manifest.get("runtimeVersion"),
         label="runtime version",
     )
-    return _load_installation(
+    installation = _load_installation(
         runtime_root=payload_root.parent,
         runtime_dir=payload_root,
         expected_manifest_sha256=manifest_sha256,
@@ -211,6 +212,8 @@ def snapshot_managed_pi_runtime_payload(
         verify_all_files=True,
         expected_runtime_version=runtime_version,
     )
+    _require_supported_protocol(installation.protocol_version)
+    return installation
 
 
 def inspect_managed_pi_runtime(
@@ -269,13 +272,15 @@ def _discover_managed_pi_runtime_locked(
     version = _safe_version(pointer.get("version"), label="runtime pointer version")
     manifest_sha256 = _sha256_text(pointer.get("manifestSha256"), label="runtime manifest digest")
     runtime_dir = runtime_root / version
-    return _load_installation(
+    installation = _load_installation(
         runtime_root=runtime_root,
         runtime_dir=runtime_dir,
         expected_manifest_sha256=manifest_sha256,
         expected_pi_version=expected_pi_version,
         verify_all_files=True,
     )
+    _require_supported_protocol(installation.protocol_version)
+    return installation
 
 
 def install_managed_pi_runtime(
@@ -305,7 +310,7 @@ def install_managed_pi_runtime(
     version = _safe_version(manifest.get("runtimeVersion"), label="runtime version")
 
     # Verify the complete payload before the application support tree changes.
-    _load_installation(
+    verified = _load_installation(
         runtime_root=source.parent,
         runtime_dir=source,
         expected_manifest_sha256=manifest_sha256,
@@ -313,6 +318,7 @@ def install_managed_pi_runtime(
         verify_all_files=True,
         expected_runtime_version=version,
     )
+    _require_supported_protocol(verified.protocol_version)
 
     with _managed_runtime_lock(app_support) as runtime_root:
         destination = runtime_root / version
@@ -1040,38 +1046,15 @@ def _activate_managed_pi_runtime_locked(
     *,
     acceptance: Mapping[str, object] | None,
 ) -> None:
-    if installation.protocol_version == "2" and acceptance is None:
+    _require_supported_protocol(installation.protocol_version)
+    if acceptance is None:
         raise ManagedPiRuntimeError(
             "managed Pi protocol v2 activation requires a passed acceptance receipt"
         )
-    if acceptance is not None:
-        accepted_entry = _accepted_generation_entry(installation, acceptance)
-        _activate_preaccepted_managed_pi_runtime_locked(
-            runtime_root,
-            installation,
-            accepted_entry=accepted_entry,
-        )
-        return
-
-    # Compatibility activation: it remains runnable, but without deterministic
-    # acceptance it cannot create retired lineage or authorize later pruning.
-    predecessor = _activation_predecessor(
-        runtime_root,
-        activating_version=installation.runtime_version,
+    accepted_entry = _accepted_generation_entry(installation, acceptance)
+    _activate_preaccepted_managed_pi_runtime_locked(
+        runtime_root, installation, accepted_entry=accepted_entry,
     )
-    pointer: dict[str, object] = {
-        "schemaVersion": POINTER_SCHEMA_VERSION,
-        "version": installation.runtime_version,
-        "manifestSha256": installation.manifest_sha256,
-        "activatedAtMs": int(time.time() * 1000),
-    }
-    if (
-        predecessor is not None
-        and predecessor.runtime_version != installation.runtime_version
-    ):
-        pointer["previousVersion"] = predecessor.runtime_version
-        pointer["previousManifestSha256"] = predecessor.manifest_sha256
-    _write_runtime_pointer(runtime_root, pointer)
 
 
 def _activate_preaccepted_managed_pi_runtime_locked(
@@ -1080,6 +1063,7 @@ def _activate_preaccepted_managed_pi_runtime_locked(
     *,
     accepted_entry: dict[str, object],
 ) -> None:
+    _require_supported_protocol(installation.protocol_version)
     pointer_path = runtime_root / POINTER_NAME
     prior_pointer: dict[str, object] | None = None
     prior_current: ManagedPiRuntimeInstallation | None = None
@@ -2422,7 +2406,7 @@ def build_managed_pi_runtime_manifest(
     source_repository: str,
     source_commit: str,
     source_package: str,
-    protocol_version: str = "1",
+    protocol_version: str = "2",
     runtime_methods: tuple[str, ...] = (),
     source_contract_sha256: str = "",
     handlers_commit: str = "",
@@ -2466,7 +2450,7 @@ def build_managed_pi_runtime_manifest(
     missing = [path.as_posix() for path in critical if path.as_posix() not in file_paths]
     if missing:
         raise ManagedPiRuntimeError(f"managed Pi payload is missing critical files: {', '.join(missing)}")
-    normalized_protocol = _protocol_version(protocol_version)
+    normalized_protocol = _require_supported_protocol(protocol_version)
     normalized_runtime_methods = _runtime_methods(runtime_methods, normalized_protocol)
     source: dict[str, object] = {
         "repository": str(source_repository).strip(),
@@ -2609,6 +2593,8 @@ def _load_installation(
         extension_path=extension,
         tools=_validate_tools(manifest.get("tools")),
         manifest_sha256=actual_manifest_sha256,
+        # Missing protocol metadata identifies a historical v1 generation; execution
+        # entrypoints reject it while inspection/retention can still read it.
         protocol_version=_protocol_version(manifest.get("runtimeProtocolVersion") or "1"),
         runtime_methods=_runtime_methods(
             manifest.get("runtimeMethods"),
@@ -2651,6 +2637,15 @@ def _validate_manifest(manifest: Mapping[str, object]) -> None:
             raise ManagedPiRuntimeError("managed Pi manifest file size is invalid")
         if not isinstance(item.get("executable"), bool):
             raise ManagedPiRuntimeError("managed Pi manifest executable flag is invalid")
+
+
+def _require_supported_protocol(value: object) -> str:
+    version = _protocol_version(value)
+    if version != "2":
+        raise ManagedPiRuntimeError(
+            "managed Pi protocol 1 is retired; rebuild and install a protocol 2 Host"
+        )
+    return version
 
 
 def _protocol_version(value: object) -> str:

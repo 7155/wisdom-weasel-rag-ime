@@ -8,8 +8,8 @@ from contextlib import closing
 from pathlib import Path
 
 from rag_ime.agent_context_runtime import AgentContextRuntime
-from rag_ime.agent_room_work import AgentRoomWorkStore
-from rag_ime.agent_rooms import AgentRoomStore
+from rag_ime.rooms.work import AgentRoomWorkStore
+from rag_ime.rooms.store import AgentRoomStore
 from rag_ime.agent_sessions import (
     AgentGoalExecutionBlocked,
     AgentSessionNotFound,

@@ -10,7 +10,7 @@ from rag_ime.agent_blocks import (
     provider_block_projection,
     validate_persisted_blocks,
 )
-from rag_ime.pi_runtime import pi_message_payload
+from rag_ime.pi.public import pi_message_payload
 
 
 def fenced(blocks: list[dict[str, object]]) -> str:

@@ -11,12 +11,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime import agent_rooms as agent_rooms_module
+from rag_ime.rooms import store as agent_rooms_module
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
-from rag_ime.agent_rooms import AgentRoomEventHub, AgentRoomStore
+from rag_ime.rooms.store import AgentRoomEventHub, AgentRoomStore
 from rag_ime.agent_service import AgentService
 from rag_ime.agent_sessions import AgentSessionStore
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -577,7 +577,7 @@ class AgentRoomTests(unittest.TestCase):
         )
 
         with patch(
-            "rag_ime.agent_rooms._room_event_payload",
+            "rag_ime.rooms.store._room_event_payload",
             wraps=agent_rooms_module._room_event_payload,
         ) as parse_event:
             events = self.store.list_events_for_turn(
@@ -621,7 +621,7 @@ class AgentRoomTests(unittest.TestCase):
         )
 
         with patch(
-            "rag_ime.agent_rooms._room_event_payload",
+            "rag_ime.rooms.store._room_event_payload",
             wraps=agent_rooms_module._room_event_payload,
         ) as parse_event:
             present = self.store.has_typed_result(
@@ -684,7 +684,7 @@ class AgentRoomTests(unittest.TestCase):
         )
 
         with patch(
-            "rag_ime.agent_rooms._room_event_payload",
+            "rag_ime.rooms.store._room_event_payload",
             wraps=agent_rooms_module._room_event_payload,
         ) as parse_event:
             events = self.store.list_recovery_events_for_dispatches(

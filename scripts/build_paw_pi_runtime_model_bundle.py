@@ -62,8 +62,8 @@ PAW_EXACT_FILES = (
 )
 
 PAW_GLOBS = (
-    "rag_ime/pi_runtime*.py",
-    "rag_ime/agent_room*.py",
+    "rag_ime/pi/*.py",
+    "rag_ime/rooms/*.py",
     "rag_ime/contracts/json/agent-*.json",
     "rag_ime/contracts/json/pi-runtime-manifest.v1.json",
     "integrations/pi/**/*",
@@ -156,9 +156,8 @@ OWNER_MARKERS = (
     "export class Agent",
     "export class AgentSessionRuntime",
     "export class RagImeRuntimeHost",
-    "class PiRuntimeManager",
     "class PiRuntimeHostManager",
-    "def resolve_protocol_manager(",
+    "class PiRuntimeDriverFactory",
     "class AgentService",
 )
 

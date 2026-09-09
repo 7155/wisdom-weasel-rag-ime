@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import closing
 import sqlite3
-from typing import Any, Protocol
+from typing import Protocol
 
 from .agent_execution_policy import (
     APPROVAL_ASK,
@@ -16,6 +16,12 @@ from .agent_execution_policy import (
     unrestricted_workspace_policy_active,
 )
 from .agent_external_approval import ExternalApprovalFinalizer
+from .agent_approval_model import ApprovalModelArbiter
+from .agent_sessions import AgentSessionStore
+from .agent_events import AgentEventHub
+from .agent_memory_sources import AgentMemorySourceStore
+from rag_ime.rooms.store import AgentRoomStore, AgentRoomEventHub
+from rag_ime.rooms.turn_registry import RoomTurnRegistry
 from .external_actions import (
     PORTABLE_RESTORE_ACTION,
     materialize_portable_restore_plan,
@@ -32,44 +38,107 @@ _RECOVERABLE_GOVERNED_MEMORY_OPERATIONS = frozenset(
 )
 
 
-class ApprovalHost(Protocol):
-    sessions: Any
-    runtime: Any
-    events: Any
-    rooms: Any
-    room_events: Any
-    memory_sources: Any
-    _approval_executor: Any
-    approval_model: Any
-    _process_id_provider: Any
+class ApprovalRuntime(Protocol):
+    """Only the live approval/review capability, resolved after Runtime replacement."""
 
-    def _record_tool_receipt_evidence_safely(
-        self,
-        approval: Mapping[str, object],
-    ) -> dict[str, object]: ...
-
-    def _active_room_dispatch_context(
+    def has_pending_approval(self, session_id: str, approval_id: str) -> bool: ...
+    def has_pending_review(self, session_id: str, run_id: str) -> bool: ...
+    def resolve_approval(
         self,
         session_id: str,
-    ) -> Mapping[str, object] | None: ...
+        approval_id: str,
+        *,
+        approved: bool,
+        resolution_state: str = "",
+    ) -> None: ...
+    def resolve_review(
+        self, session_id: str, run_id: str, *, reviewed: bool
+    ) -> None: ...
 
-    def _claim_approval_execution(
-        self,
-        approval: Mapping[str, object],
-    ) -> dict[str, object]: ...
+
+ApprovalExecutor = Callable[[Mapping[str, object]], Mapping[str, object]]
+
 
 class AgentApprovalApplicationService:
     """Own approval decisions, execution receipts, and external finalization."""
 
-    def __init__(self, host: ApprovalHost) -> None:
-        self.host = host
-        self.external = ExternalApprovalFinalizer(host)
+    def __init__(
+        self,
+        *,
+        sessions: AgentSessionStore,
+        events: AgentEventHub,
+        rooms: AgentRoomStore,
+        room_events: AgentRoomEventHub,
+        room_turns: RoomTurnRegistry,
+        memory_sources: AgentMemorySourceStore,
+        approval_model: ApprovalModelArbiter,
+        runtime_provider: Callable[[], ApprovalRuntime],
+        executor_provider: Callable[[], ApprovalExecutor | None],
+        process_id_provider: Callable[[], int],
+        record_tool_receipt_evidence: Callable[
+            [Mapping[str, object]], dict[str, object]
+        ],
+        active_room_dispatch_context: Callable[[str], Mapping[str, object] | None],
+    ) -> None:
+        self.sessions = sessions
+        self.events = events
+        self.rooms = rooms
+        self.room_events = room_events
+        self.room_turns = room_turns
+        self.memory_sources = memory_sources
+        self.approval_model = approval_model
+        self._runtime_provider = runtime_provider
+        self._executor_provider = executor_provider
+        self._process_id_provider = process_id_provider
+        self._record_tool_receipt_evidence_safely = record_tool_receipt_evidence
+        self._active_room_dispatch_context = active_room_dispatch_context
+        self.external = ExternalApprovalFinalizer(
+            sessions=sessions,
+            events=events,
+            memory_sources=memory_sources,
+            process_id_provider=process_id_provider,
+            record_tool_receipt_evidence=record_tool_receipt_evidence,
+        )
+
+    @property
+    def runtime(self) -> ApprovalRuntime:
+        return self._runtime_provider()
+
+    def _claim_approval_execution(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Linearize a Room authorization with turn rotation and Runtime binding."""
+
+        approval_id = str(approval.get("approvalId") or "")
+        causal = (
+            approval.get("causalMetadata")
+            if isinstance(approval.get("causalMetadata"), Mapping)
+            else {}
+        )
+        if not bool(causal.get("roomBound")):
+            return self.sessions.claim_approval_execution(approval_id)
+        session_id = str(approval.get("sessionId") or "")
+        # Room begin/finish/cancel use this same lock.  Keep it held while the
+        # approval store atomically compares the runtime generation and claims
+        # the effect, making the claim the one execution-start boundary.
+        with self.room_turns.lock:
+            live_context = self._active_room_dispatch_context(session_id)
+            return self.sessions.claim_approval_execution(
+                approval_id,
+                room_context=(
+                    live_context
+                    if isinstance(live_context, Mapping)
+                    else {}
+                ),
+            )
+
 
     def reconcile_abandoned_execution_claims(self) -> dict[str, object]:
         """Repair interrupted approval projections without replaying Tools."""
 
         recovered, projection_candidates = (
-            self.host.sessions.fail_abandoned_approval_executions()
+            self.sessions.fail_abandoned_approval_executions()
         )
         session_projected_ids: list[str] = []
         for approval in projection_candidates:
@@ -81,11 +150,11 @@ class AgentApprovalApplicationService:
                 else {}
             )
             tool_call_id = str(approval.get("toolCallId") or "").strip()
-            has_approval_terminal = self.host.sessions.has_runtime_approval_resolution(
+            has_approval_terminal = self.sessions.has_runtime_approval_resolution(
                 session_id,
                 approval_id,
             )
-            has_tool_terminal = self.host.sessions.has_runtime_tool_terminal(
+            has_tool_terminal = self.sessions.has_runtime_tool_terminal(
                 session_id,
                 tool_call_id,
                 turn_id=str(causal.get("turnId") or ""),
@@ -101,14 +170,14 @@ class AgentApprovalApplicationService:
             )
             session_projected_ids.append(approval_id)
         if session_projected_ids:
-            flush = getattr(self.host.events, "flush", None)
+            flush = getattr(self.events, "flush", None)
             if callable(flush) and not flush():
                 raise RuntimeError(
                     "recovered Session projections did not drain"
                 )
         projected_ids: list[str] = []
         has_tool_terminal = getattr(
-            self.host.room_events,
+            self.room_events,
             "has_tool_terminal",
             None,
         )
@@ -187,11 +256,11 @@ class AgentApprovalApplicationService:
         )
         room_bound = bool(causal.get("roomBound"))
 
-        if self.host.runtime.has_pending_approval(session_id, approval_id):
+        if self.runtime.has_pending_approval(session_id, approval_id):
             # A surviving Runtime may still own a waiting Tool bridge. Resolve
             # it with the persisted truth, but continue to write the durable
             # recovery events below so another restart cannot lose the fact.
-            self.host.runtime.resolve_approval(
+            self.runtime.resolve_approval(
                 session_id,
                 approval_id,
                 approved=state in {"applied", "external_pending"},
@@ -206,7 +275,7 @@ class AgentApprovalApplicationService:
                 if room_bound
                 else {}
             )
-            self.host.events.publish(
+            self.events.publish(
                 session_id,
                 "approval_resolved",
                 {
@@ -220,7 +289,7 @@ class AgentApprovalApplicationService:
             )
         if include_tool and tool_call_id:
             is_error = state != "applied"
-            self.host.events.publish(
+            self.events.publish(
                 session_id,
                 "tool_finished",
                 {
@@ -257,7 +326,7 @@ class AgentApprovalApplicationService:
         approval_id = str(approval.get("approvalId") or "").strip()
         if not session_id or not room_id or not root_id or not approval_id:
             return
-        participant = self.host.rooms.participant_for_session(
+        participant = self.rooms.participant_for_session(
             session_id,
             active_only=False,
         )
@@ -313,7 +382,7 @@ class AgentApprovalApplicationService:
         }
         if is_error:
             approval_data["error"] = summary
-        self.host.room_events.publish_projection(
+        self.room_events.publish_projection(
             projection_key=(
                 f"approval-execution-recovery:{approval_id}"
             ),
@@ -332,7 +401,7 @@ class AgentApprovalApplicationService:
             topic_id="",
             created_at_ms=resolved_at_ms,
         )
-        self.host.room_events.publish_projection(
+        self.room_events.publish_projection(
             projection_key=(
                 f"approval-execution-recovery:{approval_id}:tool-finished"
             ),
@@ -386,7 +455,7 @@ class AgentApprovalApplicationService:
             minimum=1,
             maximum=500,
         )
-        recent = self.host.sessions.list_approvals(
+        recent = self.sessions.list_approvals(
             session_id=session_id,
             limit=500,
         )
@@ -394,7 +463,7 @@ class AgentApprovalApplicationService:
         items = (
             recent[:requested_limit]
             if not requested_state
-            else self.host.sessions.list_approvals(
+            else self.sessions.list_approvals(
                 session_id=session_id,
                 state=requested_state,
                 limit=requested_limit,
@@ -426,7 +495,7 @@ class AgentApprovalApplicationService:
                 continue
             session_id = str(approval.get("sessionId") or "")
             approval_id = str(approval.get("approvalId") or "")
-            if not self.host.runtime.has_pending_approval(
+            if not self.runtime.has_pending_approval(
                 session_id,
                 approval_id,
             ):
@@ -445,7 +514,7 @@ class AgentApprovalApplicationService:
         decision = str(payload.get("decision") or "").strip().lower()
         if decision not in {"reviewed", "deferred"}:
             raise ValueError("decision must be reviewed or deferred")
-        if not self.host.runtime.has_pending_review(session_id, run_id):
+        if not self.runtime.has_pending_review(session_id, run_id):
             recovery = self._recover_applied_memory_review(
                 session_id,
                 run_id,
@@ -466,7 +535,7 @@ class AgentApprovalApplicationService:
                 "recoveryAction": "retire_recovered_turn",
                 "recoveryReceipt": recovery,
             }
-        self.host.runtime.resolve_review(
+        self.runtime.resolve_review(
             session_id,
             run_id,
             reviewed=decision == "reviewed",
@@ -503,9 +572,9 @@ class AgentApprovalApplicationService:
         )
         if not candidate_turn_ids:
             return None
-        ensure = getattr(self.host.runtime, "ensure", None)
+        ensure = getattr(self.runtime, "ensure", None)
         retire = getattr(
-            self.host.runtime,
+            self.runtime,
             "retire_recovered_turn",
             None,
         )
@@ -532,7 +601,7 @@ class AgentApprovalApplicationService:
     def _memory_cleanup_run_status(self, run_id: str) -> str:
         """Read only the durable status gate needed for stale review repair."""
 
-        db_path = getattr(self.host.sessions, "db_path", None)
+        db_path = getattr(self.sessions, "db_path", None)
         if db_path is None:
             return ""
         try:
@@ -556,7 +625,7 @@ class AgentApprovalApplicationService:
 
         candidates: list[str] = []
         try:
-            replayed, _gap = self.host.events.replay(session_id)
+            replayed, _gap = self.events.replay(session_id)
         except Exception:
             replayed = []
         for event in replayed:
@@ -577,7 +646,7 @@ class AgentApprovalApplicationService:
             candidates.append(str(event.turn_id).strip())
 
         durable_lookup = getattr(
-            self.host.sessions,
+            self.sessions,
             "runtime_review_request_turn_ids",
             None,
         )
@@ -605,10 +674,10 @@ class AgentApprovalApplicationService:
         decision = str(payload.get("decision") or "").strip().lower()
         if decision not in {"approve", "reject"}:
             raise ValueError("decision must be approve or reject")
-        current = self.host.sessions.get_approval(approval_id)
+        current = self.sessions.get_approval(approval_id)
         session_id = str(current["sessionId"])
         approved = decision == "approve"
-        pending_in_pi = self.host.runtime.has_pending_approval(
+        pending_in_pi = self.runtime.has_pending_approval(
             session_id,
             approval_id,
         )
@@ -621,13 +690,13 @@ class AgentApprovalApplicationService:
             in _RECOVERABLE_GOVERNED_MEMORY_OPERATIONS
         ):
             self._require_current_payload(current, payload)
-            executor = self.host._approval_executor
+            executor = self._executor_provider()
             if executor is None:
                 raise ValueError("approval executor is unavailable")
             try:
-                current = self.host._claim_approval_execution(current)
+                current = self._claim_approval_execution(current)
             except ValueError:
-                terminal = self.host.sessions.get_approval(approval_id)
+                terminal = self.sessions.get_approval(approval_id)
                 return self.finish_terminal(
                     terminal,
                     pending_in_pi=pending_in_pi,
@@ -664,31 +733,31 @@ class AgentApprovalApplicationService:
         payload_sha256 = _required_text(payload, "payloadSha256")
         if payload_sha256 != str(current.get("payloadSha256") or ""):
             try:
-                self.host.sessions.decide_approval(
+                self.sessions.decide_approval(
                     approval_id,
                     approved=approved,
                     payload_sha256=payload_sha256,
                     decided_by="native-control-center",
                 )
             except ValueError:
-                terminal = self.host.sessions.get_approval(approval_id)
+                terminal = self.sessions.get_approval(approval_id)
                 if terminal.get("state") not in {"expired", "stale"}:
                     raise
                 return self.finish_terminal(
                     terminal,
                     pending_in_pi=pending_in_pi,
                 )
-        if approved and self.host._approval_executor is None:
+        if approved and self._executor_provider() is None:
             raise ValueError("approval executor is unavailable")
         try:
-            decided = self.host.sessions.decide_approval(
+            decided = self.sessions.decide_approval(
                 approval_id,
                 approved=approved,
                 payload_sha256=payload_sha256,
                 decided_by="native-control-center",
             )
         except ValueError:
-            terminal = self.host.sessions.get_approval(approval_id)
+            terminal = self.sessions.get_approval(approval_id)
             if terminal.get("state") not in {"expired", "stale"}:
                 raise
             return self.finish_terminal(
@@ -720,14 +789,14 @@ class AgentApprovalApplicationService:
         memory_evidence: dict[str, object] = {}
         if final.get("state") == "applied":
             memory_evidence = (
-                self.host._record_tool_receipt_evidence_safely(final)
+                self._record_tool_receipt_evidence_safely(final)
             )
         if pending_in_pi:
             resolution_state = str(
                 final.get("state") or "rejected"
             )
             try:
-                self.host.runtime.resolve_approval(
+                self.runtime.resolve_approval(
                     session_id,
                     approval_id,
                     approved=resolution_state
@@ -741,7 +810,7 @@ class AgentApprovalApplicationService:
                     "Pi 会话未收到审批结果，请刷新该对话",
                 )
         else:
-            self.host.events.publish(
+            self.events.publish(
                 session_id,
                 "approval_resolved",
                 {
@@ -777,9 +846,9 @@ class AgentApprovalApplicationService:
         approval: Mapping[str, object],
     ) -> dict[str, object]:
         approval_id = str(approval.get("approvalId") or "")
-        current = self.host.sessions.get_approval(approval_id)
+        current = self.sessions.get_approval(approval_id)
         session_id = str(current.get("sessionId") or "")
-        session = self.host.sessions.get(session_id)
+        session = self.sessions.get(session_id)
         causal = (
             current.get("causalMetadata")
             if isinstance(current.get("causalMetadata"), Mapping)
@@ -830,7 +899,7 @@ class AgentApprovalApplicationService:
         model_decision: Mapping[str, object] | None = None
         approved = strategy == APPROVAL_AUTO
         if strategy == APPROVAL_MODEL:
-            model_decision = self.host.approval_model.decide(
+            model_decision = self.approval_model.decide(
                 current,
                 session,
             )
@@ -870,22 +939,22 @@ class AgentApprovalApplicationService:
                 )
             )
 
-        if approved and self.host._approval_executor is None:
+        if approved and self._executor_provider() is None:
             raise ValueError("approval executor is unavailable")
         try:
-            decided = self.host.sessions.decide_approval(
+            decided = self.sessions.decide_approval(
                 approval_id,
                 approved=approved,
                 payload_sha256=str(current["payloadSha256"]),
                 decided_by=decided_by,
             )
         except ValueError:
-            terminal = self.host.sessions.get_approval(approval_id)
+            terminal = self.sessions.get_approval(approval_id)
             if terminal.get("state") not in {"expired", "stale"}:
                 raise
             decision_result = self.finish_terminal(
                 terminal,
-                pending_in_pi=self.host.runtime.has_pending_approval(
+                pending_in_pi=self.runtime.has_pending_approval(
                     session_id,
                     approval_id,
                 ),
@@ -921,7 +990,7 @@ class AgentApprovalApplicationService:
         event_payload.update(_approval_event_identity(final))
         if model_decision is not None:
             event_payload["approvalModelDecision"] = dict(model_decision)
-        self.host.events.publish(
+        self.events.publish(
             session_id,
             "approval_resolved",
             event_payload,
@@ -981,13 +1050,7 @@ class AgentApprovalApplicationService:
     ) -> bool:
         if not bool(causal.get("roomBound")):
             return False
-        inspect = getattr(
-            self.host,
-            "_active_room_dispatch_context",
-            None,
-        )
-        if not callable(inspect):
-            return False
+        inspect = self._active_room_dispatch_context
         try:
             live = inspect(session_id)
         except Exception:
@@ -1035,25 +1098,25 @@ class AgentApprovalApplicationService:
         """
 
         approval_id = str(approval.get("approvalId") or "")
-        current = self.host.sessions.get_approval(approval_id)
+        current = self.sessions.get_approval(approval_id)
         state = str(current.get("state") or "")
         if state == "pending":
             try:
-                current = self.host.sessions.decide_approval(
+                current = self.sessions.decide_approval(
                     approval_id,
                     approved=False,
                     payload_sha256=str(current.get("payloadSha256") or ""),
                     decided_by="automatic-approval-bridge",
                 )
             except ValueError:
-                current = self.host.sessions.get_approval(approval_id)
+                current = self.sessions.get_approval(approval_id)
         elif state == "approved":
             unknown_receipt = _unknown_effect_receipt(
                 current,
                 error=error,
             )
             try:
-                current = self.host.sessions.fail_claimed_approval_execution(
+                current = self.sessions.fail_claimed_approval_execution(
                     approval_id,
                     receipt=unknown_receipt,
                 )
@@ -1067,13 +1130,13 @@ class AgentApprovalApplicationService:
                     error=error,
                 )
                 try:
-                    current = self.host.sessions.complete_approval(
+                    current = self.sessions.complete_approval(
                         approval_id,
                         state="failed",
                         receipt=receipt,
                     )
                 except ValueError:
-                    current = self.host.sessions.get_approval(approval_id)
+                    current = self.sessions.get_approval(approval_id)
 
         terminal_state = str(current.get("state") or "failed")
         current_receipt = (
@@ -1102,11 +1165,11 @@ class AgentApprovalApplicationService:
         resolved_session_id = str(
             current.get("sessionId") or approval.get("sessionId") or ""
         )
-        if not self.host.sessions.has_runtime_approval_resolution(
+        if not self.sessions.has_runtime_approval_resolution(
             resolved_session_id,
             approval_id,
         ):
-            self.host.events.publish(
+            self.events.publish(
                 resolved_session_id,
                 "approval_resolved",
                 event_payload,
@@ -1182,7 +1245,7 @@ class AgentApprovalApplicationService:
         reason: str = "user_abort",
         turn_id: str = "",
     ) -> dict[str, object]:
-        summary = self.host.sessions.cancel_pending_approvals(
+        summary = self.sessions.cancel_pending_approvals(
             session_id,
             reason=reason,
             turn_id=turn_id,
@@ -1193,8 +1256,8 @@ class AgentApprovalApplicationService:
             if str(value).strip()
         ]
         for approval_id in cancelled_ids:
-            final = self.host.sessions.get_approval(approval_id)
-            self.host.events.publish(
+            final = self.sessions.get_approval(approval_id)
+            self.events.publish(
                 session_id,
                 "approval_resolved",
                 {
@@ -1218,16 +1281,16 @@ class AgentApprovalApplicationService:
         approval_id = str(decided.get("approvalId") or "")
         session_id = str(decided.get("sessionId") or "")
         try:
-            decided = self.host._claim_approval_execution(decided)
+            decided = self._claim_approval_execution(decided)
         except ValueError:
             # Stop/cancel may win after the policy decision but before the
             # external effect. The durable terminal row wins and the executor
             # must never be entered.
-            return self.host.sessions.get_approval(approval_id)
+            return self.sessions.get_approval(approval_id)
         if str(decided.get("state") or "") != "approved":
             return dict(decided)
         try:
-            executor = self.host._approval_executor
+            executor = self._executor_provider()
             assert executor is not None
             receipt = dict(executor(decided))
         except Exception as exc:
@@ -1241,13 +1304,13 @@ class AgentApprovalApplicationService:
             receipt.get("externalActionPending") is True
         )
         if external_action_pending:
-            origin_process_id = int(self.host._process_id_provider())
+            origin_process_id = int(self._process_id_provider())
             receipt["originProcessId"] = origin_process_id
             if receipt.get("externalAction") == PORTABLE_RESTORE_ACTION:
                 try:
                     receipt = materialize_portable_restore_plan(
                         approval=decided,
-                        session=self.host.sessions.get(session_id),
+                        session=self.sessions.get(session_id),
                         pending_receipt=receipt,
                         origin_process_id=origin_process_id,
                     )
@@ -1279,7 +1342,7 @@ class AgentApprovalApplicationService:
 
         approval_id = str(approval.get("approvalId") or "")
         try:
-            return self.host.sessions.complete_approval(
+            return self.sessions.complete_approval(
                 approval_id,
                 state=(
                     "external_pending"
@@ -1293,7 +1356,7 @@ class AgentApprovalApplicationService:
         except Exception as error:
             if receipt.get("mutationApplied") is not True:
                 raise
-            return self.host.sessions.fail_claimed_approval_execution(
+            return self.sessions.fail_claimed_approval_execution(
                 approval_id,
                 receipt=_unknown_effect_receipt(
                     approval,
@@ -1309,7 +1372,7 @@ class AgentApprovalApplicationService:
             return {}
         session_id = str(approval.get("sessionId") or "")
         try:
-            checkpoint = self.host.memory_sources.checkpoint_tool_receipt(
+            checkpoint = self.memory_sources.checkpoint_tool_receipt(
                 approval
             )
         except Exception as exc:
@@ -1321,7 +1384,7 @@ class AgentApprovalApplicationService:
                 "error": _public_error(exc),
             }
         if checkpoint.get("stored") is True:
-            self.host.events.publish(
+            self.events.publish(
                 session_id,
                 "memory_checkpointed",
                 {
@@ -1347,7 +1410,7 @@ class AgentApprovalApplicationService:
         runtime_warning = ""
         if pending_in_pi:
             try:
-                self.host.runtime.resolve_approval(
+                self.runtime.resolve_approval(
                     session_id,
                     approval_id,
                     approved=False,
@@ -1360,7 +1423,7 @@ class AgentApprovalApplicationService:
                     "Pi 会话未收到审批终态，请刷新该对话",
                 )
         else:
-            self.host.events.publish(
+            self.events.publish(
                 session_id,
                 "approval_resolved",
                 {
@@ -1396,7 +1459,7 @@ class AgentApprovalApplicationService:
 
         session_id = str(approval.get("sessionId") or "").strip()
         tool_call_id = str(approval.get("toolCallId") or "").strip()
-        has_session_terminal = self.host.sessions.has_runtime_tool_terminal(
+        has_session_terminal = self.sessions.has_runtime_tool_terminal(
             session_id,
             tool_call_id,
             turn_id=str(causal.get("turnId") or ""),
@@ -1411,7 +1474,7 @@ class AgentApprovalApplicationService:
             )
 
         has_room_terminal = getattr(
-            self.host.room_events,
+            self.room_events,
             "has_tool_terminal",
             None,
         )
@@ -1433,7 +1496,7 @@ class AgentApprovalApplicationService:
     ) -> dict[str, object]:
         session_id = _required_text(payload, "sessionId")
         approval_id = _required_text(payload, "approvalId")
-        approval = self.host.sessions.get_approval(approval_id)
+        approval = self.sessions.get_approval(approval_id)
         if approval.get("sessionId") != session_id:
             raise ValueError(
                 "approval does not belong to this session"

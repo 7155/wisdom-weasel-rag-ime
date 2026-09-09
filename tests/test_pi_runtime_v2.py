@@ -17,8 +17,9 @@ from rag_ime.memory_model_executor import (
     MemoryModelUnavailable,
     build_governed_memory_model_executor,
 )
-from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
-from rag_ime.pi_runtime_public import (
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.values import PiRuntimeError
+from rag_ime.pi.public import (
     pi_message_completes_public_turn,
     pi_message_is_public,
     pi_message_payload,
@@ -26,12 +27,12 @@ from rag_ime.pi_runtime_public import (
     public_reasoning_summaries,
     public_usage_evidence,
 )
-from rag_ime.pi_runtime_v2 import (
-    PiRuntimeHostClient,
+from rag_ime.pi.host_client import PiRuntimeHostClient
+from rag_ime.pi.event_projection import runtime_primitive_capabilities
+from rag_ime.pi.runtime import (
     PiRuntimeHostManager,
-    _runtime_primitive_capabilities,
 )
-from rag_ime.pi_runtime_values import (
+from rag_ime.pi.values import (
     PiRuntimeCommandAcceptanceUnknown,
     PiRuntimeCommandRejected,
     PiRuntimeSettlementLookupTimeout,
@@ -2168,7 +2169,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             parsed_line_count += 1
             return real_loads(value, *args, **kwargs)
 
-        with patch("rag_ime.pi_runtime_v2.json.loads", side_effect=counted_loads):
+        with patch("rag_ime.pi.runtime.json.loads", side_effect=counted_loads):
             snapshot = self.runtime.recent_session_snapshot(session_id)
 
         texts = [
@@ -2253,7 +2254,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
 
         with patch(
-            "rag_ime.pi_runtime_v2._RECENT_SESSION_TAIL_SCAN_BYTES",
+            "rag_ime.pi.transcript_io._RECENT_SESSION_TAIL_SCAN_BYTES",
             512,
         ):
             snapshot = self.runtime.recent_session_snapshot(session_id)
@@ -2322,7 +2323,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
         with (
             patch(
-                "rag_ime.pi_runtime_v2._RECENT_SESSION_TAIL_SCAN_BYTES",
+                "rag_ime.pi.transcript_io._RECENT_SESSION_TAIL_SCAN_BYTES",
                 512,
             ),
             patch.object(
@@ -2333,7 +2334,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         ):
             first = self.runtime.recent_session_snapshot(session_id)
             with patch(
-                "rag_ime.pi_runtime_v2._read_recent_transcript_tail",
+                "rag_ime.pi.runtime.read_recent_transcript_tail",
                 side_effect=AssertionError(
                     "persisted projection must avoid a second JSONL scan"
                 ),
@@ -3267,7 +3268,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
         first = self.runtime.recent_session_snapshot(session_id)
         with patch(
-            "rag_ime.pi_runtime_v2._read_recent_transcript_tail",
+            "rag_ime.pi.runtime.read_recent_transcript_tail",
             side_effect=AssertionError("exact recent cache must include progress"),
         ):
             second = self.runtime.recent_session_snapshot(session_id)
@@ -3712,7 +3713,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("/Users/private", serialized)
 
     def test_thinking_text_wrappers_stay_out_of_history_and_live_text(self) -> None:
-        from rag_ime.pi_runtime_public import visible_message_text, last_assistant_preview
+        from rag_ime.pi.public import visible_message_text, last_assistant_preview
 
         for text, expected in [
             ("<thinking>private notes</thinking>Visible answer", "Visible answer"),
@@ -4002,13 +4003,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
     def test_runtime_primitives_accept_only_supported_continuation_envelopes(self) -> None:
         self.assertEqual(
-            _runtime_primitive_capabilities({"continuationEnvelope": "1"})[
+            runtime_primitive_capabilities({"continuationEnvelope": "1"})[
                 "continuationEnvelope"
             ],
             "1",
         )
         self.assertEqual(
-            _runtime_primitive_capabilities({"continuationEnvelope": "2"})[
+            runtime_primitive_capabilities({"continuationEnvelope": "2"})[
                 "continuationEnvelope"
             ],
             "2",
@@ -4016,7 +4017,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         for unsupported in ("3", 2, True, None):
             with self.subTest(unsupported=unsupported):
                 self.assertEqual(
-                    _runtime_primitive_capabilities(
+                    runtime_primitive_capabilities(
                         {"continuationEnvelope": unsupported}
                     )["continuationEnvelope"],
                     "",
@@ -5605,7 +5606,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                         raise PiRuntimeError("Pi Runtime Host command timed out: session.await_settled")
                     raise PiRuntimeCommandRejected("turn timed out", host_error_code="SETTLED_TIMEOUT")
 
-                with patch("rag_ime.pi_runtime_v2.time.monotonic", side_effect=lambda clock=clock: clock[0]):
+                with patch("rag_ime.pi.runtime.time.monotonic", side_effect=lambda clock=clock: clock[0]):
                     with patch.object(client, "send", side_effect=wait_timeout):
                         with self.assertRaises(TimeoutError) as caught:
                             self.runtime.await_turn_settled(session_id, identity["turnId"], client_message_id=identity["clientMessageId"], timeout_seconds=2.0)

@@ -5,6 +5,14 @@ source checkpoint is not a signed and notarized macOS binary release.
 
 ## Unreleased
 
+- Give Room work, dispatch, cancellation and approval services explicit
+  dependencies; preserve shared stores, event ordering and Runtime replacement.
+- Separate Host transport from Session lifecycle, group Pi/Room sources by
+  capability, and add typed construction boundaries and an offline Lab example.
+
+- Retire the legacy Pi RPC executor and protocol selection. Shared configuration
+  and factory code now construct only the protocol 2 Host; old transcript data
+  remains readable, while protocol 1 packages cannot be built or activated.
 - Name the current PAWOS React frontend React OS; keep existing product,
   Runtime and persisted layout identifiers compatible.
 - Group Agent Lab backend modules under `rag_ime/agent_lab/` and place portable

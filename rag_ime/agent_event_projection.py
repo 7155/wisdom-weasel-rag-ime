@@ -7,7 +7,7 @@ from typing import Any
 from .agent_blocks import bind_block_scope
 from .agent_prompt_support import bounded_text
 from .agent_protocol import AgentEventEnvelope
-from .pi_runtime_public import (
+from rag_ime.pi.public import (
     GROUPED_QUESTIONS_SCHEMA_VERSION,
     grouped_questions_from_wire,
     public_code_tool_activity,

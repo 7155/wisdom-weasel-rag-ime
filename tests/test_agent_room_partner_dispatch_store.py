@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_room_partner_dispatch_store import (
+from rag_ime.rooms.partner_dispatch_store import (
     AgentRoomPartnerDispatchStore,
 )
 from rag_ime.agent_wake_scheduler import AgentWakeScheduleStore

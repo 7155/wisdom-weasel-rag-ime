@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from threading import Event, Lock
 from types import SimpleNamespace
 
-from rag_ime.agent_room_partner_application import (
+from rag_ime.rooms.partner_application import (
     RoomPartnerApplicationService,
     _partner_task_message,
 )

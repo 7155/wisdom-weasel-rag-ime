@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.agent_service import AgentService
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 class RoomSendAdmissionTests(unittest.TestCase):
@@ -137,8 +137,8 @@ class RoomSendAdmissionTests(unittest.TestCase):
     def test_worker_exception_closes_room_turn_and_releases_admission(self) -> None:
         """An untyped dispatch failure must not strand the Room as running."""
         with patch.object(
-            self.service,
-            "_dispatch_room_target",
+            self.service.room_dispatch,
+            "dispatch_target",
             side_effect=RuntimeError("worker crashed before dispatch receipt"),
         ):
             with self.assertRaisesRegex(RuntimeError, "worker crashed"):
@@ -155,7 +155,7 @@ class RoomSendAdmissionTests(unittest.TestCase):
 
     def test_worker_exception_preserves_another_accepted_dispatch(self) -> None:
         other = self.room["participants"][1]
-        dispatch = self.service._dispatch_room_target
+        dispatch = self.service.room_dispatch.dispatch_target
 
         def dispatch_one(**kwargs):
             if kwargs["target"]["id"] == other["id"]:
@@ -164,7 +164,7 @@ class RoomSendAdmissionTests(unittest.TestCase):
 
         with (
             patch.object(self.service, "prompt", return_value={"accepted": True, "turnId": "turn:still-running"}),
-            patch.object(self.service, "_dispatch_room_target", side_effect=dispatch_one),
+            patch.object(self.service.room_dispatch, "dispatch_target", side_effect=dispatch_one),
         ):
             response = self.service.post_room_message(str(self.room["id"]), {
                 "message": "分别核对两个部分",
@@ -192,7 +192,7 @@ class RoomSendAdmissionTests(unittest.TestCase):
             return publish(**kwargs)
 
         with (
-            patch.object(self.service, "_dispatch_room_target", side_effect=RuntimeError("worker crash")),
+            patch.object(self.service.room_dispatch, "dispatch_target", side_effect=RuntimeError("worker crash")),
             patch.object(self.service.room_events, "publish", side_effect=fail_terminal),
         ):
             with self.assertRaisesRegex(sqlite3.OperationalError, "terminal write unavailable"):

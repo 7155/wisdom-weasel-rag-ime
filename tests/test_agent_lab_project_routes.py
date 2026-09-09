@@ -15,7 +15,7 @@ from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_skill_routing import default_skill_routing, skill_allowlist_for_session
 from rag_ime.control_api import ControlAccessContext, ControlRequest, default_route_policy
 from rag_ime.debug_server import DebugRequestHandler
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 from tests.test_agent_lab_apps import write_app
 from rag_ime.agent_lab.apps import AgentLabAppStore
 

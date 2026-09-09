@@ -18,7 +18,7 @@ from tests.runtime_capabilities import requires_loopback_bind
 
 from rag_ime.agent_service import AgentService
 from rag_ime.debug_server import DebugRequestHandler
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 def _governed_presentation() -> dict[str, object]:
@@ -117,6 +117,27 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
                 error.close()
             return error.code, body
 
+    def _bind_empty_history(self, session_id: str) -> None:
+        # Disabled Host fixtures still need a real durable transcript to inspect.
+        external_id = f"pi-fixture-{session_id}"
+        transcript = self.root / "sessions" / f"{session_id}.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text(
+            json.dumps({"type": "session", "id": external_id}) + "\n",
+            encoding="utf-8",
+        )
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id=external_id,
+            transcript_ref=str(transcript.resolve()),
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=0,
+        )
+        self.service.sessions.set_status(session_id, "idle")
+
     def _sessions(self) -> tuple[str, str]:
         source = self.service.create_session(
             {
@@ -125,6 +146,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
                 "workspaceRoots": [str(self.root)],
             }
         )["session"]
+        self._bind_empty_history(str(source["id"]))
         diagnostic = self._full_auto_diagnostic_session()
         return str(source["id"]), str(diagnostic["id"])
 
@@ -135,7 +157,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
         surface_key: str,
         workspace_roots: list[str] | None = None,
     ) -> dict[str, object]:
-        return self.service.create_session(
+        session = self.service.create_session(
             {
                 "title": title,
                 "surfaceKind": "extension_app",
@@ -156,6 +178,8 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
                 "codexSkillsEnabled": True,
             }
         )["session"]
+        self._bind_empty_history(str(session["id"]))
+        return session
 
     def _full_auto_repair_session(self, title: str) -> dict[str, object]:
         return self._full_auto_trace_session(title, surface_key="repair")
@@ -319,6 +343,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
                 "workspaceRoots": [str(self.root)],
             }
         )["session"]
+        self._bind_empty_history(str(source["id"]))
         diagnostic = self._full_auto_trace_session(
             "source-bound diagnostic",
             surface_key="diagnostic",
@@ -379,6 +404,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
                 "workspaceRoots": [str(source_root)],
             }
         )["session"]
+        self._bind_empty_history(str(source["id"]))
         diagnostic = self._full_auto_trace_session(
             "source-bound diagnostic",
             surface_key="diagnostic",

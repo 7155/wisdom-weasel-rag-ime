@@ -18,6 +18,7 @@ from threading import RLock
 
 from .db import sqlite_connection
 from .agent_capability_catalog import capability_disclosure_enabled
+from .agent_composition import build_room_stores, build_session_applications
 from .agent_configuration import (
     AgentConfigurationStore,
     AgentControlEventHub,
@@ -74,37 +75,28 @@ from .agent_prompt_support import (
 from .agent_protocol import AgentEventEnvelope
 from .agent_role_book import AgentRoleBookStore
 from .agent_role_application import AgentRoleApplicationService
-from .agent_session_application import AgentSessionApplicationService
-from .agent_session_branching import AgentSessionBranchingService
-from .agent_session_policy import AgentSessionPolicyService
 from .agent_session_mode_gate import AgentSessionModeGate
-from .agent_room_intercom import (
+from rag_ime.rooms.intercom import (
     AgentRoomIntercomRouter,
     AgentRoomIntercomStore,
 )
-from .agent_room_intercom_application import (
+from rag_ime.rooms.intercom_application import (
     RoomIntercomApplicationService,
 )
-from .agent_room_session_dispatch import RoomSessionDispatchService
-from .agent_room_start_gate import AgentRoomStartGateStore
-from .agent_room_session_cancellation import RoomSessionCancellationService
-from .agent_room_management import RoomManagementService
-from .agent_room_partner_application import (
+from rag_ime.rooms.session_dispatch import RoomSessionDispatchService
+from rag_ime.rooms.session_cancellation import RoomSessionCancellationService
+from rag_ime.rooms.management import RoomManagementService
+from rag_ime.rooms.partner_application import (
     RoomPartnerApplicationService,
 )
-from .agent_room_partner_dispatch_store import (
-    AgentRoomPartnerDispatchStore,
-)
-from .agent_room_prompt_context import (
+from rag_ime.rooms.prompt_context import (
     agent_message_text as _agent_message_text,
     room_intercom_prompt as _room_intercom_prompt,
     room_participant_prompt as _room_participant_prompt,
 )
 from .collaboration_profile_control import CollaborationProfileControl
-from .agent_task_context import AgentTaskContextResolver
-from .agent_room_work import AgentRoomWorkStore
-from .agent_room_work_application import RoomWorkApplicationService
-from .agent_room_turn_registry import (
+from rag_ime.rooms.work_application import RoomWorkApplicationService
+from rag_ime.rooms.turn_registry import (
     RoomSessionBusyError,
     RoomTurnRegistry,
 )
@@ -118,12 +110,9 @@ from .agent_runtime_driver import (
     RuntimeDriverFactory,
     ToolManifestProvider,
 )
-from .agent_rooms import AgentRoomEventHub, AgentRoomNotFound, AgentRoomStore
+from rag_ime.rooms.store import AgentRoomEventHub, AgentRoomNotFound
 from .agent_roles import PersonaManifest
 from .agent_sessions import AgentSessionStore
-from .agent_tool_ids import (
-    CONTROL_CENTER_TOOL_PROFILE,
-)
 from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 from .agent_wake_application import AgentWakeApplicationService
 from .contracts.json_schema import validate_contract
@@ -143,7 +132,8 @@ from .eval_schedule_store import (
 )
 from .evidence_eval import evaluate_evidence_ground_truth
 from .observability import ObservationHub
-from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.factory import PiRuntimeDriverFactory
 from .personal_context import (
     AgentMemoryEvidenceStore,
     PersonalContextConsolidator,
@@ -364,21 +354,11 @@ class AgentService:
             role_book_applier=self.role_books,
         )
         self.personal_context.initialize()
-        self.rooms = AgentRoomStore(
-            db_path,
-            room_dir=(
-                self.runtime_factory.session_root.expanduser().resolve(strict=False).parent
-                / "rooms"
-            ),
-            persistent_reads=True,
-        )
-        self.rooms.initialize()
-        self.room_start_gates = AgentRoomStartGateStore(db_path)
-        self.room_start_gates.initialize()
-        self.room_work = AgentRoomWorkStore(db_path)
-        self.room_work.initialize()
-        self.room_partner_dispatches = AgentRoomPartnerDispatchStore(db_path)
-        self.room_partner_dispatches.initialize()
+        room_stores = build_room_stores(db_path, session_root=self.runtime_factory.session_root)
+        self.rooms = room_stores.rooms
+        self.room_start_gates = room_stores.start_gates
+        self.room_work = room_stores.work
+        self.room_partner_dispatches = room_stores.partner_dispatches
         self.governance_projection = GovernanceProjectionStore(db_path)
         self.governance_projection.initialize()
         self.knowledge_promotion = KnowledgePromotionStore(
@@ -511,48 +491,19 @@ class AgentService:
             model_route_provider=self._configured_model_route,
             startup_recovery=False,
         )
-        self.session_application = AgentSessionApplicationService(
-            sessions=self.sessions,
-            runtime_provider=lambda: self.runtime,
-            runtime_factory=self.runtime_factory,
-            configuration_store=self.configuration_store,
-            rooms=self.rooms,
-            delegation=self.delegation,
-            media=self.media,
-            events=self.events,
-            runtime_status=lambda: self.runtime_status(),
+        session_applications = build_session_applications(
+            sessions=self.sessions, runtime_provider=lambda: self.runtime,
+            runtime_factory=self.runtime_factory, configuration_store=self.configuration_store,
+            rooms=self.rooms, delegation=self.delegation, media=self.media, events=self.events,
+            command_receipts=self.command_receipts, runtime_status=lambda: self.runtime_status(),
             pending_memory_bootstrap=self._pending_memory_bootstrap,
-            probe_memory_maintenance=lambda session_id, **kwargs: (
-                self._probe_memory_maintenance(session_id, **kwargs)
-            ),
+            probe_memory_maintenance=lambda session_id, **kwargs: self._probe_memory_maintenance(session_id, **kwargs),
+            prompt_with_checkpoint=lambda **kwargs: self.prompt_application.prompt_rewritten_session(**kwargs),
         )
-        self.session_policy = AgentSessionPolicyService(
-            sessions=self.sessions,
-            runtime_provider=lambda: self.runtime,
-            rooms=self.rooms,
-            events=self.events,
-            runtime_status=lambda: self.runtime_status(),
-            probe_memory_maintenance=lambda session_id, **kwargs: (
-                self._probe_memory_maintenance(session_id, **kwargs)
-            ),
-        )
-        self.session_branching = AgentSessionBranchingService(
-            sessions=self.sessions,
-            runtime_provider=lambda: self.runtime,
-            runtime_factory=self.runtime_factory,
-            rooms=self.rooms,
-            delegation=self.delegation,
-            media=self.media,
-            events=self.events,
-            command_receipts=self.command_receipts,
-            prompt_with_checkpoint=lambda **kwargs: (
-                self._prompt_with_checkpoint(**kwargs)
-            ),
-        )
-        self.task_context = AgentTaskContextResolver(
-            delegation=self.delegation,
-            rooms=self.rooms,
-        )
+        self.session_application = session_applications.application
+        self.session_policy = session_applications.policy
+        self.session_branching = session_applications.branching
+        self.task_context = session_applications.task_context
         self.memory_context_application = (
             AgentMemoryContextService(
                 sessions=self.sessions,
@@ -745,11 +696,28 @@ class AgentService:
             self.wake_scheduler.observe_event
         )
         self.room_dispatch = RoomSessionDispatchService(
-            self,
+            rooms=self.rooms, room_work=self.room_work, room_events=self.room_events,
+            room_turns=self.room_turns, room_partner_dispatches=self.room_partner_dispatches,
+            context_source_token=self._context_source_token,
+            restore_participant_sessions=self._restore_room_participant_sessions,
+            guard_session_route=self._guard_room_session_route,
+            recover_faulted_session=self._recover_faulted_room_session,
+            resume_goal_if_paused=self._resume_room_goal_if_paused,
+            target_idle=lambda session_id, **kwargs: self._room_target_idle(session_id, **kwargs),
+            record_room_evidence=self._record_room_evidence_safely,
+            accept_turn=self._accept_room_turn,
+            prompt=lambda session_id, payload: self.prompt(session_id, payload),
             build_participant_prompt=self._room_participant_prompt_with_documents,
             resolve_attachments=self._resolve_room_attachments,
         )
-        self.room_cancellation = RoomSessionCancellationService(self)
+        self.room_cancellation = RoomSessionCancellationService(
+            rooms=self.rooms, room_events=self.room_events,
+            delegation=self.delegation, background_jobs=self.background_jobs,
+            room_intercom=self.room_intercom, wake_schedules=self.wake_schedules,
+            room_turns=self.room_turns,
+            cancel_partner_root=lambda **kwargs: self.room_partner_application.cancel_root(**kwargs),
+            abort_session=lambda session_id: self.abort(session_id),
+        )
         self.room_partner_application = RoomPartnerApplicationService(
             rooms=self.rooms,
             room_turns=self.room_turns,
@@ -806,14 +774,29 @@ class AgentService:
             remove_room_participant=self.remove_room_participant,
             recover_faulted_session=self._recover_faulted_room_session,
         )
-        self.room_work_application = RoomWorkApplicationService(self)
+        self.room_work_application = RoomWorkApplicationService(
+            rooms=self.rooms,
+            room_work=self.room_work,
+            room_intercom=self.room_intercom,
+            room_events=self.room_events,
+            guard_session_route=self._guard_room_session_route,
+        )
         self._remove_room_partner_observer = self.room_events.add_observer(
             self.room_partner_application.observe_room_event
         )
         self.wake_scheduler.bind_terminal_observer(
             self.room_partner_application.observe_wake_terminal_event
         )
-        self.approval_application = AgentApprovalApplicationService(self)
+        self.approval_application = AgentApprovalApplicationService(
+            sessions=self.sessions, events=self.events, rooms=self.rooms,
+            room_events=self.room_events, room_turns=self.room_turns,
+            memory_sources=self.memory_sources, approval_model=self.approval_model,
+            runtime_provider=lambda: self.runtime,
+            executor_provider=lambda: self._approval_executor,
+            process_id_provider=lambda: self._process_id_provider(),
+            record_tool_receipt_evidence=lambda approval: self._record_tool_receipt_evidence_safely(approval),
+            active_room_dispatch_context=lambda session_id: self._active_room_dispatch_context(session_id),
+        )
         self.message_snapshot = AgentMessageSnapshotService(
             sessions=self.sessions,
             runtime_provider=lambda: self.runtime,
@@ -1898,35 +1881,6 @@ class AgentService:
         # path, and read-only/workspace fences are still checked by the Tool
         # gateway immediately before application.
         return context is not None
-
-    def _claim_approval_execution(
-        self,
-        approval: Mapping[str, object],
-    ) -> dict[str, object]:
-        """Linearize a Room authorization with turn rotation and Runtime binding."""
-
-        approval_id = str(approval.get("approvalId") or "")
-        causal = (
-            approval.get("causalMetadata")
-            if isinstance(approval.get("causalMetadata"), Mapping)
-            else {}
-        )
-        if not bool(causal.get("roomBound")):
-            return self.sessions.claim_approval_execution(approval_id)
-        session_id = str(approval.get("sessionId") or "")
-        # Room begin/finish/cancel use this same lock.  Keep it held while the
-        # approval store atomically compares the runtime generation and claims
-        # the effect, making the claim the one execution-start boundary.
-        with self.room_turns.lock:
-            live_context = self._active_room_dispatch_context(session_id)
-            return self.sessions.claim_approval_execution(
-                approval_id,
-                room_context=(
-                    live_context
-                    if isinstance(live_context, Mapping)
-                    else {}
-                ),
-            )
 
     def _room_delegation_context(
         self,
@@ -3629,31 +3583,6 @@ class AgentService:
             retry_of_root_id=retry_of_root_id,
             requested_participant_ids=requested_participant_ids,
             work_item_id=work_item_id,
-            attachment_ids=attachment_ids,
-        )
-
-    def _dispatch_room_target(
-        self,
-        *,
-        room: Mapping[str, object],
-        target: Mapping[str, object],
-        decision: Mapping[str, object],
-        message: str,
-        room_turn_id: str,
-        topic_id: str,
-        unread: Mapping[str, object],
-        work_item: Mapping[str, object] | None,
-        attachment_ids: Sequence[str],
-    ) -> dict[str, object]:
-        return self.room_dispatch.dispatch_target(
-            room=room,
-            target=target,
-            decision=decision,
-            message=message,
-            room_turn_id=room_turn_id,
-            topic_id=topic_id,
-            unread=unread,
-            work_item=work_item,
             attachment_ids=attachment_ids,
         )
 
@@ -6756,62 +6685,9 @@ class AgentService:
             phase,
         )
 
-    def _require_room_participant(
-        self,
-        session_id: str,
-        *,
-        active_only: bool = True,
-    ) -> dict[str, object]:
-        return self.room_work_application._require_room_participant(
-            session_id,
-            active_only=active_only,
-        )
-
-    def _notify_room_work(
-        self,
-        session_id: str,
-        work: Mapping[str, object],
-        *,
-        target_participant_id: str,
-        action: str,
-        content: str,
-    ) -> Mapping[str, object] | None:
-        return self.room_work_application._notify_room_work(
-            session_id,
-            work,
-            target_participant_id=target_participant_id,
-            action=action,
-            content=content,
-        )
-
-    def _enqueue_room_intercom(
-        self,
-        source_session_id: str,
-        payload: Mapping[str, object],
-    ) -> dict[str, object]:
-        return self.room_work_application._enqueue_room_intercom(
-            source_session_id,
-            payload,
-        )
-
     def _guard_room_session_route(self, route_id: str, session_id: str) -> None:
         # Pi Session is the sole execution owner for direct and Room prompts.
         self.sessions.get(str(session_id or ""))
-
-    @staticmethod
-    def _room_work_operation(
-        operation: str,
-        work: Mapping[str, object],
-        *,
-        delivery: Mapping[str, object] | None,
-    ) -> dict[str, object]:
-        return {
-            "schemaVersion": "rag-ime.agent-room-work-operation.v1",
-            "ok": True,
-            "operation": operation,
-            "work": dict(work),
-            "delivery": dict(delivery) if isinstance(delivery, Mapping) else None,
-        }
 
     def _publish_room_work_activity(
         self,

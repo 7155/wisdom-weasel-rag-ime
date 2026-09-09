@@ -83,6 +83,8 @@ class AgentLabRagTrialTests(unittest.TestCase):
         with patch.object(runner, "_run") as run:
             frozen = self.prepared()
         run.assert_not_called()
+        self.assertTrue(all(path.is_file() for path in runner._RUNTIME_CONTRACT_PATHS))
+        self.assertIn(runner.ROOT / "rag_ime/pi/host_client.py", runner._RUNTIME_CONTRACT_PATHS)
         self.assertFalse((self.root / "artifacts").exists())
         public = json.dumps(frozen["publicSpec"])
         for secret in (str(self.host), "PRIVATE-PROMPT", "GOLD-DOCUMENT-ANSWER-SENTINEL", "SECRET-AUTH"):

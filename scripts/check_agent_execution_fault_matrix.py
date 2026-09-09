@@ -95,7 +95,7 @@ def source_hashes():
         "rag_ime/agent_lab/trials.py", "rag_ime/agent_lab/trial_execution.py",
         "rag_ime/agent_delegation.py", "rag_ime/agent_context_runtime.py",
         "tests/test_agent_delegation.py",
-        "rag_ime/agent_room_turn_registry.py",
+        "rag_ime/rooms/turn_registry.py",
         "rag_ime/db/migrations/0192_background_job_request_identity.sql",
         "rag_ime/db/migrations/0193_background_job_owner_leases.sql",
         "tests/fixtures/agent_execution_fault_host.py",

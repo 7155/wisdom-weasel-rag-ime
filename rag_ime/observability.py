@@ -17,7 +17,7 @@ from pathlib import Path
 from .agent_protocol import AgentEventEnvelope
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
-from .pi_runtime_values import redact_runtime_text
+from rag_ime.pi.values import redact_runtime_text
 
 
 OBSERVATION_CATEGORIES = frozenset(

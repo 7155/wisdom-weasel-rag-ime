@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.agent_context_runtime import AgentContextRuntime
-from rag_ime.agent_room_work import AgentRoomWorkStore
-from rag_ime.agent_rooms import AgentRoomStore
+from rag_ime.rooms.work import AgentRoomWorkStore
+from rag_ime.rooms.store import AgentRoomStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.control_api.route_policy import ControlPathId, default_route_policy
 from rag_ime.control_api.route_table import find_route

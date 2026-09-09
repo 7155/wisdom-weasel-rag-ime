@@ -10,6 +10,7 @@ from .agent_sessions import AgentSessionStore
 
 
 __all__ = [
+    "RuntimeModelCatalog", "RuntimeSessionControls", "RuntimeSessionBranching", "RuntimeSessionLifecycle",
     "AgentRuntimeDriver",
     "AgentRuntimeError",
     "AgentRuntimePolicy",
@@ -68,8 +69,63 @@ class AgentRuntimePolicy:
             raise ValueError("agent runtime idle timeout must be between 0 and 86400")
 
 
+class RuntimeModelCatalog(Protocol):
+    def available_models(self) -> list[dict[str, object]]: ...
+
+
+class RuntimeSessionControls(Protocol):
+    def command_catalog(self, session_id: str) -> list[dict[str, object]]: ...
+
+    def invoke_command(self, session_id: str, command: str) -> dict[str, object]: ...
+
+    def model_catalog(self, session_id: str) -> dict[str, object]: ...
+
+    def set_model(
+        self,
+        session_id: str,
+        *,
+        provider: str,
+        model_id: str,
+        max_tokens: int | None = None,
+    ) -> dict[str, object]: ...
+
+    def set_thinking_level(
+        self, session_id: str, *, level: str
+    ) -> dict[str, object]: ...
+
+
+class RuntimeSessionBranching(Protocol):
+    def model_catalog(self, session_id: str) -> dict[str, object]: ...
+
+    def fork_candidates(self, session_id: str) -> list[dict[str, object]]: ...
+
+    def fork_session(
+        self,
+        source_session_id: str,
+        target_session_id: str,
+        *,
+        entry_id: str,
+    ) -> dict[str, object]: ...
+
+    def rewind_session(
+        self, session_id: str, *, entry_id: str
+    ) -> dict[str, object]: ...
+
+
+class RuntimeSessionLifecycle(Protocol):
+    def ensure(self, session_id: str) -> dict[str, object]: ...
+
+    def stop(self) -> None: ...
+
+
 @runtime_checkable
-class AgentRuntimeDriver(Protocol):
+class AgentRuntimeDriver(
+    RuntimeModelCatalog,
+    RuntimeSessionControls,
+    RuntimeSessionBranching,
+    RuntimeSessionLifecycle,
+    Protocol,
+):
     """Runtime-neutral contract consumed by the Agent service and supervisor."""
 
     @property
@@ -86,8 +142,6 @@ class AgentRuntimeDriver(Protocol):
 
     def runtime_status(self) -> dict[str, object]: ...
 
-    def ensure(self, session_id: str) -> dict[str, object]: ...
-
     def prompt(
         self,
         session_id: str,
@@ -99,26 +153,6 @@ class AgentRuntimeDriver(Protocol):
     ) -> dict[str, object]: ...
 
     def messages(self, session_id: str) -> list[dict[str, object]]: ...
-
-    def fork_candidates(self, session_id: str) -> list[dict[str, object]]: ...
-
-    def fork_session(
-        self,
-        source_session_id: str,
-        target_session_id: str,
-        *,
-        entry_id: str,
-    ) -> dict[str, object]: ...
-
-    def rewind_session(self, session_id: str, *, entry_id: str) -> dict[str, object]: ...
-
-    def command_catalog(self, session_id: str) -> list[dict[str, object]]: ...
-
-    def invoke_command(self, session_id: str, command: str) -> dict[str, object]: ...
-
-    def model_catalog(self, session_id: str) -> dict[str, object]: ...
-
-    def available_models(self) -> list[dict[str, object]]: ...
 
     def complete_once(
         self,
@@ -133,17 +167,6 @@ class AgentRuntimeDriver(Protocol):
     ) -> dict[str, object]: ...
 
     def cancel_completion(self, request_id: str) -> bool: ...
-
-    def set_model(
-        self,
-        session_id: str,
-        *,
-        provider: str,
-        model_id: str,
-        max_tokens: int | None = None,
-    ) -> dict[str, object]: ...
-
-    def set_thinking_level(self, session_id: str, *, level: str) -> dict[str, object]: ...
 
     def tool_catalog(self, session_id: str) -> list[dict[str, object]]: ...
 
@@ -216,8 +239,6 @@ class AgentRuntimeDriver(Protocol):
         expected_active_digest: str,
         expected_enabled: bool,
     ) -> dict[str, object]: ...
-
-    def stop(self) -> None: ...
 
 
 class RuntimeDriverFactory(Protocol):

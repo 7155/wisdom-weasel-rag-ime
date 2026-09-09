@@ -31,7 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pi-entrypoint", required=True)
     parser.add_argument("--node-entrypoint", default="")
     parser.add_argument("--extension-entrypoint", required=True)
-    parser.add_argument("--protocol-version", choices=("1", "2"), default="1")
+    parser.add_argument("--protocol-version", choices=("2",), default="2")
+    parser.add_argument("--runtime-method", action="append", required=True)
+    parser.add_argument("--source-contract-sha256", required=True)
+    parser.add_argument("--handlers-commit", required=True)
     parser.add_argument("--tool", action="append", default=[])
     parser.add_argument("--source-repository", required=True)
     parser.add_argument("--source-commit", required=True)
@@ -52,6 +55,9 @@ def main(argv: list[str] | None = None) -> int:
             source_commit=args.source_commit,
             source_package=args.source_package,
             protocol_version=args.protocol_version,
+            runtime_methods=tuple(args.runtime_method),
+            source_contract_sha256=args.source_contract_sha256,
+            handlers_commit=args.handlers_commit,
         )
         write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
     except (OSError, ManagedPiRuntimeError) as exc:

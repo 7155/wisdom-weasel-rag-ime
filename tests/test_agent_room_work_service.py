@@ -13,10 +13,10 @@ from urllib.request import Request, urlopen
 
 from tests.runtime_capabilities import requires_loopback_bind
 
-from rag_ime.agent_room_work import AgentRoomWorkAssignmentChanged
+from rag_ime.rooms.work import AgentRoomWorkAssignmentChanged
 from rag_ime.agent_service import AgentService
 from rag_ime.debug_server import DebugRequestHandler
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 class AgentRoomWorkServiceTests(unittest.TestCase):

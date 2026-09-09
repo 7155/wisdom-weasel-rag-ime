@@ -69,11 +69,11 @@ class ImportBoundaryTests(unittest.TestCase):
             self._write_pi_family(
                 root,
                 {
-                    "rag_ime.pi_runtime": (
+                    "rag_ime.pi.config": (
                         "__all__ = []\n"
-                        "from .pi_runtime_public import undeclared\n"
+                        "from rag_ime.pi.public import undeclared\n"
                     ),
-                    "rag_ime.pi_runtime_public": (
+                    "rag_ime.pi.public": (
                         "__all__ = ['declared']\n"
                         "declared = object()\n"
                         "undeclared = object()\n"
@@ -86,7 +86,7 @@ class ImportBoundaryTests(unittest.TestCase):
         self.assertTrue(
             any(
                 violation.imported
-                == "rag_ime.pi_runtime_public.undeclared"
+                == "rag_ime.pi.public.undeclared"
                 and "target module's __all__" in violation.reason
                 for violation in violations
             )
@@ -98,11 +98,11 @@ class ImportBoundaryTests(unittest.TestCase):
             self._write_pi_family(
                 root,
                 {
-                    "rag_ime.pi_runtime": (
+                    "rag_ime.pi.config": (
                         "__all__ = []\n"
-                        "from .pi_runtime_public import _private\n"
+                        "from rag_ime.pi.public import _private\n"
                     ),
-                    "rag_ime.pi_runtime_public": (
+                    "rag_ime.pi.public": (
                         "__all__ = ['_private']\n"
                         "_private = object()\n"
                     ),
@@ -113,7 +113,7 @@ class ImportBoundaryTests(unittest.TestCase):
 
         self.assertTrue(
             any(
-                violation.imported == "rag_ime.pi_runtime_public._private"
+                violation.imported == "rag_ime.pi.public._private"
                 and "private names stay module-local" in violation.reason
                 for violation in violations
             )
@@ -124,87 +124,49 @@ class ImportBoundaryTests(unittest.TestCase):
             root = Path(raw)
             self._write_pi_family(
                 root,
-                {"rag_ime.pi_runtime_public": "visible = object()\n"},
+                {"rag_ime.pi.public": "visible = object()\n"},
             )
 
             violations = check_pi_family_public_contracts(root)
 
         self.assertTrue(
             any(
-                violation.module == "rag_ime.pi_runtime_public"
+                violation.module == "rag_ime.pi.public"
                 and "literal __all__" in violation.reason
                 for violation in violations
             )
         )
 
-    def test_pi_protocol_manager_must_be_exported_by_target(self) -> None:
+    def test_host_factory_must_consume_the_declared_host_contract(self) -> None:
+        for exports, expected in (([], 1), (["PiRuntimeHostManager"], 0)):
+            with self.subTest(exports=exports), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                self._write_pi_family(root, {
+                    "rag_ime.pi.factory": "__all__ = []\nfrom rag_ime.pi.runtime import PiRuntimeHostManager\n",
+                    "rag_ime.pi.runtime": f"__all__ = {exports!r}\n",
+                })
+                self.assertEqual(len(check_pi_family_public_contracts(root)), expected)
+
+    def test_retired_pi_adapter_cannot_reappear_as_a_compatibility_shell(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            self._write_pi_family(
-                root,
-                {
-                    "rag_ime.pi_runtime": (
-                        "__all__ = []\n"
-                        "class PiRuntimeManager: pass\n"
-                    ),
-                    "rag_ime.pi_runtime_protocols": (
-                        "__all__ = []\n"
-                        "PROTOCOL_MANAGERS = {\n"
-                        "    '1': ('rag_ime.pi_runtime', 'PiRuntimeManager'),\n"
-                        "}\n"
-                    ),
-                },
-            )
-
+            self._write_pi_family(root, {})
+            (root / "rag_ime/pi_runtime.py").write_text("from rag_ime.pi.config import PiRuntimeConfig\n")
             violations = check_pi_family_public_contracts(root)
-
-        self.assertTrue(
-            any(
-                violation.imported == "rag_ime.pi_runtime.PiRuntimeManager"
-                and "protocol 1 manager" in violation.reason
-                for violation in violations
-            )
-        )
-
-    def test_pi_family_declared_import_and_protocol_manager_pass(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            self._write_pi_family(
-                root,
-                {
-                    "rag_ime.pi_runtime": (
-                        "__all__ = ['PiRuntimeManager']\n"
-                        "from .pi_runtime_public import declared\n"
-                        "class PiRuntimeManager: pass\n"
-                    ),
-                    "rag_ime.pi_runtime_public": (
-                        "__all__ = ['declared']\n"
-                        "declared = object()\n"
-                    ),
-                    "rag_ime.pi_runtime_protocols": (
-                        "__all__ = []\n"
-                        "PROTOCOL_MANAGERS = {\n"
-                        "    '1': ('rag_ime.pi_runtime', 'PiRuntimeManager'),\n"
-                        "}\n"
-                    ),
-                },
-            )
-
-            violations = check_pi_family_public_contracts(root)
-
-        self.assertEqual(violations, [])
+            self.assertEqual(len(violations), 1)
+            self.assertIn("retired Pi v1", violations[0].reason)
 
     def test_transcript_exports_are_enforced_for_both_protocols(self) -> None:
-        self.assertIn("rag_ime.pi_runtime_transcript", PI_FAMILY_MODULES)
-        for consumer in ("rag_ime.pi_runtime", "rag_ime.pi_runtime_v2"):
+        self.assertIn("rag_ime.pi.transcript", PI_FAMILY_MODULES)
+        for consumer in ("rag_ime.pi.config", "rag_ime.pi.runtime"):
             for imported, expected_count in (
                 ("durable_branch_messages", 0), ("undeclared", 1), ("_private", 1),
             ):
                 with self.subTest(consumer=consumer, imported=imported), tempfile.TemporaryDirectory() as temporary:
                     root = Path(temporary)
                     self._write_pi_family(root, {
-                        consumer: f"__all__ = []\nfrom .pi_runtime_transcript import {imported}\n",
-                        "rag_ime.pi_runtime_transcript": "__all__ = ['durable_branch_messages', '_private']\n",
+                        consumer: f"__all__ = []\nfrom rag_ime.pi.transcript import {imported}\n",
+                        "rag_ime.pi.transcript": "__all__ = ['durable_branch_messages', '_private']\n",
                     })
                     self.assertEqual(len(check_pi_family_public_contracts(root)), expected_count)
 
@@ -216,11 +178,7 @@ class ImportBoundaryTests(unittest.TestCase):
         for module in PI_FAMILY_MODULES:
             path = root / Path(module.replace(".", "/") + ".py")
             path.parent.mkdir(parents=True, exist_ok=True)
-            default = (
-                "__all__ = []\nPROTOCOL_MANAGERS = {}\n"
-                if module == "rag_ime.pi_runtime_protocols"
-                else "__all__ = []\n"
-            )
+            default = "__all__ = []\n"
             path.write_text(sources.get(module, default), encoding="utf-8")
 
 

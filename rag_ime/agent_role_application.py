@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from .agent_runtime_driver import RuntimeModelCatalog
+from .agent_runtime_driver import RuntimeDriverFactory
+
 from collections.abc import Callable, Mapping
-from typing import Any
 
 from .agent_personas import AgentPersonaStore
 from .agent_roles import PersonaManifest, agent_role_catalog
@@ -16,8 +18,8 @@ class AgentRoleApplicationService:
         self,
         *,
         personas: AgentPersonaStore,
-        runtime_provider: Callable[[], Any],
-        runtime_factory: Any,
+        runtime_provider: Callable[[], RuntimeModelCatalog],
+        runtime_factory: RuntimeDriverFactory,
         default_model_profile_provider: Callable[[], str],
     ) -> None:
         self.personas = personas
@@ -26,7 +28,7 @@ class AgentRoleApplicationService:
         self._default_model_profile_provider = default_model_profile_provider
 
     @property
-    def runtime(self) -> Any:
+    def runtime(self) -> RuntimeModelCatalog:
         """Resolve the current interactive Runtime after policy replacement."""
 
         return self._runtime_provider()

@@ -4,7 +4,7 @@ import unittest
 
 from rag_ime.agent_runtime_driver import AgentRuntimeError
 from rag_ime.debug_server import _agent_session_runtime_error_payload
-from rag_ime.pi_runtime_values import PiRuntimeCommandRejected
+from rag_ime.pi.values import PiRuntimeCommandRejected
 
 
 class AgentRuntimeErrorProjectionTests(unittest.TestCase):

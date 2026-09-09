@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.pi_provider_config import load_pi_provider_config
+from rag_ime.pi.provider_config import load_pi_provider_config
 
 
 class PiProviderConfigTest(unittest.TestCase):

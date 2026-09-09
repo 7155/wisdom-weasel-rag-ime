@@ -43,7 +43,7 @@ if str(ROOT) not in sys.path:
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_service import AgentService
 from rag_ime.embeddings import HashingEmbeddingProvider
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.retrieval_vector_index import rebuild_retrieval_doc_vectors
 

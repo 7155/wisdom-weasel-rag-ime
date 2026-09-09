@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_rooms import AgentRoomEventHub, AgentRoomStore
+from rag_ime.rooms.store import AgentRoomEventHub, AgentRoomStore
 from rag_ime.agent_sessions import AgentSessionStore
 
 

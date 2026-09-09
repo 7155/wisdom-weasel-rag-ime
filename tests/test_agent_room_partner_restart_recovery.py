@@ -9,12 +9,12 @@ from types import SimpleNamespace
 from rag_ime.agent_command_receipts import AgentCommandReceiptStore
 from rag_ime.agent_event_projection import AgentEventProjectionService
 from rag_ime.agent_protocol import AgentEventEnvelope
-from rag_ime.agent_room_partner_application import RoomPartnerApplicationService
-from rag_ime.agent_room_partner_dispatch_store import (
+from rag_ime.rooms.partner_application import RoomPartnerApplicationService
+from rag_ime.rooms.partner_dispatch_store import (
     AgentRoomPartnerDispatchStore,
 )
-from rag_ime.agent_room_session_dispatch import RoomSessionDispatchService
-from rag_ime.agent_room_turn_registry import RoomTurnRegistry
+from rag_ime.rooms.session_dispatch import RoomSessionDispatchService
+from rag_ime.rooms.turn_registry import RoomTurnRegistry
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_wake_scheduler import AgentWakeScheduleStore
 from rag_ime.contracts.json_schema import validate_contract
@@ -266,11 +266,20 @@ class AgentRoomPartnerRestartRecoveryTest(unittest.TestCase):
             ),
             room_turns=SimpleNamespace(
                 release_priority_session=lambda *_args: None,
+                cancel=lambda *_args: None,
             ),
             room_events=_RoomEvents(),
         )
+        host.room_turns.cancel = host._cancel_room_turn
         dispatch = RoomSessionDispatchService(
-            host,
+            rooms=host.rooms, room_work=None, room_events=host.room_events,
+            room_turns=host.room_turns, room_partner_dispatches=None,
+            context_source_token=host._context_source_token,
+            restore_participant_sessions=lambda _: None,
+            guard_session_route=lambda *_: None, recover_faulted_session=lambda _: None,
+            resume_goal_if_paused=lambda _: None, target_idle=lambda *_: True,
+            record_room_evidence=lambda **_: {}, accept_turn=host._accept_room_turn,
+            prompt=host.prompt,
             build_participant_prompt=lambda *_args, **_kwargs: "Room context",
             resolve_attachments=lambda *_args, **_kwargs: [],
         )
@@ -321,11 +330,20 @@ class AgentRoomPartnerRestartRecoveryTest(unittest.TestCase):
             ),
             room_turns=SimpleNamespace(
                 release_priority_session=lambda *_args: None,
+                cancel=lambda *_args: None,
             ),
             room_events=_RoomEvents(),
         )
+        host.room_turns.cancel = host._cancel_room_turn
         dispatch = RoomSessionDispatchService(
-            host,
+            rooms=host.rooms, room_work=None, room_events=host.room_events,
+            room_turns=host.room_turns, room_partner_dispatches=None,
+            context_source_token=host._context_source_token,
+            restore_participant_sessions=lambda _: None,
+            guard_session_route=lambda *_: None, recover_faulted_session=lambda _: None,
+            resume_goal_if_paused=lambda _: None, target_idle=lambda *_: True,
+            record_room_evidence=lambda **_: {}, accept_turn=host._accept_room_turn,
+            prompt=host.prompt,
             build_participant_prompt=lambda *_args, **_kwargs: "Room context",
             resolve_attachments=lambda *_args, **_kwargs: [],
         )
@@ -383,11 +401,20 @@ class AgentRoomPartnerRestartRecoveryTest(unittest.TestCase):
             ),
             room_turns=SimpleNamespace(
                 release_priority_session=lambda *_args: None,
+                cancel=lambda *_args: None,
             ),
             room_events=_RoomEvents(),
         )
+        host.room_turns.cancel = host._cancel_room_turn
         dispatch = RoomSessionDispatchService(
-            host,
+            rooms=host.rooms, room_work=None, room_events=host.room_events,
+            room_turns=host.room_turns, room_partner_dispatches=None,
+            context_source_token=host._context_source_token,
+            restore_participant_sessions=lambda _: None,
+            guard_session_route=lambda *_: None, recover_faulted_session=lambda _: None,
+            resume_goal_if_paused=lambda _: None, target_idle=lambda *_: True,
+            record_room_evidence=lambda **_: {}, accept_turn=host._accept_room_turn,
+            prompt=host.prompt,
             build_participant_prompt=lambda *_args, **_kwargs: "Room context",
             resolve_attachments=lambda *_args, **_kwargs: [],
         )
@@ -433,11 +460,20 @@ class AgentRoomPartnerRestartRecoveryTest(unittest.TestCase):
             ),
             room_turns=SimpleNamespace(
                 release_priority_session=lambda *_args: None,
+                cancel=lambda *_args: None,
             ),
             room_events=_RoomEvents(),
         )
+        host.room_turns.cancel = host._cancel_room_turn
         dispatch = RoomSessionDispatchService(
-            host,
+            rooms=host.rooms, room_work=None, room_events=host.room_events,
+            room_turns=host.room_turns, room_partner_dispatches=None,
+            context_source_token=host._context_source_token,
+            restore_participant_sessions=lambda _: None,
+            guard_session_route=lambda *_: None, recover_faulted_session=lambda _: None,
+            resume_goal_if_paused=lambda _: None, target_idle=lambda *_: True,
+            record_room_evidence=lambda **_: {}, accept_turn=host._accept_room_turn,
+            prompt=host.prompt,
             build_participant_prompt=lambda *_args, **_kwargs: "Room context",
             resolve_attachments=lambda *_args, **_kwargs: [],
         )

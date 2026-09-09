@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 from rag_ime.rag_benchmark_agent import RagBenchmarkAgentGateway
 from rag_ime.rag_benchmark_sandbox import RagBenchmarkSandbox, RagBenchmarkSandboxTool
 

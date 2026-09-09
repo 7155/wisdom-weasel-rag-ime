@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from .agent_runtime_driver import RuntimeSessionControls
+from .agent_sessions import AgentSessionStore
+from rag_ime.rooms.store import AgentRoomStore
+from .agent_events import AgentEventHub
+
 from collections.abc import Callable, Mapping
-from typing import Any
 
 from .agent_runtime_driver import AgentRuntimeError
 from .agent_execution_policy import (
@@ -36,10 +40,10 @@ class AgentSessionPolicyService:
     def __init__(
         self,
         *,
-        sessions: Any,
-        runtime_provider: Callable[[], Any],
-        rooms: Any,
-        events: Any,
+        sessions: AgentSessionStore,
+        runtime_provider: Callable[[], RuntimeSessionControls],
+        rooms: AgentRoomStore,
+        events: AgentEventHub,
         runtime_status: Callable[[], Mapping[str, object]],
         probe_memory_maintenance: Callable[..., Mapping[str, object]],
     ) -> None:
@@ -54,7 +58,7 @@ class AgentSessionPolicyService:
         ) = None
 
     @property
-    def runtime(self) -> Any:
+    def runtime(self) -> RuntimeSessionControls:
         return self._runtime_provider()
 
     def model_catalog(self, session_id: str) -> dict[str, object]:

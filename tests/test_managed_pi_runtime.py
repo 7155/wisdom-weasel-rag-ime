@@ -13,9 +13,7 @@ from unittest.mock import patch
 
 from rag_ime import agent_tools, managed_pi_runtime as managed_runtime
 from rag_ime.agent_tool_ids import (
-    ASSISTANT_CONTROL_TOOL_IDS,
     CONTROL_TOOL_IDS,
-    PI_PACKAGE_OWNED_CONTROL_TOOL_IDS,
 )
 from rag_ime.managed_pi_runtime import (
     ACCEPTANCE_SCHEMA_VERSION,
@@ -39,7 +37,8 @@ from rag_ime.managed_pi_runtime import (
     write_managed_pi_runtime_manifest,
     write_managed_pi_runtime_retention_report,
 )
-from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeManager
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.runtime import PiRuntimeHostManager
 
 
 class ManagedPiRuntimeTests(unittest.TestCase):
@@ -54,7 +53,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
     def test_install_and_discover_use_only_verified_managed_paths(self) -> None:
         payload, _ = self._payload("runtime-1")
 
-        installed = install_managed_pi_runtime(payload, self.app_support)
+        installed = self._install_accepted(payload)[0]
         discovered = discover_managed_pi_runtime(self.app_support, expected_pi_version="0.80.7")
 
         self.assertEqual(installed.runtime_version, "runtime-1")
@@ -77,13 +76,13 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
 
         with self.assertRaisesRegex(ManagedPiRuntimeError, "evaluation-only"):
-            install_managed_pi_runtime(payload, self.app_support)
+            self._install_accepted(payload)[0]
 
         self.assertFalse((self.app_support / "PiRuntime" / POINTER_NAME).exists())
 
     def test_read_only_snapshot_verifies_runtime_without_lifecycle_lock(self) -> None:
         payload, _ = self._payload("runtime-read-only")
-        installed = install_managed_pi_runtime(payload, self.app_support)
+        installed = self._install_accepted(payload)[0]
 
         with patch(
             "rag_ime.managed_pi_runtime._managed_runtime_lock",
@@ -119,7 +118,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
 
     def test_read_only_snapshot_still_rejects_runtime_tampering(self) -> None:
         payload, _ = self._payload("runtime-read-only-tampered")
-        installed = install_managed_pi_runtime(payload, self.app_support)
+        installed = self._install_accepted(payload)[0]
         installed.executable.write_text("tampered\n", encoding="utf-8")
 
         with self.assertRaisesRegex(
@@ -165,14 +164,14 @@ class ManagedPiRuntimeTests(unittest.TestCase):
 
     def test_discovery_rejects_pointer_and_runtime_file_tampering(self) -> None:
         payload, _ = self._payload("runtime-1")
-        installed = install_managed_pi_runtime(payload, self.app_support)
+        installed = self._install_accepted(payload)[0]
         installed.executable.write_text("tampered\n", encoding="utf-8")
 
         with self.assertRaisesRegex(ManagedPiRuntimeError, "size mismatch|digest mismatch"):
             discover_managed_pi_runtime(self.app_support)
 
         payload_two, _ = self._payload("runtime-2")
-        install_managed_pi_runtime(payload_two, self.app_support)
+        self._install_accepted(payload_two)[0]
         pointer_path = self.app_support / "PiRuntime" / POINTER_NAME
         pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
         pointer["manifestSha256"] = "0" * 64
@@ -185,7 +184,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         manifest["piEntrypoint"] = "../outside.js"
         write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
         with self.assertRaisesRegex(ManagedPiRuntimeError, "unsafe managed Pi runtime path"):
-            install_managed_pi_runtime(payload, self.app_support)
+            self._install_accepted(payload)[0]
 
         symlink_payload = self.root / "payload-symlink"
         (symlink_payload / "bin").mkdir(parents=True)
@@ -210,8 +209,8 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         first, _ = self._payload("runtime-1")
         second, _ = self._payload("runtime-2")
 
-        install_managed_pi_runtime(first, self.app_support)
-        install_managed_pi_runtime(second, self.app_support)
+        self._install_accepted(first)[0]
+        self._install_accepted(second)[0]
 
         runtime_root = self.app_support / "PiRuntime"
         self.assertTrue((runtime_root / "runtime-1" / MANIFEST_NAME).is_file())
@@ -342,11 +341,12 @@ class ManagedPiRuntimeTests(unittest.TestCase):
     def test_retention_without_verified_predecessor_preserves_old_generations(self) -> None:
         for version in ("runtime-1", "runtime-2"):
             payload, _ = self._payload(version)
-            install_managed_pi_runtime(payload, self.app_support)
+            self._install_accepted(payload)[0]
 
         runtime_root = self.app_support / "PiRuntime"
         pointer_path = runtime_root / POINTER_NAME
         pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        pointer.pop("lifecycle", None)
         pointer.pop("previousVersion")
         pointer.pop("previousManifestSha256")
         pointer_path.write_text(json.dumps(pointer), encoding="utf-8")
@@ -755,7 +755,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
 
     def test_lifecycle_lock_is_mode_0600_regular_file(self) -> None:
         payload, _ = self._payload("runtime-1")
-        install_managed_pi_runtime(payload, self.app_support)
+        self._install_accepted(payload)[0]
         lock_path = self.app_support / LOCK_NAME
         lock_stat = lock_path.stat(follow_symlinks=False)
 
@@ -808,6 +808,30 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagedPiRuntimeError, "acceptance receipt"):
             install_managed_pi_runtime(payload, self.app_support)
 
+    def test_retired_protocol_cannot_build_install_or_be_selected_for_execution(self) -> None:
+        with self.assertRaisesRegex(ManagedPiRuntimeError, "retired"):
+            self._payload("retired-build", protocol_version="1")
+
+        payload, manifest = self._payload("historical-v1")
+        manifest["runtimeProtocolVersion"] = "1"
+        manifest.pop("runtimeMethods", None)
+        write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
+        with self.assertRaisesRegex(ManagedPiRuntimeError, "retired"):
+            install_managed_pi_runtime(payload, self.app_support)
+        self.assertFalse(self.app_support.exists())
+        with self.assertRaisesRegex(ManagedPiRuntimeError, "retired"):
+            snapshot_managed_pi_runtime_payload(payload)
+
+    def test_explicit_legacy_execution_configuration_is_rejected(self) -> None:
+        executable = self.root / "old-pi"
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        with patch.dict(os.environ, {
+            "RAG_IME_PI_EXECUTABLE": str(executable),
+            "RAG_IME_PI_PROTOCOL_VERSION": "1",
+        }, clear=True):
+            with self.assertRaisesRegex(ValueError, "retired"):
+                PiRuntimeConfig.from_environment()
+
     def test_protocol_v2_manifest_without_complete_session_methods_fails_closed(self) -> None:
         payload, manifest = self._payload("runtime-v2-incomplete", protocol_version="2")
         manifest["runtimeMethods"] = ["session.open"]
@@ -841,7 +865,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
 
     def test_pi_runtime_config_discovers_managed_install_without_path_fallback(self) -> None:
         payload, manifest = self._payload("runtime-1", pi_version="0.84.2")
-        installed = install_managed_pi_runtime(payload, self.app_support)
+        installed = self._install_accepted(payload)[0]
         with patch.dict(
             os.environ,
             {
@@ -857,20 +881,12 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(config.extension_path, installed.extension_path)
         self.assertEqual(config.pi_version, manifest["piVersion"])
         self.assertEqual(config.installation_error, "")
-        command = config.launch_command(session={"title": "managed"})
-        self.assertEqual(command[:2], [installed.node_executable, str(installed.executable)])
-        self.assertEqual(
-            command[command.index("--tools") + 1],
-            ",".join(
-                tool
-                for tool in ASSISTANT_CONTROL_TOOL_IDS
-                if tool not in PI_PACKAGE_OWNED_CONTROL_TOOL_IDS
-            ),
-        )
+        command = config.launch_host_command()
+        self.assertEqual(command, [installed.node_executable, str(installed.executable)])
 
     def test_explicit_development_executable_overrides_managed_install(self) -> None:
         payload, _ = self._payload("runtime-1")
-        install_managed_pi_runtime(payload, self.app_support)
+        self._install_accepted(payload)[0]
         developer_pi = self.root / "developer-pi.js"
         developer_extension = self.root / "developer-extension.ts"
         developer_pi.write_text("console.log('dev')\n", encoding="utf-8")
@@ -906,18 +922,18 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertIn("pointer is missing", config.installation_error)
 
         class _NoSessions:
-            pass
+            db_path = self.root / "unopened.sqlite"
 
         class _NoEvents:
             pass
 
-        status = PiRuntimeManager(config=config, sessions=_NoSessions(), events=_NoEvents()).runtime_status()
+        status = PiRuntimeHostManager(config=config, sessions=_NoSessions(), events=_NoEvents()).runtime_status()
         self.assertEqual(status["status"], "not_installed")
         self.assertIn("pointer is missing", status["lastError"])
 
     def test_required_pi_version_mismatch_fails_closed(self) -> None:
         payload, _ = self._payload("runtime-1")
-        install_managed_pi_runtime(payload, self.app_support)
+        self._install_accepted(payload)[0]
         with self.assertRaisesRegex(ManagedPiRuntimeError, "does not match required"):
             discover_managed_pi_runtime(self.app_support, expected_pi_version="0.81.0")
 
@@ -985,7 +1001,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self,
         runtime_version: str,
         *,
-        protocol_version: str = "1",
+        protocol_version: str = "2",
         pi_version: str = "0.80.7",
     ) -> tuple[Path, dict[str, object]]:
         payload = self.root / f"payload-{runtime_version}"

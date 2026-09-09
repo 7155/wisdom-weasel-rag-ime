@@ -17,10 +17,10 @@ from rag_ime.codex_conversation_import import (
     import_codex_conversation,
     parse_codex_conversation,
 )
-from rag_ime.pi_runtime_public import pi_message_is_public
-from rag_ime.pi_runtime import PiRuntimeConfig
-from rag_ime.pi_runtime_v2 import PiRuntimeHostManager
-from rag_ime.pi_runtime_transcript import durable_branch_messages
+from rag_ime.pi.public import pi_message_is_public
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.runtime import PiRuntimeHostManager
+from rag_ime.pi.transcript import durable_branch_messages
 
 
 class CodexConversationImportTests(unittest.TestCase):

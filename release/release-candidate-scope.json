@@ -1,11 +1,11 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-09T13:29:08.218965+00:00",
+  "generatedAt": "2026-09-09T23:44:46.618950+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
     "baseCommit": "55fc923944ffcee72a2c90b04a891c1106485227",
-    "candidateCommitPolicy": "Current PAW source checkpoint: Room frontend and Trace optimization, product host boundaries, user-selected icons and stellar motion, public documentation cleanup. Separate Lab candidate work and unpublished experiments remain outside this source checkpoint; native and quality acceptance are recorded separately."
+    "candidateCommitPolicy": "Current PAW source checkpoint, including the single Pi Host executor, explicit application dependencies, Pi/Room capability packages, public extension example and verification. Unrelated local experiments and private development records remain outside the commit; binary and foreground acceptance are recorded separately."
   },
   "dispositions": {
     "keep_release": "Retain this source maintenance change.",
@@ -17,13 +17,17 @@
       "description": "User-selected branding and bounded stellar visual behavior.",
       "pathCount": 39
     },
+    "composition_refactor": {
+      "description": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "pathCount": 8
+    },
     "lab_backend": {
       "description": "Agent Lab package, resource resolution and service consumers.",
-      "pathCount": 65
+      "pathCount": 62
     },
     "lab_tools": {
       "description": "Operator scripts that import Lab owners or record current source paths.",
-      "pathCount": 12
+      "pathCount": 8
     },
     "local_docs": {
       "description": "Stop tracking local development records and their dedicated checks; preserve local files.",
@@ -33,13 +37,17 @@
       "description": "Product extension host assembly and module dependency checks.",
       "pathCount": 7
     },
+    "pi_runtime_refactor": {
+      "description": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "pathCount": 23
+    },
     "portable_agent_ui": {
       "description": "Shared Agent controls and their standalone bundle entry.",
       "pathCount": 8
     },
     "product_integration": {
       "description": "Integrate current product source and public contribution guidance.",
-      "pathCount": 36
+      "pathCount": 30
     },
     "public_showcase": {
       "description": "Public synthetic-data screenshots and usage documentation.",
@@ -47,7 +55,19 @@
     },
     "react_os_docs": {
       "description": "Current React OS naming, architecture and development entrypoints.",
-      "pathCount": 5
+      "pathCount": 3
+    },
+    "refactor_docs_examples": {
+      "description": "Public owner navigation and an offline Lab adapter using the existing extension contract.",
+      "pathCount": 9
+    },
+    "refactor_integration": {
+      "description": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "pathCount": 19
+    },
+    "refactor_verification": {
+      "description": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "pathCount": 66
     },
     "references_history": {
       "description": "Lossless reference archives, attribution and dated acceptance records.",
@@ -61,36 +81,46 @@
       "description": "Room partner windows, readable replies, sidebars and responsive layout.",
       "pathCount": 18
     },
+    "room_service_refactor": {
+      "description": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "pathCount": 43
+    },
     "trace_optimization": {
       "description": "Trace diagnosis and bounded optimization source, contracts and executable regressions.",
-      "pathCount": 61
+      "pathCount": 60
     },
     "verification": {
       "description": "Regression checks for the included product changes.",
-      "pathCount": 51
+      "pathCount": 47
     }
   },
   "summary": {
-    "pathCount": 453,
+    "pathCount": 601,
     "dispositionCounts": {
-      "delete_old_implementation": 157,
-      "keep_release": 296
+      "delete_old_implementation": 185,
+      "keep_release": 416
     },
     "groupCounts": {
       "local_docs": 122,
-      "product_integration": 36,
-      "react_os_docs": 5,
+      "product_integration": 30,
+      "react_os_docs": 3,
+      "refactor_docs_examples": 9,
       "brand_stellar": 39,
       "public_showcase": 20,
       "references_history": 8,
       "portable_agent_ui": 8,
       "owner_boundaries": 7,
-      "trace_optimization": 61,
-      "verification": 51,
+      "trace_optimization": 60,
+      "verification": 47,
       "room_frontend": 18,
-      "lab_backend": 65,
+      "refactor_integration": 19,
+      "room_service_refactor": 43,
+      "composition_refactor": 8,
+      "lab_backend": 62,
+      "pi_runtime_refactor": 23,
       "release_scope": 1,
-      "lab_tools": 12
+      "lab_tools": 8,
+      "refactor_verification": 66
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -135,8 +165,8 @@
       "path": "CHANGELOG.md",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract."
     },
     {
       "path": "CONTEXT.md",
@@ -149,8 +179,8 @@
       "path": "CONTRIBUTING.md",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "product_integration",
-      "reason": "Integrate current product source and public contribution guidance."
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract."
     },
     {
       "path": "DECISIONS.md",
@@ -198,8 +228,8 @@
       "path": "README.md",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "react_os_docs",
-      "reason": "Current React OS naming, architecture and development entrypoints."
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract."
     },
     {
       "path": "assets/brand/README.md",
@@ -2078,6 +2108,27 @@
       "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
+      "path": "examples/lab/README.md",
+      "status": "added",
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "examples/lab/answers.jsonl",
+      "status": "added",
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "examples/lab/exact_match.py",
+      "status": "added",
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract.",
+      "disposition": "keep_release"
+    },
+    {
       "path": "integrations/pi/skills/agent-eval-room-optimizer/SKILL.md",
       "status": "modified",
       "disposition": "keep_release",
@@ -2120,11 +2171,53 @@
       "reason": "Relocate to control-center-web/docs/references/packages/paw-agent-chat-ui-kit-source.zip without retaining a duplicate implementation."
     },
     {
+      "path": "pyproject.toml",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
+    },
+    {
+      "path": "rag_ime/agent_approval_application.py",
+      "status": "modified",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_composition.py",
+      "status": "added",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_delegation.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_event_projection.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_external_approval.py",
+      "status": "modified",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
       "path": "rag_ime/agent_lab/README.md",
       "status": "added",
       "disposition": "keep_release",
-      "group": "lab_backend",
-      "reason": "Agent Lab package, resource resolution and service consumers."
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract."
     },
     {
       "path": "rag_ime/agent_lab/__init__.py",
@@ -2568,6 +2661,167 @@
       "reason": "Relocate to rag_ime/agent_lab/trials.py without retaining a duplicate implementation."
     },
     {
+      "path": "rag_ime/agent_prompt_application.py",
+      "status": "modified",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_prompt_delivery.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_role_application.py",
+      "status": "modified",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_room_cancellation_proofs.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_intercom.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_intercom_application.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_lifecycle.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_management.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_participants.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_partner_application.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_partner_dispatch_store.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_prompt_context.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_prompt_support.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_resources.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_routing.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_session_cancellation.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_session_dispatch.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_start_gate.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_turn_registry.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_work.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_work_application.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_room_workspace_ledger.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/agent_rooms.py",
+      "status": "deleted",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "delete_old_implementation"
+    },
+    {
       "path": "rag_ime/agent_routes.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2578,15 +2832,36 @@
       "path": "rag_ime/agent_runtime_driver.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "product_integration",
-      "reason": "Integrate current product source and public contribution guidance."
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners."
     },
     {
       "path": "rag_ime/agent_service.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "lab_backend",
-      "reason": "Agent Lab package, resource resolution and service consumers."
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners."
+    },
+    {
+      "path": "rag_ime/agent_session_application.py",
+      "status": "modified",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_session_branching.py",
+      "status": "modified",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_session_policy.py",
+      "status": "modified",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/agent_tools.py",
@@ -2652,11 +2927,25 @@
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     },
     {
+      "path": "rag_ime/control_api/lab_errors.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Shared Pi history and declared Lab HTTP error ownership with consumer and boundary regressions."
+    },
+    {
       "path": "rag_ime/control_api/route_policy.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/control_api/route_table.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "owner_boundaries",
+      "reason": "Shared Pi history and declared Lab HTTP error ownership with consumer and boundary regressions."
     },
     {
       "path": "rag_ime/db/migrations/0199_trace_optimization.sql",
@@ -2676,8 +2965,8 @@
       "path": "rag_ime/debug_server.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "lab_backend",
-      "reason": "Agent Lab package, resource resolution and service consumers."
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
     },
     {
       "path": "rag_ime/eval_lab.py",
@@ -2687,18 +2976,179 @@
       "reason": "Agent Lab package, resource resolution and service consumers."
     },
     {
-      "path": "rag_ime/pi_runtime.py",
+      "path": "rag_ime/managed_pi_runtime.py",
       "status": "modified",
-      "disposition": "keep_release",
-      "group": "product_integration",
-      "reason": "Integrate current product source and public contribution guidance."
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/memory_model_executor.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/observability.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/README.md",
+      "status": "added",
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/__init__.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/config.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/event_projection.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/factory.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/host_client.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/protocols.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/provider_auth.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/provider_config.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/public.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/runtime.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/transcript.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/transcript_io.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/ui_requests.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi/values.py",
+      "status": "added",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/pi_provider_auth.py",
+      "status": "deleted",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/pi_provider_config.py",
+      "status": "deleted",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/pi_runtime.py",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data."
+    },
+    {
+      "path": "rag_ime/pi_runtime_protocols.py",
+      "status": "deleted",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "rag_ime/pi_runtime_public.py",
+      "status": "deleted",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "delete_old_implementation"
     },
     {
       "path": "rag_ime/pi_runtime_v2.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "product_integration",
-      "reason": "Integrate current product source and public contribution guidance."
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data."
+    },
+    {
+      "path": "rag_ime/pi_runtime_values.py",
+      "status": "deleted",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "delete_old_implementation"
     },
     {
       "path": "rag_ime/public_release.py",
@@ -2706,6 +3156,160 @@
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/rooms/README.md",
+      "status": "added",
+      "group": "refactor_docs_examples",
+      "reason": "Public owner navigation and an offline Lab adapter using the existing extension contract.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/__init__.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/cancellation_proofs.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/intercom.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/intercom_application.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/lifecycle.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/management.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/participants.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/partner_application.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/partner_dispatch_store.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/prompt_context.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/prompt_support.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/resources.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/routing.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/session_cancellation.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/session_dispatch.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/start_gate.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/store.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/turn_registry.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/work.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/work_application.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/rooms/workspace_ledger.py",
+      "status": "added",
+      "group": "room_service_refactor",
+      "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
+      "disposition": "keep_release"
     },
     {
       "path": "rag_ime/trace_diagnostics.py",
@@ -2788,8 +3392,8 @@
       "path": "scripts/build_paw_backend_model_bundle.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "product_integration",
-      "reason": "Integrate current product source and public contribution guidance."
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
     },
     {
       "path": "scripts/build_paw_backend_web_model_package.py",
@@ -2809,22 +3413,36 @@
       "path": "scripts/build_paw_pi_runtime_model_bundle.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "product_integration",
-      "reason": "Integrate current product source and public contribution guidance."
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
+    },
+    {
+      "path": "scripts/canary_rag_benchmark_agent.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
     },
     {
       "path": "scripts/check_agent_execution_fault_matrix.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "lab_tools",
-      "reason": "Operator scripts that import Lab owners or record current source paths."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
+    },
+    {
+      "path": "scripts/check_import_boundaries.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "scripts/check_owner_boundaries.py",
       "status": "added",
       "disposition": "keep_release",
-      "group": "owner_boundaries",
-      "reason": "Product extension host assembly and module dependency checks."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "scripts/check_project_harness.py",
@@ -2832,6 +3450,20 @@
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "scripts/eval_memory_long_context_luna.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/eval_paw_context_continuation.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
     },
     {
       "path": "scripts/eval_paw_execution_reliability.py",
@@ -2876,25 +3508,53 @@
       "reason": "Operator scripts that import Lab owners or record current source paths."
     },
     {
+      "path": "scripts/install_sidecar_systemd_user.sh",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/prepare_managed_pi_runtime.py",
+      "status": "modified",
+      "group": "pi_runtime_refactor",
+      "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/run_cloudops_agent_eval.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
+    },
+    {
       "path": "scripts/run_paw_medium_eval.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "lab_tools",
-      "reason": "Operator scripts that import Lab owners or record current source paths."
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
     },
     {
       "path": "scripts/run_paw_micro_eval.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "lab_tools",
-      "reason": "Operator scripts that import Lab owners or record current source paths."
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
     },
     {
       "path": "scripts/run_rag_agent_ablation.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "lab_tools",
-      "reason": "Operator scripts that import Lab owners or record current source paths."
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
+    },
+    {
+      "path": "scripts/run_swe_bench_agent_eval.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
     },
     {
       "path": "scripts/score_agent_lab_optimal_path.py",
@@ -2902,6 +3562,13 @@
       "disposition": "keep_release",
       "group": "lab_tools",
       "reason": "Operator scripts that import Lab owners or record current source paths."
+    },
+    {
+      "path": "scripts/smoke_pi_room_composition.py",
+      "status": "modified",
+      "group": "refactor_integration",
+      "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
+      "disposition": "keep_release"
     },
     {
       "path": "squirrel-patches/GENERATION_EXPERIENCE.md",
@@ -2923,6 +3590,69 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Existing executable regressions updated for the owning package."
+    },
+    {
+      "path": "tests/test_agent_app_owned_sessions.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_approval_application.py",
+      "status": "added",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_approval_exactly_once.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_architecture.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_background_launch_recovery.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_blocks.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_capability_policy.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_composition.py",
+      "status": "added",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_delegation.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_agent_lab_app_paw_gateway.py",
@@ -2995,6 +3725,13 @@
       "reason": "Existing executable regressions updated for the owning package."
     },
     {
+      "path": "tests/test_agent_lab_golden_routes.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_agent_lab_history.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3054,8 +3791,8 @@
       "path": "tests/test_agent_lab_project_routes.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "verification",
-      "reason": "Existing executable regressions updated for the owning package."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "tests/test_agent_lab_projects.py",
@@ -3068,8 +3805,8 @@
       "path": "tests/test_agent_lab_rag_trial.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "verification",
-      "reason": "Existing executable regressions updated for the owning package."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "tests/test_agent_lab_room_comparison.py",
@@ -3084,6 +3821,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Existing executable regressions updated for the owning package."
+    },
+    {
+      "path": "tests/test_agent_lab_scene_recipe_routes.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_agent_lab_scene_recipes.py",
@@ -3103,8 +3847,8 @@
       "path": "tests/test_agent_lab_trial_routes.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "verification",
-      "reason": "Existing executable regressions updated for the owning package."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "tests/test_agent_lab_trials.py",
@@ -3112,6 +3856,174 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Existing executable regressions updated for the owning package."
+    },
+    {
+      "path": "tests/test_agent_list_pagination.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_prompt_settings.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_event_hub_gap.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_intercom.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_intercom_application.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_partner_application.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_partner_async_application.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_partner_dispatch_store.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_partner_restart_recovery.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_partner_revision_loop.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_partner_workflow.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_prompt_budget.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_send_admission.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_start_gate.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_turn_registry.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_work.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_work_application.py",
+      "status": "added",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_work_service.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_room_workspace_ledger.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_rooms.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_runtime_error_projection.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_service.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_service_room_partner_wake.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_sessions.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_agent_tools.py",
@@ -3131,8 +4043,15 @@
       "path": "tests/test_build_managed_pi_runtime_v2.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "verification",
-      "reason": "Regression checks for the included product changes."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
+    },
+    {
+      "path": "tests/test_canary_rag_benchmark_agent.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
     },
     {
       "path": "tests/test_ci_workflow.py",
@@ -3140,6 +4059,13 @@
       "disposition": "keep_release",
       "reason": "Regression checks for included source changes.",
       "status": "modified"
+    },
+    {
+      "path": "tests/test_codex_conversation_import.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "tests/test_database_migrations.py",
@@ -3156,11 +4082,25 @@
       "reason": "Existing executable regressions updated for the owning package."
     },
     {
+      "path": "tests/test_eval_schedule_runtime.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_import_agent_lab_experiments.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Existing executable regressions updated for the owning package."
+    },
+    {
+      "path": "tests/test_import_boundaries.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "tests/test_interview_agent_experiments.py",
@@ -3177,6 +4117,20 @@
       "reason": "Regression checks for the included product changes."
     },
     {
+      "path": "tests/test_lab_extension_example.py",
+      "status": "added",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_lab_http_errors.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Shared Pi history and declared Lab HTTP error ownership with consumer and boundary regressions."
+    },
+    {
       "path": "tests/test_license_decision.py",
       "group": "verification",
       "disposition": "keep_release",
@@ -3184,11 +4138,32 @@
       "status": "modified"
     },
     {
+      "path": "tests/test_managed_pi_runtime.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_memory_consumer_acceptance.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_memory_model_executor.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_owner_boundaries.py",
       "status": "added",
       "disposition": "keep_release",
-      "group": "owner_boundaries",
-      "reason": "Product extension host assembly and module dependency checks."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "tests/test_pawos_frontend_source_map.py",
@@ -3205,11 +4180,81 @@
       "reason": "Stop tracking local development records and their dedicated checks; preserve local files."
     },
     {
+      "path": "tests/test_pi_projection_boundaries.py",
+      "status": "added",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_provider_auth.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_provider_auth_http.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_provider_config.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_reasoning_projection.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
+    },
+    {
+      "path": "tests/test_pi_runtime.py",
+      "status": "deleted",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "delete_old_implementation"
+    },
+    {
+      "path": "tests/test_pi_runtime_config.py",
+      "status": "added",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_runtime_host_client.py",
+      "status": "added",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_runtime_retirement.py",
+      "status": "added",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_pi_runtime_transcript.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
+    },
+    {
       "path": "tests/test_pi_runtime_v2.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "verification",
-      "reason": "Regression checks for the included product changes."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "tests/test_public_release.py",
@@ -3226,11 +4271,25 @@
       "status": "modified"
     },
     {
+      "path": "tests/test_room_permission_policy.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_run_cloudops_agent_eval.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
+    },
+    {
       "path": "tests/test_trace_diagnostic_http.py",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "trace_optimization",
-      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
       "path": "tests/test_trace_optimization.py",
@@ -3266,6 +4325,13 @@
       "disposition": "keep_release",
       "group": "trace_optimization",
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "tests/test_work_documents.py",
+      "status": "modified",
+      "group": "refactor_verification",
+      "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
+      "disposition": "keep_release"
     }
   ]
 }

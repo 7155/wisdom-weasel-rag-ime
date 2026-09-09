@@ -16,7 +16,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_room_turn_registry import (
+from rag_ime.rooms.turn_registry import (
     RoomSessionBusyError,
     RoomTurnRegistry,
 )

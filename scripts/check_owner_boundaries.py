@@ -19,8 +19,32 @@ ENTRY_AND_COMPOSITION = (
     "rag_ime.agent_service",
     "rag_ime.debug_server",
     "rag_ime.cli",
+    "rag_ime.agent_composition",
 )
 OWNER_RULES = {
+    "rag_ime.pi.transcript_io": ENTRY_AND_COMPOSITION + (
+        "rag_ime.pi", "rag_ime.agent_sessions", "rag_ime.db", "sqlite3", "subprocess",
+    ),
+    "rag_ime.pi.event_projection": ENTRY_AND_COMPOSITION + (
+        "rag_ime.pi", "rag_ime.agent_sessions", "rag_ime.db", "sqlite3", "subprocess",
+    ),
+    "rag_ime.pi.ui_requests": ENTRY_AND_COMPOSITION + (
+        "rag_ime.pi", "rag_ime.agent_sessions", "rag_ime.db", "sqlite3", "subprocess",
+    ),
+    "rag_ime.agent_composition": ("rag_ime.agent_service", "rag_ime.debug_server", "rag_ime.cli"),
+    "rag_ime.rooms.session_dispatch": ENTRY_AND_COMPOSITION,
+    "rag_ime.rooms.session_cancellation": ENTRY_AND_COMPOSITION,
+    "rag_ime.agent_approval_application": ENTRY_AND_COMPOSITION,
+    "rag_ime.agent_external_approval": ENTRY_AND_COMPOSITION,
+    "rag_ime.pi.host_client": ENTRY_AND_COMPOSITION + (
+        "rag_ime.pi.runtime", "rag_ime.pi.factory",
+        "rag_ime.agent_sessions", "rag_ime.rooms.store",
+    ),
+    "rag_ime.rooms.work_application": ENTRY_AND_COMPOSITION,
+    "rag_ime.pi.config": ENTRY_AND_COMPOSITION + (
+        "rag_ime.pi.runtime",
+        "rag_ime.pi.factory",
+    ),
     "rag_ime.control_api": ENTRY_AND_COMPOSITION,
     "rag_ime.agent_lab": ENTRY_AND_COMPOSITION,
     "rag_ime.knowledge_library": ENTRY_AND_COMPOSITION + ("rag_ime.agent_lab",),
@@ -28,8 +52,8 @@ OWNER_RULES = {
         "rag_ime.agent_lab",
         "rag_ime.knowledge_library",
     ),
-    "rag_ime.pi_runtime_transcript": ENTRY_AND_COMPOSITION + (
-        "rag_ime.pi_runtime",
+    "rag_ime.pi.transcript": ENTRY_AND_COMPOSITION + (
+        "rag_ime.pi",
         "rag_ime.agent_sessions",
         "rag_ime.db",
         "sqlite3",
@@ -40,9 +64,11 @@ OWNER_RULES = {
 # forbidden pi_runtime family. Match exact modules (and their exported names),
 # not similarly prefixed implementation modules.
 OWNER_IMPORT_PORTS = {
-    "rag_ime.pi_runtime_transcript": (
-        "rag_ime.pi_runtime_public",
-        "rag_ime.pi_runtime_values",
+    "rag_ime.pi.event_projection": ("rag_ime.pi.public", "rag_ime.pi.values"),
+    "rag_ime.pi.ui_requests": ("rag_ime.pi.public", "rag_ime.pi.values"),
+    "rag_ime.pi.transcript": (
+        "rag_ime.pi.public",
+        "rag_ime.pi.values",
     ),
 }
 

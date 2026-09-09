@@ -25,6 +25,9 @@ These lookups resolve from this package rather than the former flat directory.
 Existing `agent_lab_*` SQL names, versioned schemas and frozen evidence remain
 unchanged. Historical source fingerprints describe their original revisions.
 
+See the [offline JSONL adapter example](../../examples/lab/README.md) for a
+complete registration, cancellation and cleanup check without a Provider.
+
 Run the focused regression suite from the repository root:
 
 ```sh

@@ -40,7 +40,7 @@ from rag_ime.cloudops_benchmark_agent import (
 )
 from rag_ime.eval_run_store import EvalRunStore
 from rag_ime.managed_pi_runtime import snapshot_managed_pi_runtime_payload
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 from rag_ime.sandbox_run_store import SandboxRunStore
 from rag_ime.trace_runtime import (
     ArtifactRef,

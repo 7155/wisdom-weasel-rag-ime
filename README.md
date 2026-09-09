@@ -194,9 +194,13 @@ PAW 管理业务与持久记录，Pi 管理模型和工具执行；界面通过�
 | 功能页面 | Agent、Memory、Knowledge、Lab、Trace 等交互 | [src/features](control-center-web/src/features/) |
 | Gateway / 应用服务 | API、持久化事件、Room 协作与能力配置 | [rag_ime](rag_ime/) |
 | HTTP 适配 | 请求参数、合约与错误响应 | [路由表](rag_ime/control_api/route_table.py) · [Lab 错误映射](rag_ime/control_api/lab_errors.py) |
-| Pi 接入 | Session、模型/工具循环、压缩、停止与恢复 | [Pi 适配器](rag_ime/pi_runtime_v2.py) · [历史纯投影](rag_ime/pi_runtime_transcript.py) · [Pi 契约](integrations/pi/) |
+| Pi 接入 | Session、模型/工具循环、压缩、停止与恢复 | [模块说明](rag_ime/pi/README.md) · [生命周期适配器](rag_ime/pi/runtime.py) · [Host 通信](rag_ime/pi/host_client.py) · [配置](rag_ime/pi/config.py) · [工厂](rag_ime/pi/factory.py) · [历史纯投影](rag_ime/pi/transcript.py) |
+| Room 工作项 | 分配、交付、验收、返修与通知 | [模块说明](rag_ime/rooms/README.md) · [应用服务](rag_ime/rooms/work_application.py) · [责任存储](rag_ime/rooms/work.py) |
 | Agent Lab | 项目接入、Trial、场景适配、比较与应用交付 | [模块说明](rag_ime/agent_lab/README.md) |
 | 数据与平台 | 数据库、浏览器、桌面、语音与输入适配 | [db](rag_ime/db/) · [integrations](integrations/) · [squirrel-patches](squirrel-patches/) |
+
+Pi 执行只支持协议 2 Host。旧协议 1 执行器已退役；显式指定协议 1 或尝试激活旧包会报错，
+需要用现有构建流程生成协议 2 包。历史 Session 的 JSONL 和 RuntimeBinding 读取保留。
 
 扩展页面采用产品装配：`registerProductExtensionHosts()` 绑定 `lab-html` 的惰性加载器，
 OS 注册表通过宿主类型加载页面，不直接导入 `LabAppHost`。

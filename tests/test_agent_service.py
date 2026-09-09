@@ -26,8 +26,10 @@ from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness
-from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory, PiRuntimeError
-from rag_ime.pi_runtime_values import (
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.factory import PiRuntimeDriverFactory
+from rag_ime.pi.values import PiRuntimeError
+from rag_ime.pi.values import (
     PiRuntimeCommandAcceptanceUnknown,
     PiRuntimeCommandRejected,
     PiRuntimeTurnConflict,
@@ -549,7 +551,10 @@ class AgentServiceTests(unittest.TestCase):
             }
         )["session"]
 
-        with self.assertRaisesRegex(ValueError, "binding_required"):
+        with (
+            patch.object(self.service.runtime, "session_snapshot", return_value={"messages": []}),
+            self.assertRaisesRegex(ValueError, "binding_required"),
+        ):
             self.service.create_trace_diagnostic_report(
                 {
                     "diagnosticSessionId": diagnostic["id"],
@@ -5702,7 +5707,7 @@ class AgentServiceTests(unittest.TestCase):
             {"op": "start", "task": "恢复可见 Todo"},
         )
         event = self.service.events.publish(session_id, "status_changed", {"status": "ready"})
-        with patch.object(self.service.runtime, "messages", return_value=[]):
+        with patch.object(self.service.runtime, "session_snapshot", return_value={"messages": []}):
             response = self.service.messages(session_id)
 
         self.assertEqual(response["lastSequence"], event.sequence)
@@ -7078,7 +7083,7 @@ class AgentServiceTests(unittest.TestCase):
         session_id = str(session["id"])
         self.service.sessions.set_status(session_id, "active")
         with (
-            patch.object(self.service.runtime, "messages", return_value=[]),
+            patch.object(self.service.runtime, "session_snapshot", return_value={"messages": []}),
             patch.object(
                 self.service.runtime,
                 "runtime_status",
@@ -7100,7 +7105,7 @@ class AgentServiceTests(unittest.TestCase):
         session_id = str(session["id"])
         self.service.sessions.set_status(session_id, "active")
         with (
-            patch.object(self.service.runtime, "messages", return_value=[]),
+            patch.object(self.service.runtime, "session_snapshot", return_value={"messages": []}),
             patch.object(
                 self.service.runtime,
                 "runtime_status",
@@ -7129,7 +7134,7 @@ class AgentServiceTests(unittest.TestCase):
             risk_level="R2",
             ttl_ms=120_000,
         )
-        with patch.object(self.service.runtime, "messages", return_value=[]):
+        with patch.object(self.service.runtime, "session_snapshot", return_value={"messages": []}):
             response = self.service.messages(session_id)
 
         pending = [
@@ -7160,7 +7165,7 @@ class AgentServiceTests(unittest.TestCase):
             approval,
             turn_id="turn:approval",
         )
-        with patch.object(self.service.runtime, "messages", return_value=[]):
+        with patch.object(self.service.runtime, "session_snapshot", return_value={"messages": []}):
             response = self.service.messages(session_id)
 
         pending = [
@@ -7662,9 +7667,12 @@ class AgentServiceTests(unittest.TestCase):
         session_id = str(session["id"])
         timeline: list[str] = []
 
+        real_reserve = self.service.runtime.reserve_prompt_admission
+        real_release = self.service.runtime.release_prompt_admission
+
         def reserve(*_args, **_kwargs):
             timeline.append("reserve")
-            return {"reserved": True}
+            return real_reserve(*_args, **_kwargs)
 
         def prompt(*_args, **_kwargs):
             timeline.append("prompt")
@@ -7677,7 +7685,7 @@ class AgentServiceTests(unittest.TestCase):
 
         def release(*_args, **_kwargs):
             timeline.append("release")
-            return False
+            return real_release(*_args, **_kwargs)
 
         with (
             patch.object(
@@ -7708,6 +7716,32 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertTrue(response["accepted"])
         self.assertEqual(timeline, ["reserve", "prompt", "release"])
+
+    def test_rewrite_admission_preserves_uncertain_dispatch_and_releases_rejection(self) -> None:
+        from rag_ime.agent_prompt_delivery import (
+            AgentPromptAcceptanceUnknown, AgentPromptPostAcceptanceFailure,
+        )
+        for error_type, keep_admission in (
+            (AgentPromptAcceptanceUnknown, True),
+            (AgentPromptPostAcceptanceFailure, True),
+            (ValueError, False),
+        ):
+            with self.subTest(error=error_type.__name__):
+                session_id = str(self.service.create_session({"title": "rewrite admission"})["session"]["id"])
+                with (
+                    patch.object(self.service.prompt_application, "dispatch_checkpoint", side_effect=error_type("dispatch failed")),
+                    self.assertRaises(error_type),
+                ):
+                    self.service.prompt_application.prompt_rewritten_session(
+                        session_id=session_id, message="replacement", checkpoint_text="replacement",
+                        attachment_ids=[], client_message_id="rewrite-admission", context_source="conversation_rewrite",
+                    )
+                if keep_admission:
+                    self.service.runtime.require_prompt_admission_active(session_id, client_message_id="rewrite-admission")
+                else:
+                    with self.assertRaises(PiRuntimeCommandRejected):
+                        self.service.runtime.require_prompt_admission_active(session_id, client_message_id="rewrite-admission")
+                self.service.runtime.release_prompt_admission(session_id, client_message_id="rewrite-admission")
 
     def test_stop_during_memory_bootstrap_fences_prompt_before_runtime(
         self,
@@ -8733,7 +8767,7 @@ class AgentServiceTests(unittest.TestCase):
             }
         }
         with patch.dict("os.environ", {}, clear=True), patch(
-            "rag_ime.pi_runtime.getproxies",
+            "rag_ime.pi.config.getproxies",
             return_value={"https": "http://127.0.0.1:7897"},
         ):
             configured = pi_runtime_config_from_settings(settings)
@@ -8750,7 +8784,7 @@ class AgentServiceTests(unittest.TestCase):
             },
             clear=True,
         ), patch(
-            "rag_ime.pi_runtime.getproxies",
+            "rag_ime.pi.config.getproxies",
             return_value={"https": "http://127.0.0.1:7897"},
         ):
             overridden = pi_runtime_config_from_settings(settings)

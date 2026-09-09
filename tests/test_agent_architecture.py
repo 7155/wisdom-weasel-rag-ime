@@ -9,14 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AGENT_SERVICE = ROOT / "rag_ime" / "agent_service.py"
 
-# Existing debt, documented in agent-runtime-composition.md. Removing an item
-# is welcome; adding one requires an explicit architecture decision.
-TRANSITIONAL_WHOLE_FACADE_DEPENDENCIES = {
-    "AgentApprovalApplicationService",
-    "RoomSessionCancellationService",
-    "RoomSessionDispatchService",
-    "RoomWorkApplicationService",
-}
+# Application dependencies are explicit; no whole-facade exceptions remain.
 RETIRED_ROLE_IDS = {
     "vcp-v1",
     "zhiyou-v1",
@@ -63,7 +56,7 @@ class AgentArchitectureTest(unittest.TestCase):
             if not any(
                 isinstance(argument, ast.Name)
                 and argument.id == "self"
-                for argument in node.args
+                for argument in [*node.args, *(keyword.value for keyword in node.keywords)]
             ):
                 continue
             name = _call_name(node.func)
@@ -71,7 +64,7 @@ class AgentArchitectureTest(unittest.TestCase):
                 actual.add(name)
         self.assertEqual(
             actual,
-            TRANSITIONAL_WHOLE_FACADE_DEPENDENCIES,
+            set(),
             "Application services must receive explicit stores/ports, "
             "not the entire AgentService facade.",
         )
@@ -80,9 +73,8 @@ class AgentArchitectureTest(unittest.TestCase):
         self,
     ) -> None:
         offenders: list[str] = []
-        for path in sorted(
-            (ROOT / "rag_ime").glob("agent_*.py")
-        ):
+        paths = [*(ROOT / "rag_ime").glob("agent_*.py"), *(ROOT / "rag_ime" / "rooms").glob("*.py")]
+        for path in sorted(paths):
             if path == AGENT_SERVICE:
                 continue
             tree = ast.parse(

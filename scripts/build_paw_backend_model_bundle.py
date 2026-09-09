@@ -129,7 +129,7 @@ LANGUAGE_BY_SUFFIX = {
 
 REQUIRED_SYMBOLS = {
     "rag_ime/agent_runtime_driver.py": ("class AgentRuntimeDriver",),
-    "rag_ime/agent_rooms.py": ("class AgentRoomStore", "class AgentRoomEventHub"),
+    "rag_ime/rooms/store.py": ("class AgentRoomStore", "class AgentRoomEventHub"),
     "rag_ime/agent_delegation.py": ("class AgentDelegationCoordinator",),
     "rag_ime/browser_control.py": ("class BrowserControlService",),
     "rag_ime/paw_browser_runtime.py": ("class PawBrowserRuntime",),

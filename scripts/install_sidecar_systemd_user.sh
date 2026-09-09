@@ -23,8 +23,8 @@ if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
   exit 1
 fi
 
-if ! "$PYTHON_EXECUTABLE" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
-  echo "python executable must be Python 3.10 or newer: $PYTHON_EXECUTABLE" >&2
+if ! "$PYTHON_EXECUTABLE" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
+  echo "python executable must be Python 3.12 or newer: $PYTHON_EXECUTABLE" >&2
   exit 1
 fi
 

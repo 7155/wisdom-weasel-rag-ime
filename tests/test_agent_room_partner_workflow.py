@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from rag_ime.agent_room_partner_application import RoomPartnerApplicationService
-from rag_ime.agent_room_partner_dispatch_store import AgentRoomPartnerDispatchStore
+from rag_ime.rooms.partner_application import RoomPartnerApplicationService
+from rag_ime.rooms.partner_dispatch_store import AgentRoomPartnerDispatchStore
 from rag_ime.agent_tools import _runtime_tool_parameter_schema
 from rag_ime.agent_wake_scheduler import AgentWakeScheduleStore
 from rag_ime.contracts.json_schema import ContractValidationError, validate_contract

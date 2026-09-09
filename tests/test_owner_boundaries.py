@@ -24,8 +24,8 @@ class OwnerBoundaryTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         for owner in CHECKER.OWNER_RULES:
-            if owner == "rag_ime.pi_runtime_transcript":
-                self.write("rag_ime/pi_runtime_transcript.py", "")
+            if owner == "rag_ime.pi.transcript":
+                self.write("rag_ime/pi/transcript.py", "")
             else:
                 self.root.joinpath(*owner.split(".")).mkdir(parents=True)
 
@@ -45,28 +45,28 @@ from .trials import AgentLabTrialStore
 
     def test_transcript_projection_cannot_depend_on_runtime_or_storage(self) -> None:
         samples = [
-            "def later():\n    from .pi_runtime import PiRuntimeConfig\n",
-            "from . import pi_runtime_v2 as runtime\n",
-            "from .pi_runtime_protocols import resolve_protocol_manager\n",
-            "from .agent_sessions import AgentSessionStore\n",
-            "from .db import sqlite_connection\n",
+            "def later():\n    from rag_ime.pi.config import PiRuntimeConfig\n",
+            "from . import runtime as runtime\n",
+            "from rag_ime.pi.factory import PiRuntimeDriverFactory\n",
+            "from rag_ime.agent_sessions import AgentSessionStore\n",
+            "from rag_ime.db import sqlite_connection\n",
             "import sqlite3\n",
             "import subprocess\n",
-            "from .agent_service import AgentService\n",
-            "import importlib as loader\nloader.import_module('.pi_runtime_v2', 'rag_ime')\n",
-            "__import__('rag_ime.pi_runtime')\n",
-            "from .pi_runtime_public_extra import hidden_dependency\n",
+            "from rag_ime.agent_service import AgentService\n",
+            "import importlib as loader\nloader.import_module('.runtime', 'rag_ime.pi')\n",
+            "__import__('rag_ime.pi.runtime')\n",
+            "from .public_extra import hidden_dependency\n",
         ]
         for source in samples:
             with self.subTest(source=source):
-                self.write("rag_ime/pi_runtime_transcript.py", source)
+                self.write("rag_ime/pi/transcript.py", source)
                 self.assertEqual(len(CHECKER.check_owner_boundaries(self.root)), 1)
 
     def test_transcript_projection_can_use_shared_public_contracts(self) -> None:
-        self.write("rag_ime/pi_runtime_transcript.py", """
-from .agent_protocol import AgentEventEnvelope
-from .pi_runtime_public import pi_message_payload
-from .pi_runtime_values import as_mapping
+        self.write("rag_ime/pi/transcript.py", """
+from rag_ime.agent_protocol import AgentEventEnvelope
+from rag_ime.pi.public import pi_message_payload
+from rag_ime.pi.values import as_mapping
 """)
         self.assertEqual(CHECKER.check_owner_boundaries(self.root), [])
 
@@ -80,6 +80,18 @@ from .pi_runtime_values import as_mapping
             with self.subTest(source=source):
                 self.write("rag_ime/control_api/lab_errors.py", source)
                 self.assertEqual(len(CHECKER.check_owner_boundaries(self.root)), 1)
+
+    def test_wire_and_io_owners_cannot_reach_runtime_state(self) -> None:
+        for owner in ("transcript_io", "event_projection", "ui_requests"):
+            path = f"rag_ime/pi/{owner}/probe.py"
+            for dependency in (
+                "rag_ime.pi.runtime", "rag_ime.pi.host_client",
+                "rag_ime.agent_sessions", "rag_ime.agent_service",
+            ):
+                with self.subTest(owner=owner, dependency=dependency):
+                    self.write(path, f"def later():\n    import {dependency}\n")
+                    self.assertEqual(len(CHECKER.check_owner_boundaries(self.root)), 1)
+                    (self.root / path).unlink()
 
     def test_lab_cannot_import_composition(self) -> None:
         self.write("rag_ime/agent_lab/example.py", "from ..agent_service import AgentService\n")
@@ -193,13 +205,13 @@ from ..agent_service import AgentService
         self.assertTrue(json.loads(process.stdout)["missingOwners"])
 
     def test_missing_transcript_module_is_not_a_passing_check(self) -> None:
-        (self.root / "rag_ime/pi_runtime_transcript.py").unlink()
+        (self.root / "rag_ime/pi/transcript.py").unlink()
         process = subprocess.run(
             [sys.executable, str(SCRIPT), "--root", str(self.root), "--json"],
             check=False, capture_output=True, text=True,
         )
         self.assertEqual(process.returncode, 1)
-        self.assertEqual(json.loads(process.stdout)["missingOwners"], ["rag_ime.pi_runtime_transcript"])
+        self.assertEqual(json.loads(process.stdout)["missingOwners"], ["rag_ime.pi.transcript"])
 
     def test_non_python_file_cannot_stand_in_for_owner_package(self) -> None:
         owner = self.root / "rag_ime/db"

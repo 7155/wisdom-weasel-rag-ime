@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_room_prompt_context import (
+from rag_ime.rooms.prompt_context import (
     ROOM_CONTEXT_PROMPT_CHAR_BUDGET,
     room_participant_prompt,
 )

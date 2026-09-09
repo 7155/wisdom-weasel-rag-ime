@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.agent_service import AgentService
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 class AgentApprovalExactlyOnceTests(unittest.TestCase):

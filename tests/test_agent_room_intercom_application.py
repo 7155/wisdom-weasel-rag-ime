@@ -4,7 +4,7 @@ import unittest
 from threading import RLock
 from types import SimpleNamespace
 
-from rag_ime.agent_room_intercom_application import (
+from rag_ime.rooms.intercom_application import (
     RoomIntercomApplicationService,
 )
 

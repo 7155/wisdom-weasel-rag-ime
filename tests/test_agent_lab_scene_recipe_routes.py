@@ -18,7 +18,7 @@ from rag_ime.control_api import (
 )
 from rag_ime.control_api.route_table import find_route
 from rag_ime.debug_server import DebugRequestHandler
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 SCENE_ID = "agent-lab.enterprise-rag.validation"

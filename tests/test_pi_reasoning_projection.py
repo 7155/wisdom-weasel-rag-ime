@@ -3,15 +3,14 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
 
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_message_snapshot import _merge_tool_events
 from rag_ime.agent_sessions import AgentSessionStore
-from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeManager
-from rag_ime.pi_runtime_public import public_reasoning_summaries
-from rag_ime.pi_runtime_v2 import PiRuntimeHostManager
-from rag_ime.pi_runtime_transcript import durable_branch_messages, durable_tool_history_events
+from rag_ime.pi.config import PiRuntimeConfig
+from rag_ime.pi.public import public_reasoning_summaries
+from rag_ime.pi.runtime import PiRuntimeHostManager
+from rag_ime.pi.transcript import durable_branch_messages, durable_tool_history_events
 
 
 class PiReasoningProjectionTests(unittest.TestCase):
@@ -32,14 +31,8 @@ class PiReasoningProjectionTests(unittest.TestCase):
             logs_dir=root / "logs",
             idle_timeout_seconds=0,
         )
-        self.events = {"v1": AgentEventHub(), "v2": AgentEventHub()}
-        self.v1 = PiRuntimeManager(config=config, sessions=sessions, events=self.events["v1"])
+        self.events = {"v2": AgentEventHub()}
         self.v2 = PiRuntimeHostManager(config=config, sessions=sessions, events=self.events["v2"])
-        self.client = Mock()
-        self.v1._client = self.client
-        self.v1._active_session_id = self.session_id
-        self.v1._active_turn_id = "turn-reasoning"
-        self.addCleanup(self.v1.stop)
         self.addCleanup(self.v2.stop)
 
     def emit(self, message: dict, index: int) -> None:
@@ -48,7 +41,6 @@ class PiReasoningProjectionTests(unittest.TestCase):
             "assistantMessageEvent": {"type": "thinking_end", "contentIndex": index},
             "message": message,
         }
-        self.v1._handle_pi_event(self.client, self.session_id, event)
         self.v2._handle_host_event({
             "protocolVersion": "2", "event": "agent.event",
             "sessionId": self.session_id, "turnId": "turn-reasoning", "payload": event,

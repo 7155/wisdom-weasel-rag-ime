@@ -9,14 +9,14 @@ import time
 import unittest
 from pathlib import Path
 
-from rag_ime.pi_provider_auth import (
+from rag_ime.pi.provider_auth import (
     PiProviderAuthError,
     PiProviderAuthService,
     PiProviderBridgeConfig,
     _OAuthJob,
     _openai_codex_login_uri,
 )
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 ROOT = Path(__file__).resolve().parents[1]

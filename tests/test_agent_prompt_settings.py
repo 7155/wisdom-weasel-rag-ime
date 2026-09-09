@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rag_ime.agent_configuration import AgentConfigurationConflict, AgentConfigurationStore, default_agent_configuration
 from rag_ime.agent_prompt_settings import DEFAULT_COMPACTION_INSTRUCTIONS, MAX_PROMPT_CHARS, default_prompt_settings
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 class AgentPromptSettingsTests(unittest.TestCase):

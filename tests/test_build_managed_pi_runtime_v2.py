@@ -47,7 +47,7 @@ from rag_ime.agent_extensions import (
     extension_app_binding_capability,
     extension_app_binding_sha256,
 )
-from rag_ime.pi_runtime_protocols import normalize_protocol_version
+from rag_ime.pi.protocols import normalize_protocol_version
 
 
 SESSION_FLOW_SKILLS = {

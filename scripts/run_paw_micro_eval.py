@@ -88,7 +88,7 @@ def skill_inventory():
 def live_trials(root, tasks, baseline_run=None):
     from scripts.pi_canary_support import installed_agent_config_dir,stage_openai_codex_oauth,launch_environment
     from rag_ime.managed_pi_runtime import snapshot_managed_pi_runtime
-    from rag_ime.pi_runtime import PiRuntimeConfig
+    from rag_ime.pi.config import PiRuntimeConfig
     from rag_ime.agent_service import AgentService
     from rag_ime.agent_lab.golden_pi import AgentLabGoldenPiExecutor, _settled_output
     plist=Path.home()/"Library/LaunchAgents/com.rag-ime.agent-gateway.plist"

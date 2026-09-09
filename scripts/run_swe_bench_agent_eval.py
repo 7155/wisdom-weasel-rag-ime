@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 from rag_ime.agent_service import AgentService  # noqa: E402
 from rag_ime.agent_tools import ControlToolGateway  # noqa: E402
 from rag_ime.managed_pi_runtime import snapshot_managed_pi_runtime  # noqa: E402
-from rag_ime.pi_runtime import PiRuntimeConfig  # noqa: E402
+from rag_ime.pi.config import PiRuntimeConfig
 from rag_ime.rag_benchmark_agent import RagBenchmarkAgentSpoolGateway  # noqa: E402
 from rag_ime.swe_bench_agent_eval import (  # noqa: E402
     DEFAULT_MODEL_REFERENCE,

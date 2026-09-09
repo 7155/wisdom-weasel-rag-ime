@@ -15,7 +15,7 @@ from rag_ime.agent_service import AgentService
 from rag_ime.control_api import ControlAccessContext, ControlApiError, ControlRequest, default_route_policy
 from rag_ime.control_api.route_table import find_route
 from rag_ime.debug_server import DebugRequestHandler
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 
 
 class Adapter:

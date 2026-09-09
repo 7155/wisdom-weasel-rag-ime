@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from rag_ime.debug_server import DebugRequestHandler
-from rag_ime.pi_provider_auth import PiProviderAuthError
+from rag_ime.pi.provider_auth import PiProviderAuthError
 
 
 class _ProviderAuth:

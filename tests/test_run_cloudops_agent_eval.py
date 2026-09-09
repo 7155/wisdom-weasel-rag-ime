@@ -14,7 +14,6 @@ from unittest.mock import Mock, patch
 from rag_ime.agent_artifacts import AgentArtifactStore
 from rag_ime.cloudops_benchmark_agent import CloudOpsBenchmarkGateway, CloudOpsBlindSuite
 from rag_ime.eval_run_store import EvalRunStore
-from rag_ime.pi_runtime import _tools_for_session
 from rag_ime.sandbox_run_store import SandboxRunStore
 from rag_ime.trace_runtime import ArtifactRef
 from rag_ime.trace_store import TraceStore
@@ -728,22 +727,14 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
             "allowedTools": [],
             "workspaceRoots": [],
         }
-        self.assertEqual(
-            (),
-            _tools_for_session(
-                (
-                    "overview",
-                    "memory",
-                    "knowledge",
-                    "runtime",
-                    "agents",
-                    "workspace_read",
-                    "workspace_search",
-                    "workspace_shell",
-                ),
-                session,
-            ),
-        )
+        # Exercise the current Gateway authorization policy used by Host manifests.
+        from rag_ime.agent_tools import _TOOL_SPEC_BY_ID, _tool_profile_allows
+
+        for tool in ("overview", "memory", "knowledge", "runtime", "agents", "workspace_read", "workspace_search", "workspace_shell"):
+            spec = _TOOL_SPEC_BY_ID[tool]
+            for operation in spec["operations"]:
+                with self.subTest(tool=tool, operation=operation):
+                    self.assertFalse(_tool_profile_allows(session, tool=tool, operation=operation, spec=spec))
 
     def test_runtime_identity_gate_rejects_model_route_drift(self) -> None:
         receipt = {

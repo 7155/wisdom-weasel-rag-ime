@@ -25,7 +25,7 @@ from rag_ime.managed_pi_runtime import (  # noqa: E402
     snapshot_managed_pi_runtime,
     snapshot_managed_pi_runtime_payload,
 )
-from rag_ime.pi_runtime import PiRuntimeConfig  # noqa: E402
+from rag_ime.pi.config import PiRuntimeConfig
 from rag_ime.rag_benchmark_agent import (  # noqa: E402
     RagBenchmarkAgentGateway,
     RagBenchmarkAgentGatewayServer,

@@ -7,7 +7,7 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from rag_ime.pi_runtime_transcript import (
+from rag_ime.pi.transcript import (
     DURABLE_TURN_ID_KEY,
     durable_branch_messages,
     durable_tool_history_events,
@@ -29,13 +29,13 @@ class PiRuntimeTranscriptTests(unittest.TestCase):
 import sys
 from unittest.mock import patch
 for name in (
-    'rag_ime.pi_runtime', 'rag_ime.pi_runtime_v2',
-    'rag_ime.pi_runtime_protocols', 'rag_ime.agent_service',
+    'rag_ime.pi_runtime', 'rag_ime.pi.runtime',
+    'rag_ime.pi.protocols', 'rag_ime.agent_service',
 ):
     sys.modules[name] = None
 with patch('sqlite3.connect', side_effect=AssertionError('database opened')), \
      patch('subprocess.Popen', side_effect=AssertionError('Host started')):
-    from rag_ime.pi_runtime_transcript import durable_branch_messages, durable_tool_history_events
+    from rag_ime.pi.transcript import durable_branch_messages, durable_tool_history_events
     assert durable_branch_messages([]) == ([], [])
     assert durable_tool_history_events([], session_id='isolated') == []
 """,

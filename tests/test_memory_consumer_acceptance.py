@@ -18,7 +18,7 @@ from rag_ime.generation_memory import (
 )
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_projectors import ImeMemoryProjector
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi.config import PiRuntimeConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 
 
