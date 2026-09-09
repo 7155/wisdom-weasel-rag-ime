@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-09T13:14:08.541212+00:00",
+  "generatedAt": "2026-09-09T13:29:08.218965+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -63,18 +63,18 @@
     },
     "trace_optimization": {
       "description": "Trace diagnosis and bounded optimization source, contracts and executable regressions.",
-      "pathCount": 59
+      "pathCount": 61
     },
     "verification": {
       "description": "Regression checks for the included product changes.",
-      "pathCount": 48
+      "pathCount": 51
     }
   },
   "summary": {
-    "pathCount": 448,
+    "pathCount": 453,
     "dispositionCounts": {
       "delete_old_implementation": 157,
-      "keep_release": 291
+      "keep_release": 296
     },
     "groupCounts": {
       "local_docs": 122,
@@ -85,8 +85,8 @@
       "references_history": 8,
       "portable_agent_ui": 8,
       "owner_boundaries": 7,
-      "trace_optimization": 59,
-      "verification": 48,
+      "trace_optimization": 61,
+      "verification": 51,
       "room_frontend": 18,
       "lab_backend": 65,
       "release_scope": 1,
@@ -1082,6 +1082,13 @@
       "disposition": "keep_release",
       "group": "trace_optimization",
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/observability-trace-get.v1.ts",
+      "group": "trace_optimization",
+      "disposition": "keep_release",
+      "reason": "Keep Trace contracts synchronized and public source checks independent of local documents.",
+      "status": "modified"
     },
     {
       "path": "control-center-web/src/contracts/generated/trace-diagnostic-inspection.v1.ts",
@@ -2596,6 +2603,13 @@
       "reason": "Integrate current product source and public contribution guidance."
     },
     {
+      "path": "rag_ime/contracts/json/observability-trace-get.v1.json",
+      "group": "trace_optimization",
+      "disposition": "keep_release",
+      "reason": "Keep Trace contracts synchronized and public source checks independent of local documents.",
+      "status": "modified"
+    },
+    {
       "path": "rag_ime/contracts/json/trace-diagnostic-inspection.v1.json",
       "status": "modified",
       "disposition": "keep_release",
@@ -3149,11 +3163,25 @@
       "reason": "Existing executable regressions updated for the owning package."
     },
     {
+      "path": "tests/test_interview_agent_experiments.py",
+      "group": "verification",
+      "disposition": "keep_release",
+      "reason": "Keep Trace contracts synchronized and public source checks independent of local documents.",
+      "status": "modified"
+    },
+    {
       "path": "tests/test_interview_metrics.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "tests/test_license_decision.py",
+      "group": "verification",
+      "disposition": "keep_release",
+      "reason": "Keep Trace contracts synchronized and public source checks independent of local documents.",
+      "status": "modified"
     },
     {
       "path": "tests/test_owner_boundaries.py",
@@ -3189,6 +3217,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "tests/test_rescore_enterprise_rag_answer_evidence.py",
+      "group": "verification",
+      "disposition": "keep_release",
+      "reason": "Keep Trace contracts synchronized and public source checks independent of local documents.",
+      "status": "modified"
     },
     {
       "path": "tests/test_trace_diagnostic_http.py",

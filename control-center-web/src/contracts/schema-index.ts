@@ -19851,6 +19851,97 @@ export const contractSchemas = {
       }
     },
     "$defs": {
+      "optimizationExecution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidateId",
+          "role",
+          "comparisonContractSha256",
+          "controls",
+          "loadedVersions"
+        ],
+        "properties": {
+          "candidateId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+          },
+          "role": {
+            "enum": [
+              "baseline",
+              "candidate"
+            ]
+          },
+          "comparisonContractSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "controls": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+            },
+            "required": [
+              "inputState",
+              "evaluator",
+              "qualityPolicy",
+              "permissions",
+              "environment"
+            ]
+          },
+          "loadedVersions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tool",
+              "skill",
+              "prompt",
+              "workflow",
+              "model"
+            ],
+            "properties": {
+              "tool": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              },
+              "skill": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              },
+              "prompt": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              },
+              "workflow": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              },
+              "model": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+              }
+            }
+          },
+          "fixedContextFingerprints": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$"
+            }
+          }
+        }
+      },
       "span": {
         "type": "object",
         "additionalProperties": false,
@@ -19921,7 +20012,12 @@ export const contractSchemas = {
             "type": "object"
           },
           "attributes": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "traceOptimization": {
+                "$ref": "#/$defs/optimizationExecution"
+              }
+            }
           }
         }
       },

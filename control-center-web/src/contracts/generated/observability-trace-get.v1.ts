@@ -74,7 +74,26 @@ export interface Span {
     [k: string]: unknown;
   };
   attributes: {
+    traceOptimization?: OptimizationExecution;
     [k: string]: unknown;
+  };
+}
+export interface OptimizationExecution {
+  candidateId: string;
+  role: 'baseline' | 'candidate';
+  comparisonContractSha256: string;
+  controls: {
+    [k: string]: string;
+  };
+  loadedVersions: {
+    tool: string;
+    skill: string;
+    prompt: string;
+    workflow: string;
+    model: string;
+  };
+  fixedContextFingerprints?: {
+    [k: string]: string;
   };
 }
 export interface Evidence {

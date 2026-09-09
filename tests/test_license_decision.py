@@ -15,7 +15,7 @@ class LicenseDecisionTests(unittest.TestCase):
 
         self.assertIn("GNU GENERAL PUBLIC LICENSE", license_text)
         self.assertIn("Version 3, 29 June 2007", license_text)
-        self.assertIn("Copyright (C) 2026 7155", readme)
+        self.assertRegex(readme, r"Copyright (?:\(C\)|©) 2026 7155")
         self.assertIn("[GPL-3.0-only](LICENSE)", readme)
         self.assertIn('license = "GPL-3.0-only"', pyproject)
 

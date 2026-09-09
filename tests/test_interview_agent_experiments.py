@@ -415,55 +415,6 @@ class InterviewAgentExperimentContractTests(unittest.TestCase):
         )
         self.assertFalse(memory["comparison"]["latencyIsKeepGate"])
 
-    def test_readme_marks_all_four_current_paths_with_rag_boundaries(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        readme = (root / "eval/interview-metrics/README.md").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("EnterpriseOps、Enterprise RAG、CloudOps 与 Memory 的本轮结果已齐全", readme)
-        self.assertIn("Sol 7/9 Reject → Luna model-only 8/9 Reject → Luna+Prompt-v4 9/9 Keep", readme)
-        self.assertIn("95.2576496024%", readme)
-        self.assertIn("2.84227424224%", readme)
-        self.assertIn("post-Validation candidate-aware", readme)
-        self.assertIn("不是 candidate-blind", readme)
-        self.assertIn("不是 Held-out", readme)
-        self.assertIn("不是 Provider bill", readme)
-        self.assertIn("Standard 修正不算模型能力提升", readme)
-        self.assertIn("延迟只作诊断", readme)
-        self.assertIn("95.738878%", readme)
-        self.assertIn("93.9553369996%", readme)
-        self.assertIn("96.0053508723%", readme)
-        self.assertIn("Prompt adaptation 不需要", readme)
-
-    def test_readme_uses_real_enterprise_rag_standard_v2_example(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        readme = (root / "eval/interview-metrics/README.md").read_text(
-            encoding="utf-8"
-        )
-
-        for value in (
-            "Enterprise RAG answer-evidence Standard v2",
-            "5,101",
-            "29,846",
-            "4 个 case（2 个 answer、2 个 abstain）",
-            "9 个 required facts",
-            "14 个 verified evidence bindings",
-            "post-validation calibration",
-            "没有多标注者一致率",
-            "不能声称 85%",
-        ):
-            self.assertIn(value, readme)
-
-    def test_readme_records_room_auto_approval_requirement_without_broadening_sessions(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        readme = (root / "eval/interview-metrics/README.md").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn('IM-038 | “room不需要批准，都通过，默认，务必”', readme)
-        self.assertIn("不扩展到普通 Session", readme)
-
     def test_enterprise_optimal_path_projects_three_real_stage_nodes(self) -> None:
         root = Path(__file__).resolve().parents[1]
         path = root / (

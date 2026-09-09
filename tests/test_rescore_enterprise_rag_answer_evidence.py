@@ -244,6 +244,10 @@ class RescoreEnterpriseRagAnswerEvidenceTests(unittest.TestCase):
                 lane["costs"],
             )
 
+    @unittest.skipUnless(
+        QRELS.is_file() and all(path.is_file() for path in REPORTS.values()),
+        "Replay requires optional local frozen reports and private qrels, excluded from public source.",
+    )
     def test_three_frozen_r4_reports_rescore_with_exact_runner_contract(self) -> None:
         for label, report in REPORTS.items():
             with self.subTest(label=label):
@@ -350,6 +354,10 @@ class RescoreEnterpriseRagAnswerEvidenceTests(unittest.TestCase):
                 self.assertFalse(receipt["heldOutOpened"])
                 self.assertFalse(receipt["unbiasedPromotionClaimAllowed"])
 
+    @unittest.skipUnless(
+        QRELS.is_file() and all(path.is_file() for path in REPORTS.values()),
+        "Replay requires optional local frozen reports and private qrels, excluded from public source.",
+    )
     def test_cli_accepts_only_explicit_current_inputs_and_is_append_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "receipt.json"
