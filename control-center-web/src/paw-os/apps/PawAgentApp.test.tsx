@@ -25,8 +25,14 @@ vi.mock('./PawSessionWorkspace', () => ({
   ),
 }));
 vi.mock('./PawRoomWorkspace', () => ({
-  PawRoomWorkspace: ({ initialDraft, recordId }: { initialDraft?: string; recordId: string }) => (
-    <div>Room 工作区 · {recordId}<output data-testid="room-initial-draft">{initialDraft}</output></div>
+  PawRoomWorkspace: ({ initialDraft, record, recordId, onRoomUpdated }: {
+    initialDraft?: string; record?: RoomSummary; recordId: string; onRoomUpdated: (room: RoomSummary) => void;
+  }) => (
+    <div>
+      Room 工作区 · {recordId}<output data-testid="room-initial-draft">{initialDraft}</output>
+      <output data-testid="room-record-title">{record?.title ?? 'missing'}</output>
+      <button onClick={() => onRoomUpdated(roomFixture({ id: recordId, title: '恢复的协作主对话' }))}>接收 Room 快照</button>
+    </div>
   ),
 }));
 vi.mock('@/features/roles', () => ({ RolesFeature: () => <div>角色工作区</div> }));
@@ -94,6 +100,23 @@ describe('PAWOS Agent App', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('hydrates a restored Room from its live snapshot while an unfocused window defers the directory', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    render(
+      <PawOsAppSurfaceProvider active={false} appId="agent" height={720} width={1_080} windowId="agent-room">
+        {agentTree(transport, { initialRoute: '/agent?room=room-restored' })}
+      </PawOsAppSurfaceProvider>,
+    );
+
+    expect(screen.getByTestId('room-record-title')).toHaveTextContent('missing');
+    expect(catalogRequestPaths(transport)).toEqual([]);
+    await user.click(screen.getByRole('button', { name: '接收 Room 快照' }));
+
+    expect(screen.getByTestId('room-record-title')).toHaveTextContent('恢复的协作主对话');
+    expect(catalogRequestPaths(transport)).toEqual([]);
   });
 
   it('uses one rail for Sessions and Rooms and starts on the central new-work composer', async () => {
@@ -345,7 +368,7 @@ describe('PAWOS Agent App', () => {
     const user = userEvent.setup();
     renderAgent();
 
-    const chip = await screen.findByRole('button', { name: /全权限/ });
+    const chip = await screen.findByRole('button', { name: /完全访问/ });
     await user.click(chip);
     expect(screen.getByRole('menu')).toBeInTheDocument();
     await user.tab();
@@ -481,7 +504,7 @@ describe('PAWOS Agent App', () => {
 
     // The chip signals the mode through the PermissionMark glyph family, not
     // a colour dot: the mark's data-mark kind must follow the selection.
-    const chip = await screen.findByRole('button', { name: /全权限/ });
+    const chip = await screen.findByRole('button', { name: /完全访问/ });
     expect(chip.querySelector('[data-mark="permission-per-action"]')).toBeInTheDocument();
 
     await user.click(chip);

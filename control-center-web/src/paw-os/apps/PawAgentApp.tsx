@@ -486,7 +486,11 @@ export function PawAgentApp({
             recordId={selection.id}
             onRoomUpdated={(updated) => {
               if (optimisticRoomsRef.current[updated.id]) optimisticRoomsRef.current[updated.id] = updated;
-              setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
+              // A restored Room can receive its live snapshot before the
+              // unfocused window loads the optional work-record directory.
+              setRooms((current) => current.some((item) => item.id === updated.id)
+                ? current.map((item) => item.id === updated.id ? updated : item)
+                : [updated, ...current]);
             }}
           />
         ) : null}
