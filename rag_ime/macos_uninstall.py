@@ -28,6 +28,7 @@ LEGACY_LAUNCH_AGENT_LABELS = (
 OWNED_LAUNCH_AGENT_LABELS = LAUNCH_AGENT_LABELS + LEGACY_LAUNCH_AGENT_LABELS
 APP_BUNDLES = (
     ("RagImeControl.app", "com.rag-ime.control"),
+    ("Personal Agent Workbench.app", "com.rag-ime.control"),
     ("RagImeDesktopBridge.app", "com.rag-ime.desktop-bridge"),
     ("RagImeVoice.app", "com.rag-ime.voice"),
 )
@@ -150,7 +151,7 @@ def build_macos_uninstall_plan(
                 )
             )
             continue
-        if not _path_is_safe_for_action(target, home_path, allow_target_symlink=False):
+        if not _path_is_safe_for_action(target, home_path, allow_target_symlink=_is_control_compatibility_link(target, home_path)):
             actions.append(
                 {
                     **_path_action(
@@ -521,7 +522,7 @@ def _apply_action(action: Mapping[str, object], *, home: Path, runner: CommandRu
             "commandReturnCode": int(completed.returncode),
         }
     if kind == "remove_owned_app":
-        _require_path_within_home(target, home, allow_target_symlink=False)
+        _require_path_within_home(target, home, allow_target_symlink=_is_control_compatibility_link(target, home))
         expected = str(metadata.get("expectedBundleId") or "")
         expected_by_target = {
             home / "Applications" / name: bundle_id for name, bundle_id in APP_BUNDLES
@@ -740,6 +741,15 @@ def _atomic_replace_text(path: Path, content: str, *, mode: int) -> None:
         if descriptor >= 0:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
+
+
+def _is_control_compatibility_link(target: Path, home: Path) -> bool:
+    return (
+        target == home / "Applications" / "RagImeControl.app"
+        and target.is_symlink()
+        and target.readlink() == Path("Personal Agent Workbench.app")
+        and not (home / "Applications" / "Personal Agent Workbench.app").is_symlink()
+    )
 
 
 def _remove_path(path: Path) -> None:

@@ -103,6 +103,13 @@ pnpm --dir control-center-web test:e2e
 
 ## Local Installation
 
+The installed desktop bundle is `~/Applications/Personal Agent Workbench.app`.
+Updates retain the previous app in `~/Applications/.paw-update.*` and keep a
+`RagImeControl.app` compatibility symlink for existing launch integrations.
+Pinned Dock entries are refreshed in place; unrelated pins keep their order.
+The bundle identifier and Application Support directory remain unchanged.
+
+
 Installation changes `~/Library/Application Support/RagIme`,
 `~/Library/LaunchAgents`, and `~/Applications`; `--include-squirrel` also
 replaces the user-installed Squirrel bundle. Review the command before running
@@ -212,7 +219,7 @@ accepted retired lineage and refuses a changed dry-run plan.
 
 ## Source Publication And Binary Release
 
-The `v0.1.0-alpha.1` GitHub prerelease is a PAW source preview. Its source
+The `v0.1.0-alpha.2` GitHub prerelease is a PAW source preview. Its source
 archives contain the tracked product code, documentation, tests, and public
 fixtures. They do not include user data, installed business plugins, credentials,
 model weights, a prebuilt Pi generation, or a signed macOS installer.

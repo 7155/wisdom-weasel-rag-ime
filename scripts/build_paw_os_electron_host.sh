@@ -19,10 +19,10 @@ case "$ACTION" in
     ;;
   build-release|install-release)
     APP="$ROOT/build/RagImeControlElectron.app"
-    INSTALL_DEST="$HOME/Applications/RagImeControl.app"
+    INSTALL_DEST="$HOME/Applications/Personal Agent Workbench.app"
     EXECUTABLE="RagImeControl"
     BUNDLE_ID="com.rag-ime.control"
-    DISPLAY_NAME="PAW"
+    DISPLAY_NAME="Personal Agent Workbench"
     CHANNEL="release"
     FRONTEND_CHANNEL="production"
     ;;
@@ -231,6 +231,14 @@ if [[ "$CHANNEL" == "release" ]]; then
 fi
 
 if [[ "$ACTION" == install-* ]]; then
+  if [[ "$CHANNEL" == "release" ]]; then
+    for existing in "$INSTALL_DEST" "$HOME/Applications/RagImeControl.app"; do
+      if [[ -e "$existing" ]]; then
+        existing_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$existing/Contents/Info.plist")"
+        [[ "$existing_id" == "$BUNDLE_ID" ]] || { echo "App path belongs to another product: $existing" >&2; exit 1; }
+      fi
+    done
+  fi
   LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
   osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
   INSTALLED_EXECUTABLE="$INSTALL_DEST/Contents/MacOS/$EXECUTABLE"
@@ -245,12 +253,25 @@ if [[ "$ACTION" == install-* ]]; then
   done
   [[ -z "$INSTALLED_PID" ]] || ! kill -0 "$INSTALLED_PID" 2>/dev/null || kill -KILL "$INSTALLED_PID" 2>/dev/null || true
   mkdir -p "$HOME/Applications"
-  rm -rf "$INSTALL_DEST"
+  # Keep the previous bundle for recovery, including the pre-rename install.
+  BACKUP_DIR="$(mktemp -d "$HOME/Applications/.paw-update.XXXXXX")"
+  if [[ -e "$INSTALL_DEST" || -L "$INSTALL_DEST" ]]; then
+    mv "$INSTALL_DEST" "$BACKUP_DIR/$(basename "$INSTALL_DEST")"
+  fi
   ditto "$APP" "$INSTALL_DEST"
   codesign --verify --deep --strict "$INSTALL_DEST"
   if [[ "$CHANNEL" == "release" ]]; then
     verify_release_provenance "$INSTALL_DEST"
   fi
+  if [[ "$CHANNEL" == "release" ]]; then
+    LEGACY_DEST="$HOME/Applications/RagImeControl.app"
+    if [[ -e "$LEGACY_DEST" || -L "$LEGACY_DEST" ]]; then
+      mv "$LEGACY_DEST" "$BACKUP_DIR/RagImeControl.app"
+    fi
+    ln -s "Personal Agent Workbench.app" "$LEGACY_DEST"
+    python3 "$ROOT/scripts/refresh_paw_dock.py" "$INSTALL_DEST" "$BACKUP_DIR"
+  fi
+  echo "Previous application retained at $BACKUP_DIR" >&2
   touch "$INSTALL_DEST"
   "$LSREGISTER" -f "$INSTALL_DEST" >/dev/null
   echo "$INSTALL_DEST"

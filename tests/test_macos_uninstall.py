@@ -18,6 +18,23 @@ from rag_ime.macos_uninstall import (
 
 
 class MacOSUninstallTests(unittest.TestCase):
+    def test_renamed_control_and_compatibility_link_are_removed_without_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            app = home / "Applications" / "Personal Agent Workbench.app"
+            self._write_app(app, "com.rag-ime.control")
+            legacy = app.parent / "RagImeControl.app"
+            legacy.symlink_to(app.name)
+            data = home / "Library/Application Support/RagIme/keep.txt"
+            data.parent.mkdir(parents=True)
+            data.write_text("keep")
+            plan = build_macos_uninstall_plan(home, uid=501)
+            result = apply_macos_uninstall_plan(plan, platform_name="darwin")
+            self.assertTrue(result["ok"], result)
+            self.assertFalse(app.exists())
+            self.assertFalse(legacy.is_symlink())
+            self.assertEqual(data.read_text(), "keep")
+
     def test_home_that_resolves_to_filesystem_root_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-uninstall-home-root-") as tmp:
             root_link = Path(tmp) / "not-a-home"

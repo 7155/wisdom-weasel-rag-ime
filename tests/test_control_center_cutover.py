@@ -455,7 +455,7 @@ class ControlCenterCutoverTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('INSTALL_DEST="$HOME/Applications/RagImeControl.app"', build)
+        self.assertIn('INSTALL_DEST="$HOME/Applications/Personal Agent Workbench.app"', build)
         self.assertIn("rag-ime-control-web-build-marker.json", build)
         self.assertIn('"browserHost": "electron-webview"', build)
         self.assertIn('"browserControl": "ego-browser"', build)

@@ -3,7 +3,14 @@
 Personal Agent Workbench follows a source-first development model. A public
 source checkpoint is not a signed and notarized macOS binary release.
 
-## Unreleased
+## 0.1.0-alpha.2 — 2026-09-10
+
+Source preview; no signed or notarized macOS installer is included.
+
+- Correct the installed app, Finder and pinned Dock name to Personal Agent
+  Workbench. Preserve existing launch paths, bundle identity and user data;
+  retain previous app bundles for local recovery.
+
 
 - Give Room work, dispatch, cancellation and approval services explicit
   dependencies; preserve shared stores, event ordering and Runtime replacement.
