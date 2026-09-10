@@ -102,7 +102,11 @@ def room_unrestricted_policy_active(session: Mapping[str, object]) -> bool:
     )
 
 def full_access_policy_active(session: Mapping[str, object]) -> bool:
-    """Return whether this Session carries the explicit unrestricted ASK profile."""
+    """Match full access, retaining the persisted per_action wire value.
+
+    This explicit profile owns both unrestricted paths and automatic execution;
+    the legacy executionMode field must not add a second approval requirement.
+    """
 
     execution_mode = str(session.get("executionMode") or "").strip().lower()
     return (
@@ -376,10 +380,8 @@ def approval_strategy(
         if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
             return APPROVAL_DENY
         return APPROVAL_AUTO
-    if auto_approve_policy_active(session):
+    if unrestricted_workspace_policy_active(session):
         return APPROVAL_AUTO
-    if full_access_policy_active(session):
-        return APPROVAL_ASK
     if mode == PER_ACTION_EXECUTION_MODE:
         return APPROVAL_ASK
     if mode == FULL_TRUST_EXECUTION_MODE:
@@ -492,12 +494,11 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
         )
     elif full_profile:
         guidance = (
-            "本轮使用 Control Center 全面访问配置 "
-            "(control-center-full-access-v1，per_action)。每一个 Tool action 都可以访问"
-            "授权工作区 / 以及其中的系统、网络和敏感目标；所有会改变外部状态的操作仍需原生"
-            "人工批准（ASK），该批准是确认而不是权限拒绝。\n"
-            "除了这一项一确认，PAW 的路径、工作区范围、审批预览哈希、Luna 审批和其他权限"
-            "门槛均已关闭；操作系统/TCC、Unix 权限和 Tool 可用性仍是最终边界。"
+            "本轮使用 Control Center 完全访问配置 (control-center-full-access-v1)。"
+            "可直接访问工作区 / 及其中的系统、网络和敏感目标。每一个 Tool action 都自动执行，"
+            "不等待人工、Luna 或逐项批准。选择此权限配置已经构成执行授权。\n"
+            "PAW 的路径白名单、工作区范围和逐项审批门槛均已关闭；"
+            "操作系统/TCC、Unix 权限和 Tool 可用性仍由实际执行结果如实报告。"
         )
     suffix = (
         ""
@@ -506,8 +507,10 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
             "范围和哈希硬边界始终有效；取消、审计和迟到写入保护始终有效；删库、灾难性破坏和敏感数据外传由代码硬阻止。"
         )
     )
+    effective_mode = FULL_TRUST_EXECUTION_MODE if unrestricted else mode
+    approval_attribute = ' approval="auto"' if unrestricted else ''
     return (
-        f'<execution-mode mode="{mode}">\n'
+        f'<execution-mode mode="{effective_mode}"{approval_attribute}>\n'
         f"{guidance}\n"
         f"{suffix}\n"
         "</execution-mode>"

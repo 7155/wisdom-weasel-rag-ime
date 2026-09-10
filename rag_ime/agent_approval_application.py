@@ -12,6 +12,7 @@ from .agent_execution_policy import (
     APPROVAL_MODEL,
     ROOM_UNRESTRICTED_EXECUTION_MODE,
     approval_strategy,
+    full_access_policy_active,
     read_only_policy_active,
     unrestricted_workspace_policy_active,
 )
@@ -934,6 +935,7 @@ class AgentApprovalApplicationService:
                 "execution-policy:"
                 + str(
                     effective_session.get("roomExecutionMode")
+                    or ("full_access" if full_access_policy_active(effective_session) else "")
                     or effective_session.get("executionMode")
                     or "per_action"
                 )

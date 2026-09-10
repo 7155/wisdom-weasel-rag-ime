@@ -2941,7 +2941,7 @@ describe('Agent experience', () => {
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
     const picker = document.querySelector('.agent-picker-popover');
     expect(picker).not.toBeNull();
-    expect(within(picker as HTMLElement).getByRole('radio', { name: /全权限/ })).toBeInTheDocument();
+    expect(within(picker as HTMLElement).getByRole('radio', { name: /完全访问/ })).toBeInTheDocument();
   });
 
   it('restores a pending approval dialog directly from the session snapshot', async () => {
@@ -3760,10 +3760,10 @@ describe('Agent experience', () => {
     const availablePermissions = within(permissionPicker as HTMLElement).getAllByRole('radio');
     expect(availablePermissions).toHaveLength(4);
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /^只读/ })).toBeInTheDocument();
-    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全权限/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全访问/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /^工作区托管/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全自动/ })).toBeInTheDocument();
-    const fullAccessPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /全权限/ });
+    const fullAccessPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全访问/ });
     expect(fullAccessPermission).not.toBeDisabled();
     await user.click(fullAccessPermission);
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
@@ -3779,7 +3779,7 @@ describe('Agent experience', () => {
         },
       }),
     })));
-    expect(await screen.findByRole('button', { name: '对话权限：全权限' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '对话权限：完全访问' })).toBeInTheDocument();
 
     await openCommandPalette();
     await user.click(screen.getByRole('option', { name: /\/tools/ }));
@@ -3857,7 +3857,7 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: '对话权限：写入与命令确认' }));
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全权限/ }));
+    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全访问/ }));
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
@@ -3872,7 +3872,7 @@ describe('Agent experience', () => {
         },
       }),
     })));
-    expect(await screen.findByRole('button', { name: '对话权限：全权限' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '对话权限：完全访问' })).toBeInTheDocument();
   });
 
 

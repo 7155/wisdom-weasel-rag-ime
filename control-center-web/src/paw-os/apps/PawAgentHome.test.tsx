@@ -68,7 +68,7 @@ describe('PAWOS Agent Home 首屏合同', () => {
   it('opens permission and project menus outside the clipped Home surface and restores keyboard focus', async () => {
     const user = userEvent.setup();
     renderHome();
-    const permission = await screen.findByRole('button', { name: /权限 · 全权限/ });
+    const permission = await screen.findByRole('button', { name: /权限 · 完全访问/ });
     permission.focus();
     await user.keyboard('{Enter}');
     const permissions = await screen.findByRole('menu');
@@ -96,7 +96,7 @@ describe('PAWOS Agent Home 首屏合同', () => {
   it('collapses home composer chips to semantic marks before words vanish from the accessibility tree', async () => {
     renderHome();
 
-    expect(await screen.findByRole('button', { name: /权限 · 全权限/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /权限 · 完全访问/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /起始项目 · work\/paw|起始项目（可选）/ })).toBeInTheDocument();
 
     // The toolbar is a named container; narrow windows shed detail then labels.
@@ -135,11 +135,11 @@ describe('PAWOS Agent Home 首屏合同', () => {
     const user = userEvent.setup();
     const { transport } = renderHome();
 
-    await user.click(await screen.findByRole('button', { name: /权限 · 全权限/ }));
+    await user.click(await screen.findByRole('button', { name: /权限 · 完全访问/ }));
     const menu = screen.getByRole('menu');
     expect(within(menu).getAllByRole('menuitemradio')).toHaveLength(4);
     expect(within(menu).getByRole('menuitemradio', { name: /^只读/ })).toBeInTheDocument();
-    expect(within(menu).getByRole('menuitemradio', { name: /^全权限/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitemradio', { name: /^完全访问/ })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitemradio', { name: /^工作区托管/ })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitemradio', { name: /^全自动/ })).toBeInTheDocument();
 

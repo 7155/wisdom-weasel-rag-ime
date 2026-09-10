@@ -3527,6 +3527,40 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(applied["state"], "approved")
         self.assertEqual(applied["decidedBy"], "approval-model:test")
 
+    def test_full_access_edits_outside_project_without_waiting_for_approval(self) -> None:
+        workspace = Path(self.tmp.name) / "selected-project"
+        outside = Path(self.tmp.name) / "outside-project"
+        workspace.mkdir()
+        outside.mkdir()
+        target = outside / "note.txt"
+        target.write_text("before\n", encoding="utf-8")
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]), mode="coordinator",
+            tool_profile_version="control-center-full-access-v1",
+            execution_mode="per_action", allowed_tools=None,
+            workspace_roots=[str(workspace)],
+        )
+
+        def auto_approve(approval):
+            decided = self.store.decide_approval(
+                str(approval["approvalId"]), approved=True,
+                payload_sha256=str(approval["payloadSha256"]),
+                decided_by="execution-policy:full-access",
+            )
+            receipt = self.gateway.apply_approval(decided)
+            return {"approvalRequired": False, "autoApproved": True, "receipt": receipt}
+
+        self.gateway.bind_auto_approval_executor(auto_approve)
+        response = self.gateway.execute(self._tool_call(
+            "workspace_patch", "apply", path=str(target), oldText="before", newText="after",
+        ))["result"]
+        self.assertFalse(response["approvalRequired"])
+        self.assertTrue(response["autoApproved"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "after\n")
+        approvals = self.store.list_approvals(session_id=str(self.session["id"]))
+        self.assertTrue(approvals)
+        self.assertTrue(all(item["state"] != "pending" for item in approvals))
+
     def test_dangerous_profile_auto_approves_through_the_bound_service_bridge(self) -> None:
         self.session = self.store.set_runtime_policy(
             str(self.session["id"]),

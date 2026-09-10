@@ -123,7 +123,7 @@ export function sessionItems(
 }
 
 export function sessionPermissionLabel(session: SessionSummary): string {
-  if (session.toolProfileVersion === 'control-center-full-access-v1') return '全权限';
+  if (session.toolProfileVersion === 'control-center-full-access-v1') return '完全访问';
   if (session.toolProfileVersion === 'control-center-auto-approve-v1') return '全自动';
   const executionMode = session.executionMode
     ?? (session.toolProfileVersion === 'subagent-readonly-v1'

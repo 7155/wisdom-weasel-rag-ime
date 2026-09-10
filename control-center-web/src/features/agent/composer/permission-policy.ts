@@ -25,10 +25,12 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
   },
   {
     id: 'full-access',
-    label: '全权限',
-    description: '整个系统与所有 Tool 可用；有影响的操作逐项请求确认',
+    label: '完全访问',
+    description: '路径不限，所有工具动作直接执行，无需人工或模型逐项批准',
     mode: 'coordinator',
     toolProfileVersion: 'control-center-full-access-v1',
+    // Retain the stored pair; the full-access profile overrides the legacy
+    // execution mode with automatic execution on the backend.
     executionMode: 'per_action',
   },
   {

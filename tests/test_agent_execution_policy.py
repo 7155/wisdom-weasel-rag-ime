@@ -53,12 +53,12 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
         )
 
-    def test_unrestricted_profiles_bypass_scope_and_preserve_approval_semantics(self) -> None:
+    def test_unrestricted_profiles_bypass_scope_and_approve_every_effect(self) -> None:
         for profile, mode, expected in (
             (
                 FULL_ACCESS_TOOL_PROFILE,
                 PER_ACTION_EXECUTION_MODE,
-                APPROVAL_ASK,
+                APPROVAL_AUTO,
             ),
             (
                 DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
@@ -76,15 +76,18 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             }
             self.assertTrue(unrestricted_workspace_policy_active(session))
             self.assertTrue(workspace_scope_is_granted(session))
-            self.assertEqual(
-                approval_strategy(
-                    session,
-                    tool="workspace_shell",
-                    operation="run",
-                ),
-                expected,
-            )
+            for tool, operation in (
+                ("workspace_shell", "run"), ("workspace_write", "apply"),
+                ("runtime", "restart_sidecar"), ("configuration", "restore_apply"),
+                ("plugins", "install"), ("browser", "act"),
+            ):
+                self.assertEqual(
+                    approval_strategy(session, tool=tool, operation=operation, risk_level="R3"),
+                    expected,
+                )
             self.assertIn(profile, execution_policy_prompt(session))
+            self.assertIn('approval="auto"', execution_policy_prompt(session))
+            self.assertNotIn('人工批准（ASK）', execution_policy_prompt(session))
 
     def test_scope_grant_is_bound_to_the_exact_normalized_root_set(self) -> None:
         roots = ["/workspace/b", "/workspace/a", "/workspace/a"]

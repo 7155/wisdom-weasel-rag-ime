@@ -1,6 +1,7 @@
 import { Eye, FolderOpen, LoaderCircle, MessageSquare, Plus, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
+import { PERMISSION_PRESETS } from '../composer/permission-policy';
 import {
   Button,
   Dialog,
@@ -21,6 +22,8 @@ export interface NewSessionInput {
   workspaceScopeConfirmed?: boolean;
   dangerousModeConfirmed?: boolean;
 }
+
+const fullAccessPreset = PERMISSION_PRESETS.find((preset) => preset.id === 'full-access')!;
 
 export function NewSessionDialog({
   open,
@@ -152,7 +155,7 @@ export function NewSessionDialog({
             </RadioGroup.Item>
             <RadioGroup.Item value="per_action">
               <ShieldCheck size={16} />
-              <span><strong>全权限</strong><small>整个系统与所有 Tool 可用；有影响的操作逐项请求确认</small></span>
+              <span><strong>{fullAccessPreset.label}</strong><small>{fullAccessPreset.description}</small></span>
             </RadioGroup.Item>
             <RadioGroup.Item value="workspace_managed" disabled={!primaryRoot}>
               <FolderOpen size={16} />

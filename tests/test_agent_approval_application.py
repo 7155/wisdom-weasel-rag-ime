@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from rag_ime.agent_approval_application import AgentApprovalApplicationService, ApprovalRuntime
 from rag_ime.agent_approval_model import ApprovalModelArbiter
@@ -62,3 +62,27 @@ class ApprovalApplicationTests(unittest.TestCase):
             self.app.external.finalize(str(approval["approvalId"]), {})
         self.assertEqual(self.sessions.get_approval(str(approval["approvalId"]))["state"], "pending")
         self.assertFalse(self.runtime.resolve_approval.called)
+
+    def test_full_access_applies_without_human_or_model_decision(self):
+        session_id = str(self.worker["id"])
+        self.sessions.set_runtime_policy(
+            session_id, mode="coordinator",
+            tool_profile_version="control-center-full-access-v1",
+            execution_mode="per_action", workspace_roots=["/"], allowed_tools=None,
+        )
+        approval = self.sessions.create_approval(
+            session_id=session_id, tool_name="planning", operation="task_action",
+            payload_sha256="a" * 64, preview={}, risk_level="R3", ttl_ms=120000,
+        )
+        executor = Mock(return_value={"mutationApplied": True, "summary": "Applied"})
+        self.app._executor_provider = lambda: executor
+        with patch.object(self.app.approval_model, "decide") as decide:
+            result = self.app.auto_approve_pending(approval)
+
+        decide.assert_not_called()
+        executor.assert_called_once()
+        self.assertFalse(result["approvalRequired"])
+        self.assertTrue(result["autoApproved"])
+        self.assertEqual(result["decisionMode"], "policy")
+        self.assertEqual(result["approval"]["state"], "applied")
+        self.assertEqual(result["approval"]["decidedBy"], "execution-policy:full_access")

@@ -3,6 +3,13 @@
 Personal Agent Workbench follows a source-first development model. A public
 source checkpoint is not a signed and notarized macOS binary release.
 
+## 0.1.0-alpha.5 — 2026-09-10
+
+- Make Full Access execute tools without workspace path restrictions or
+  per-action human/model approval, including existing Full Access Sessions.
+  Keep stored policy identifiers compatible and report the effective policy
+  consistently in the UI and Runtime prompt.
+
 ## 0.1.0-alpha.4 — 2026-09-10
 
 - Make stellar cloud drift and planet movement visible while the desktop is
