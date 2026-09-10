@@ -1,5 +1,5 @@
 .paw-trace-agent-app { height: 100%; min-height: 0; overflow: auto; overscroll-behavior: contain; background: var(--color-surface); scrollbar-color: var(--color-border-strong, #aebbb4) transparent; }
-.trace-app { container-type: inline-size; min-height: 100%; color: var(--color-text); background: var(--color-surface); font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif); font-size: 15px; line-height: 1.6; }
+.trace-app { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100%; color: var(--color-text); background: var(--color-surface); font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif); font-size: 15px; line-height: 1.6; }
 .trace-app *, .trace-app *::before, .trace-app *::after { box-sizing: border-box; }
 .trace-app :focus-visible { outline: 2px solid var(--color-focus, var(--color-accent)); outline-offset: 3px; }
 .trace-app ::selection { color: var(--color-text); background: var(--color-accent-soft); }
@@ -84,7 +84,7 @@
 .trace-app__error { color: var(--color-danger); }
 
 @container (max-width: 740px) {
-  .trace-app__layout, .trace-app__layout[data-sidebar-collapsed='true'] { grid-template-columns: minmax(0, 1fr); }
+  .trace-app__layout, .trace-app__layout[data-sidebar-collapsed='true'] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .trace-app__sidebar { border-right: 0; border-bottom: 1px solid var(--color-border); }
   .trace-app__sidebar-content { display: flex; align-items: start; }
   .trace-app__navigation { flex: 1; padding: 12px 16px 12px 4px; }

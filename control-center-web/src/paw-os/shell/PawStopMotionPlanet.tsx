@@ -18,7 +18,7 @@ export function PawStopMotionPlanet() {
     reconcile();
     return () => { observer.disconnect(); player.dispose(); };
   }, []);
-  return <div className="paw-stellar-scene__planet" style={{ animation: 'none', aspectRatio: '1' }}>
+  return <div className="paw-stellar-scene__planet" style={{ aspectRatio: '1' }}>
     <img alt="" className="paw-stellar-scene__planet-image" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} decoding="async" draggable={false} ref={imageRef} src={frames[0]} />
   </div>;
 }

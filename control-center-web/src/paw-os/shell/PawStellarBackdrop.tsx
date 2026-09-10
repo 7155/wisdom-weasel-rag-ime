@@ -103,7 +103,9 @@ export function PawStellarBackdrop({ agents }: { agents?: StellarAgentProjection
   return (
     <div aria-hidden="true" className="paw-stellar-scene" data-agent-count={agents?.runningPlanets.length ?? 0} data-stellar-paused="true" ref={sceneRef}>
       <div className="paw-stellar-scene__far" ref={farRef}>
-        <img alt="" className="paw-stellar-scene__nebula" decoding="async" draggable={false} src={nebula} />
+        <div className="paw-stellar-scene__clouds">
+          <img alt="" className="paw-stellar-scene__nebula" decoding="async" draggable={false} src={nebula} />
+        </div>
         <div className="paw-stellar-scene__dust">{dust.map((style, index) => <i key={index} style={style} />)}</div>
       </div>
       <div className="paw-stellar-scene__daylight" />

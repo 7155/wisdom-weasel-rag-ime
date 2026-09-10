@@ -3,6 +3,13 @@
 Personal Agent Workbench follows a source-first development model. A public
 source checkpoint is not a signed and notarized macOS binary release.
 
+## 0.1.0-alpha.4 — 2026-09-10
+
+- Make stellar cloud drift and planet movement visible while the desktop is
+  exposed. Move crossfade layers together and retain pause/reduced-motion rules.
+- Fill the Trace Agent window with its navigation and content, preserving
+  compact navigation on narrow windows and scrolling for long reports.
+
 ## 0.1.0-alpha.3 — 2026-09-10
 
 - Add an unsigned Apple Silicon offline DMG installer with a native installation

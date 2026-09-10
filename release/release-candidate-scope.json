@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-09T23:44:46.618950+00:00",
+  "generatedAt": "2026-09-10T06:28:16.355166+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -96,36 +96,41 @@
     "voice_desktop": {
       "description": "App naming and desktop voice integration.",
       "pathCount": 17
+    },
+    "offline_installer": {
+      "description": "Unsigned offline macOS installer using existing product lifecycle owners.",
+      "pathCount": 12
     }
   },
   "summary": {
-    "pathCount": 618,
+    "pathCount": 630,
     "dispositionCounts": {
       "delete_old_implementation": 185,
-      "keep_release": 433
+      "keep_release": 445
     },
     "groupCounts": {
-      "local_docs": 122,
-      "product_integration": 30,
-      "react_os_docs": 3,
-      "refactor_docs_examples": 9,
       "brand_stellar": 39,
-      "public_showcase": 20,
-      "references_history": 8,
-      "voice_desktop": 17,
-      "portable_agent_ui": 8,
-      "owner_boundaries": 7,
-      "trace_optimization": 60,
-      "verification": 47,
-      "room_frontend": 18,
-      "refactor_integration": 19,
-      "room_service_refactor": 43,
       "composition_refactor": 8,
       "lab_backend": 62,
-      "pi_runtime_refactor": 23,
-      "release_scope": 1,
       "lab_tools": 8,
-      "refactor_verification": 66
+      "local_docs": 122,
+      "offline_installer": 12,
+      "owner_boundaries": 7,
+      "pi_runtime_refactor": 23,
+      "portable_agent_ui": 8,
+      "product_integration": 30,
+      "public_showcase": 20,
+      "react_os_docs": 3,
+      "refactor_docs_examples": 9,
+      "refactor_integration": 19,
+      "refactor_verification": 66,
+      "references_history": 8,
+      "release_scope": 1,
+      "room_frontend": 18,
+      "room_service_refactor": 43,
+      "trace_optimization": 60,
+      "verification": 47,
+      "voice_desktop": 17
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -2232,6 +2237,13 @@
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     },
     {
+      "path": "macos/PAWInstaller/main.swift",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
       "path": "macos/RagImeVoice/RagImeVoiceMain.swift",
       "status": "modified",
       "group": "voice_desktop",
@@ -3478,6 +3490,27 @@
       "reason": "Operator scripts that import Lab owners or record current source paths."
     },
     {
+      "path": "scripts/build_control_center_web.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
+      "path": "scripts/build_desktop_bridge.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
+      "path": "scripts/build_macos_installer.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
       "path": "scripts/build_managed_pi_runtime_v2.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3511,6 +3544,13 @@
       "disposition": "keep_release",
       "group": "refactor_integration",
       "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
+    },
+    {
+      "path": "scripts/build_voice_input.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
     },
     {
       "path": "scripts/canary_rag_benchmark_agent.py",
@@ -3604,6 +3644,34 @@
       "reason": "Operator scripts that import Lab owners or record current source paths."
     },
     {
+      "path": "scripts/install_binary_payload.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
+      "path": "scripts/install_memory_book_maintenance_launch_agent.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
+      "path": "scripts/install_product_stack.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
+      "path": "scripts/install_sidecar_launch_agent.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
       "path": "scripts/install_sidecar_systemd_user.sh",
       "status": "modified",
       "group": "refactor_integration",
@@ -3672,6 +3740,20 @@
       "group": "refactor_integration",
       "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
       "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/support/prebuilt_product.sh",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
+      "path": "scripts/support/run_binary_installer.sh",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
     },
     {
       "path": "squirrel-patches/GENERATION_EXPERIENCE.md",
@@ -4134,6 +4216,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "tests/test_binary_installer.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "offline_installer",
+      "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
     },
     {
       "path": "tests/test_build_agent_lab_cost_receipt_from_runtime_db.py",
