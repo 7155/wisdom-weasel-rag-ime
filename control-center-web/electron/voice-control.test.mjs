@@ -18,10 +18,10 @@ test('dead process cannot be reported as running by an old status file', () => {
 
 test('permission actions notify the existing voice owner; invalid commands never execute', async () => {
   const calls = [];
-  const voice = createVoiceControl({ home: '/Users/test', readFile: () => '{"running":true,"processID":123}', alive: () => true,
+  const voice = createVoiceControl({ home: '/tmp/paw-voice-test', readFile: () => '{"running":true,"processID":123}', alive: () => true,
     execute: async (...args) => { calls.push(args); return '{"accepted":true}'; } });
   await voice.action('request_microphone_permission');
-  assert.deepEqual(calls[0], ['/Users/test/Applications/RagImeVoice.app/Contents/MacOS/RagImeVoice', ['--desktop-control'], { operation: 'request_microphone_permission' }]);
+  assert.deepEqual(calls[0], ['/tmp/paw-voice-test/Applications/RagImeVoice.app/Contents/MacOS/RagImeVoice', ['--desktop-control'], { operation: 'request_microphone_permission' }]);
   await assert.rejects(voice.action('arbitrary_command'));
   assert.equal(calls.length, 1);
 });
