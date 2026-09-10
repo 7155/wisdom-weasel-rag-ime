@@ -3,6 +3,12 @@
 Personal Agent Workbench follows a source-first development model. A public
 source checkpoint is not a signed and notarized macOS binary release.
 
+## 0.1.0-alpha.3 — 2026-09-10
+
+- Connect installed Electron voice settings to the existing Voice Agent for
+  status, service controls, permission requests and credential configuration.
+  Desktop voice status no longer waits on unrelated global runtime probes.
+
 ## 0.1.0-alpha.2 — 2026-09-10
 
 Source preview; no signed or notarized macOS installer is included.

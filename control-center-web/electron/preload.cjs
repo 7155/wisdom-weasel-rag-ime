@@ -15,6 +15,12 @@ contextBridge.exposeInMainWorld('pawScreenAssistant', Object.freeze({
 
 const nativeHost = process.platform === 'darwin' ? 'macos' : 'electron';
 if (nativeHost === 'macos') {
+  contextBridge.exposeInMainWorld('pawVoiceHost', Object.freeze({
+    status: () => ipcRenderer.invoke('paw-voice:status'),
+    credentialStatus: (provider) => ipcRenderer.invoke('paw-voice:credentials', provider),
+    saveCredentials: (request) => ipcRenderer.invoke('paw-voice:save', request),
+    action: (action) => ipcRenderer.invoke('paw-voice:action', action),
+  }));
   const markNativeHost = () => { document.documentElement.dataset.pawNativeHost = nativeHost; };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', markNativeHost, { once: true });
   else markNativeHost();

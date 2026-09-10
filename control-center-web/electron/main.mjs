@@ -28,6 +28,8 @@ import { browserWindowChrome } from './window-chrome.mjs';
 import { assistantLaunchIntent, assistantSessionRoute } from './assistant-launch.mjs';
 import { installScreenAssistant } from './screen-assistant.mjs';
 
+import { createVoiceControl, trustedVoiceSender } from './voice-control.mjs';
+
 const paths = resolveHostPaths();
 
 app.setName('Personal Agent Workbench');
@@ -236,6 +238,20 @@ async function startPrimaryInstance() {
     `${hostServer.origin}\n`,
     { encoding: 'utf8', mode: 0o600 },
   );
+  if (process.platform === 'darwin') {
+    const voice = createVoiceControl();
+    for (const [channel, handler] of Object.entries({
+      'paw-voice:status': () => voice.status(),
+      'paw-voice:credentials': (provider) => voice.credentialStatus(provider),
+      'paw-voice:save': (request) => voice.saveCredentials(request),
+      'paw-voice:action': (action) => voice.action(action),
+    })) {
+      ipcMain.handle(channel, (event, argument) => {
+        if (!trustedVoiceSender(event, mainWindow, hostServer.origin)) throw new Error('Voice sender rejected');
+        return handler(argument);
+      });
+    }
+  }
   ipcMain.on('paw-browser:register', (event, tab) => { void registerGuest(event.sender, tab); });
   const persistentBrowserSession = session.fromPartition(browserPartition);
   persistentBrowserSession.on('will-download', (_event, item) => {

@@ -169,7 +169,8 @@ export function VoiceFeature() {
   );
   const nativeActionsAvailable = queries.capabilities.data?.native.tcc === true
     && typeof queries.transport.runVoiceAction === 'function';
-  const agentRunning = booleanValue(voiceAgent.ok) || booleanValue(valueAt(voiceControl, 'agent.running'));
+  const agentRunning = typeof voiceAgent.ok === 'boolean'
+    ? voiceAgent.ok : booleanValue(valueAt(voiceControl, 'agent.running'));
   const runtimeStatusUnavailable = Boolean(queries.runtime.error);
   const runtimeStatusPending = queries.runtime.isPending || runtimeStatusUnavailable;
   const error = queries.capabilities.error as Error | null;

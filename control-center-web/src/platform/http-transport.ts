@@ -74,6 +74,10 @@ export class ControlTransportHttpError extends Error {
 export class HttpControlTransport implements ControlTransport {
   readonly kind = 'http' as const;
   readonly connectionIdentity: string;
+  readonly voiceStatus?: ControlTransport['voiceStatus'];
+  readonly voiceCredentialStatus?: ControlTransport['voiceCredentialStatus'];
+  readonly saveVoiceCredentials?: ControlTransport['saveVoiceCredentials'];
+  readonly runVoiceAction?: ControlTransport['runVoiceAction'];
 
   private readonly baseUrl: URL;
   private readonly fetchImpl: typeof fetch;
@@ -85,6 +89,15 @@ export class HttpControlTransport implements ControlTransport {
 
   constructor(options: HttpControlTransportOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
+    // Only the installed preload supplies this bridge. A URL flag is not a capability.
+    const voice = typeof window !== 'undefined' && window.location.origin === this.baseUrl.origin
+      ? window.pawVoiceHost : undefined;
+    if (voice) {
+      this.voiceStatus = () => voice.status();
+      this.voiceCredentialStatus = (provider) => voice.credentialStatus(provider);
+      this.saveVoiceCredentials = (request) => voice.saveCredentials(request);
+      this.runVoiceAction = (action) => voice.action(action);
+    }
     this.connectionIdentity = `http:${this.baseUrl.href}`;
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.validationRuntimeLoader = options.validationRuntimeLoader ?? loadContractValidationRuntime;
@@ -98,7 +111,10 @@ export class HttpControlTransport implements ControlTransport {
       const raw = await this.request({
         pathId: 'control.capabilities',
       });
-      return browserCapabilities(raw);
+      const capabilities = browserCapabilities(raw);
+      if (this.runVoiceAction) capabilities.native.tcc = true;
+      if (this.voiceCredentialStatus) capabilities.native.keychain = true;
+      return capabilities;
     } catch (error) {
       if (!(error instanceof ControlTransportHttpError) || error.status !== 404) throw error;
       return browserCapabilities({

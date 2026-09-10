@@ -24,7 +24,15 @@ export function useVoiceQueries() {
   });
   const runtime = useQuery({
     queryKey: voiceQueryKeys.runtime(),
-    queryFn: ({ signal }) => transport.request({ pathId: 'diagnostics.runtime', signal }),
+    queryFn: async ({ signal }) => {
+      if (!transport.voiceStatus) return transport.request({ pathId: 'diagnostics.runtime', signal });
+      const status = await transport.voiceStatus();
+      return { components: {
+        voiceAgent: { ok: status.running, detail: status.statusText },
+        microphone: { ok: status.microphoneAuthorization === 'authorized' },
+        accessibility: { ok: status.accessibilityTrusted },
+      } };
+    },
     refetchInterval: 10_000,
   });
   const capabilities = useQuery({

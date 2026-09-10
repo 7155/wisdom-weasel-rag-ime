@@ -8,6 +8,27 @@ import {
 } from './http-transport';
 
 describe('HttpControlTransport', () => {
+  it('exposes voice controls only through a same-origin installed preload', async () => {
+    const voice = {
+      status: vi.fn(), credentialStatus: vi.fn(), saveCredentials: vi.fn(), action: vi.fn(),
+    };
+    window.pawVoiceHost = voice;
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ features: {} }), { status: 200 })) as typeof globalThis.fetch;
+    try {
+      const desktop = new HttpControlTransport({ baseUrl: window.location.origin, fetch });
+      expect((await desktop.capabilities()).native).toMatchObject({ keychain: true, tcc: true });
+      await desktop.runVoiceAction!('reload_configuration');
+      expect(voice.action).toHaveBeenCalledWith('reload_configuration');
+      const remote = new HttpControlTransport({ baseUrl: 'https://gateway.example.test', fetch });
+      expect(remote.runVoiceAction).toBeUndefined();
+      expect((await remote.capabilities()).native.tcc).toBe(false);
+      delete window.pawVoiceHost;
+      const browser = new HttpControlTransport({ baseUrl: window.location.origin, fetch });
+      expect(browser.runVoiceAction).toBeUndefined();
+      expect((await browser.capabilities()).native.keychain).toBe(false);
+    } finally { delete window.pawVoiceHost; }
+  });
+
   it('resolves browser snapshot images against the configured HTTP origin', () => {
     const transport = new HttpControlTransport({
       baseUrl: 'https://gateway.example.test/control/',

@@ -266,6 +266,7 @@ export interface ControlTransport {
   runApprovedExternalAction?(request: ExternalActionRequest): Promise<ExternalActionReceipt>;
   voiceCredentialStatus?(provider: VoiceProviderId): Promise<VoiceCredentialStatus>;
   saveVoiceCredentials?(request: VoiceCredentialSaveRequest): Promise<VoiceCredentialStatus>;
+  voiceStatus?(): Promise<VoiceNativeStatus>;
   runVoiceAction?(action: VoiceNativeActionId): Promise<VoiceNativeActionReceipt>;
   dispose?(): void;
 }
@@ -420,4 +421,16 @@ function capabilityRouteIds(payload: Record<string, unknown>): ControlPathId[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+
+declare global {
+  interface Window {
+    pawVoiceHost?: {
+      status(): Promise<VoiceNativeStatus>;
+      credentialStatus(provider: VoiceProviderId): Promise<VoiceCredentialStatus>;
+      saveCredentials(request: VoiceCredentialSaveRequest): Promise<VoiceCredentialStatus>;
+      action(action: VoiceNativeActionId): Promise<VoiceNativeActionReceipt>;
+    };
+  }
 }
