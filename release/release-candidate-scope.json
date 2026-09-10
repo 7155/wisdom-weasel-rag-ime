@@ -92,13 +92,17 @@
     "verification": {
       "description": "Regression checks for the included product changes.",
       "pathCount": 47
+    },
+    "voice_desktop": {
+      "description": "App naming and desktop voice integration.",
+      "pathCount": 17
     }
   },
   "summary": {
-    "pathCount": 601,
+    "pathCount": 618,
     "dispositionCounts": {
       "delete_old_implementation": 185,
-      "keep_release": 416
+      "keep_release": 433
     },
     "groupCounts": {
       "local_docs": 122,
@@ -108,6 +112,7 @@
       "brand_stellar": 39,
       "public_showcase": 20,
       "references_history": 8,
+      "voice_desktop": 17,
       "portable_agent_ui": 8,
       "owner_boundaries": 7,
       "trace_optimization": 60,
@@ -1037,6 +1042,34 @@
       "reason": "Own the source previously located at paw-agent-chat-ui-kit-source.zip; preserve runtime behavior and attribution."
     },
     {
+      "path": "control-center-web/electron/main.mjs",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
+      "path": "control-center-web/electron/preload.cjs",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
+      "path": "control-center-web/electron/voice-control.mjs",
+      "status": "added",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
+      "path": "control-center-web/electron/voice-control.test.mjs",
+      "status": "added",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
       "path": "control-center-web/index.html",
       "status": "modified",
       "disposition": "keep_release",
@@ -1469,6 +1502,20 @@
       "disposition": "keep_release",
       "group": "trace_optimization",
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/features/voice/api.ts",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
+      "path": "control-center-web/src/features/voice/index.tsx",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
     },
     {
       "path": "control-center-web/src/paw-os/apps/PawAppsRuntime.test.tsx",
@@ -1912,6 +1959,20 @@
       "reason": "Integrate current product source and public contribution guidance."
     },
     {
+      "path": "control-center-web/src/platform/http-transport.test.ts",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
+      "path": "control-center-web/src/platform/http-transport.ts",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
       "path": "control-center-web/src/platform/routes.test.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -1924,6 +1985,13 @@
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/platform/transport.ts",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
     },
     {
       "path": "conversation_ui_standalone.zip",
@@ -2162,6 +2230,20 @@
       "disposition": "keep_release",
       "group": "trace_optimization",
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "macos/RagImeVoice/RagImeVoiceMain.swift",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
+      "path": "macos/RagImeVoice/VoiceDesktopControl.swift",
+      "status": "added",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
     },
     {
       "path": "paw-agent-chat-ui-kit-source.zip",
@@ -2976,6 +3058,13 @@
       "reason": "Agent Lab package, resource resolution and service consumers."
     },
     {
+      "path": "rag_ime/macos_uninstall.py",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
       "path": "rag_ime/managed_pi_runtime.py",
       "status": "modified",
       "group": "pi_runtime_refactor",
@@ -3368,6 +3457,13 @@
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     },
     {
+      "path": "release/README.md",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
       "path": "release/release-candidate-scope.json",
       "status": "modified",
       "disposition": "keep_release",
@@ -3520,6 +3616,13 @@
       "group": "pi_runtime_refactor",
       "reason": "Single Host executor, explicit transport, history and UI projection boundaries; preserve Pi lifecycle and stored data.",
       "disposition": "keep_release"
+    },
+    {
+      "path": "scripts/refresh_paw_dock.py",
+      "status": "added",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
     },
     {
       "path": "scripts/run_cloudops_agent_eval.py",
@@ -4068,6 +4171,13 @@
       "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
+      "path": "tests/test_control_center_cutover.py",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
+    },
+    {
       "path": "tests/test_database_migrations.py",
       "group": "verification",
       "disposition": "keep_release",
@@ -4136,6 +4246,13 @@
       "disposition": "keep_release",
       "reason": "Keep Trace contracts synchronized and public source checks independent of local documents.",
       "status": "modified"
+    },
+    {
+      "path": "tests/test_macos_uninstall.py",
+      "status": "modified",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
     },
     {
       "path": "tests/test_managed_pi_runtime.py",
@@ -4262,6 +4379,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Regression checks for the included product changes."
+    },
+    {
+      "path": "tests/test_refresh_paw_dock.py",
+      "status": "added",
+      "group": "voice_desktop",
+      "disposition": "keep_release",
+      "reason": "Installed app naming and Electron voice control integration."
     },
     {
       "path": "tests/test_rescore_enterprise_rag_answer_evidence.py",
