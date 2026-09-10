@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import urllib.request
 
 from install_binary_payload import inventory, verify
 
@@ -93,8 +94,9 @@ def main() -> None:
     notices.mkdir()
     for name in ('LICENSE', 'LICENSES.chromium.html'):
         shutil.copy2(args.electron_notices / name, notices / f'Electron-{name}')
-    with (notices / 'Node-LICENSE.txt').open('w') as stream:
-        subprocess.run([str(payload / 'pi-runtime/bin/node'), '--license'], stdout=stream, check=True)
+    node_version = subprocess.check_output([str(payload / 'pi-runtime/bin/node'), '--version'], text=True).strip()
+    with urllib.request.urlopen(f'https://raw.githubusercontent.com/nodejs/node/{node_version}/LICENSE', timeout=30) as response:
+        (notices / 'Node-LICENSE.txt').write_bytes(response.read())
     for path in (args.pi_source / 'node_modules').rglob('*'):
         if path.is_file() and path.name.lower().startswith(('license', 'licence', 'copying', 'notice')):
             target = notices / 'pi-dependencies' / path.relative_to(args.pi_source / 'node_modules')
