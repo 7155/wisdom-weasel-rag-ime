@@ -320,7 +320,7 @@ class BrowserControlService:
         direct_tabs = self._sync_direct_browser()
         target_ids = {
             int(item["tabId"]): str(item.get("targetId") or "")
-            for item in direct_tabs
+            for item in (direct_tabs or [])
             if item.get("tabId") is not None
         }
         now = self._now_ms()
@@ -376,6 +376,7 @@ class BrowserControlService:
             "ok": True,
             "items": items,
             "summary": f"已读取 {len(items)} 个浏览器标签页",
+            "liveSnapshot": direct_tabs is not None,
         }
 
     def latest_snapshot(
@@ -744,15 +745,15 @@ class BrowserControlService:
             "summary": "PAW Browser 已停止",
         }
 
-    def _sync_direct_browser(self) -> list[dict[str, object]]:
+    def _sync_direct_browser(self) -> list[dict[str, object]] | None:
         current = self.managed_status()
         port = int(current.get("debugPort") or 0)
         if not port:
-            return []
+            return None if current.get("running") else []
         try:
             tabs = self.browser_runtime.tabs(port)
         except (OSError, ValueError, PawBrowserRuntimeError):
-            return []
+            return None
         now = self._now_ms()
         active_tab_id = int(tabs[0]["tabId"]) if tabs else None
         with self._connection() as connection:

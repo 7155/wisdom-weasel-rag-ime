@@ -84,6 +84,7 @@ for line in sys.stdin:
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
                          "sessionControlState": True,
                          "sessionSkillAllowlist": True,
+                         "sessionResourceDisclosure": True,
                          "sessionCandidateSkillPaths": True,
                          "sessionPromptSettings": True,
                          "transientContext": True,
@@ -1151,6 +1152,20 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.runtime._host_capabilities["sessionCandidateSkillPaths"] = False
         with self.assertRaisesRegex(PiRuntimeError, "does not support isolated"):
             self.runtime.ensure(str(third["id"]))
+
+    def test_resource_switches_reach_pi_even_when_base_skill_refs_are_frozen(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime._skill_allowlist_provider = lambda _: ["systematic-debugging"]
+        opened = self.runtime.ensure(session_id)
+        self.runtime.close_session(session_id)
+        policy = {"disabledSkillNames": ["systematic-debugging"], "disabledPluginIds": ["@paw/example"]}
+        self.runtime._session_context_provider = lambda _: {"resourceDisclosurePolicy": policy}
+        reopened = self.runtime.ensure(session_id)
+        self.assertEqual(opened["resourceSnapshot"], reopened["resourceSnapshot"])
+        requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        params = [request["params"] for request in requests if request["method"] == "session.open"][-1]
+        self.assertEqual(params["resourceDisclosurePolicy"], policy)
+        self.assertEqual(params["skillAllowlist"], ["systematic-debugging"])
 
     def test_session_skill_allowlist_reaches_pi_session_open(self) -> None:
         session_id = str(self.first["id"])

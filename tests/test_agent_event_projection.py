@@ -259,6 +259,18 @@ class AgentEventProjectionTests(unittest.TestCase):
         self.assertEqual(payload["summary"], "模型响应失败，任务已暂停等待恢复")
         self.assertEqual(payload["nextStep"], "检查 Provider 配置后重试。")
 
+    def test_oauth_failure_keeps_actionable_account_recovery_in_room(self) -> None:
+        event_type, payload = room_event_projection(AgentEventEnvelope(
+            event_id="event:oauth-failure", session_id="session:1", turn_id="turn:1",
+            sequence=3, created_at_ms=3, event_type="turn_failed",
+            payload={"error": "Encountered invalidated oauth token for user, failing request"},
+            resume_token="event:oauth-failure",
+        ))
+        self.assertEqual(event_type, "turn_failed")
+        self.assertEqual(payload["reason"], "provider_auth_failure")
+        self.assertIn("重新登录", payload["summary"])
+        self.assertEqual(payload["nextStep"], payload["summary"])
+
     def test_child_session_terminal_is_activity_not_second_room_final(self) -> None:
         service, _sessions, room_events = self._service(child=True)
         service.mirror_to_room(AgentEventEnvelope(

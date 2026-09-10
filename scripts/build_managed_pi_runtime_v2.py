@@ -181,10 +181,25 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
 ] = {
     "src/pi-session.ts": (
         (
+            'import { createHash, randomUUID } from "node:crypto";',
+            'import { createHash, randomUUID } from "node:crypto";\n'
+            'import { sessionResourceSettings, sessionLegacyExtensionPaths, type SessionResourceDisclosurePolicy } from "./session-resource-policy.ts";',
+        ),
+        (
+            '\t\tconst legacyExtensionPaths = await managedLegacyExtensionPaths(options.activePluginDir);',
+            '\t\tconst legacyExtensionPaths = sessionLegacyExtensionPaths(await managedLegacyExtensionPaths(options.activePluginDir), options.resourceDisclosurePolicy?.disabledPluginIds ?? []);',
+        ),
+        (
+            '\t\t\tagentDir: options.agentDir,\n\t\t\tsettingsManager,',
+            '\t\t\tagentDir: options.agentDir,\n\t\t\tsettingsManager: sessionResourceSettings(settingsManager, options.disabledPluginSources ?? []),',
+        ),
+        (
             "\tactivePluginDir: string;\n\tskillPaths: string[];",
             "\tactivePluginDir: string;\n"
             "\tskillPaths: string[];\n"
             "\tskillAllowlist?: string[];\n"
+            "\tresourceDisclosurePolicy?: SessionResourceDisclosurePolicy;\n"
+            "\tdisabledPluginSources?: string[];\n"
             "\tcandidateSkillPaths?: string[];\n"
             "\tcompactionInstructions?: string;",
         ),
@@ -225,12 +240,33 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             '"temporary" || skill.sourceInfo.origin === "package",\n'
             "\t\t\t\t\t\t\t)\n"
             "\t\t\t\t\t\t\t.filter(\n"
-            "\t\t\t\t\t\t\t\t(skill) => allowedSkillNames === undefined\n"
-            "\t\t\t\t\t\t\t\t\t|| allowedSkillNames.has(skill.name),\n"
+            "\t\t\t\t\t\t\t\t(skill) => !options.resourceDisclosurePolicy?.disabledSkillNames.includes(skill.name)\n"
+            "\t\t\t\t\t\t\t\t\t&& (allowedSkillNames === undefined\n"
+            "\t\t\t\t\t\t\t\t\t|| allowedSkillNames.has(skill.name)),\n"
             "\t\t\t\t\t\t\t),",
         ),
     ),
     "src/runtime-host.ts": (
+        (
+            'case "session.open": {\n\t\t\t\tconst sessionId = requiredSessionId(params);',
+            'case "session.open": {\n\t\t\t\tconst resourceDisclosurePolicy = sessionResourceDisclosurePolicy(params.resourceDisclosurePolicy);\n'
+            '\t\t\t\tconst disabledPlugins = new Set(resourceDisclosurePolicy.disabledPluginIds);\n'
+            '\t\t\t\tconst sessionPackages = disabledPlugins.size ? await this.nativePackages.list() : [];\n'
+            '\t\t\t\tconst disabledPluginSources = sessionPackages.filter((item) => disabledPlugins.has(item.id)).map((item) => item.source);\n'
+            '\t\t\t\tconst sessionId = requiredSessionId(params);',
+        ),
+        (
+            'import { existsSync, readdirSync } from "node:fs";',
+            'import { sessionResourceDisclosurePolicy } from "./session-resource-policy.ts";\nimport { existsSync, readdirSync } from "node:fs";',
+        ),
+        (
+            '\t\t\t\t\t\tisPackageCapabilityEnabled: (capability) => this.nativePackages.hasEnabledCapability(capability),\n'
+            '\t\t\t\t\t\tnoContextFiles: optionalBoolean(params, "noContextFiles"),',
+            '\t\t\t\t\t\tisPackageCapabilityEnabled: (capability) => disabledPlugins.size\n'
+            '\t\t\t\t\t\t\t? sessionPackages.some((item) => item.enabled && !disabledPlugins.has(item.id) && item.capabilities.includes(capability))\n'
+            '\t\t\t\t\t\t\t: this.nativePackages.hasEnabledCapability(capability),\n'
+            '\t\t\t\t\t\tnoContextFiles: optionalBoolean(params, "noContextFiles"),',
+        ),
         (
             "\tif (typeof value !== \"boolean\") {\n"
             "\t\tthrow new RuntimeProtocolError("
@@ -285,6 +321,7 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\t\t\t\t\t\tsessionSnapshot: true,",
             "\t\t\t\t\t\tsessionControlState: true,\n"
             "\t\t\t\t\t\tsessionSkillAllowlist: true,\n"
+            "\t\t\t\t\t\tsessionResourceDisclosure: true,\n"
             "\t\t\t\t\t\tsessionCandidateSkillPaths: true,\n"
             "\t\t\t\t\t\tsessionPromptSettings: true,\n"
             "\t\t\t\t\t\tsessionSnapshot: true,",
@@ -296,6 +333,8 @@ _RUNTIME_HOST_SOURCE_OVERLAYS: dict[
             "\t\t\t\t\t\tcodexSkillsEnabled: optionalBoolean("
             'params, "codexSkillsEnabled"),\n'
             "\t\t\t\t\t\tskillAllowlist: optionalSkillAllowlist(params),\n"
+            "\t\t\t\t\t\tresourceDisclosurePolicy,\n"
+            "\t\t\t\t\t\tdisabledPluginSources,\n"
             "\t\t\t\t\t\tcandidateSkillPaths: await optionalCandidateSkillPaths(params, cwd),\n"
             "\t\t\t\t\t\tcompactionInstructions: optionalCompactionInstructions(params),\n"
             "\t\t\t\t\t\tmodelRuntime: this.modelRuntime,",
@@ -470,6 +509,11 @@ def _prepare_runtime_host_overlay(
             f"Pi worktree dependencies are unavailable: {source_node_modules}"
         )
     node_modules.symlink_to(source_node_modules, target_is_directory=True)
+
+    shutil.copy2(
+        ROOT / "scripts" / "runtime-host-session-resource-policy.ts",
+        destination / "src" / "session-resource-policy.ts",
+    )
 
     for relative_path, replacements in _RUNTIME_HOST_SOURCE_OVERLAYS.items():
         source_path = destination / relative_path
@@ -2041,6 +2085,7 @@ def main(argv: list[str] | None = None) -> int:
         packager_digest = hashlib.sha256(
             provider_bridge_source.read_bytes()
             + Path(__file__).read_bytes()
+            + (ROOT / "scripts" / "runtime-host-session-resource-policy.ts").read_bytes()
             + _hash_tree(product_skills)
             + _hash_extension_app_pi_packages(EXTENSION_APPS_ROOT)
             + routing_catalog_bytes

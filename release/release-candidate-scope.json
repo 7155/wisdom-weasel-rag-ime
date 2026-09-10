@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-10T06:54:07.294727+00:00",
+  "generatedAt": "2026-09-10T10:30:44.187073+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -104,17 +104,22 @@
     "session_full_access": {
       "description": "Full Access permission selection, automatic execution and focused regressions.",
       "pathCount": 9
+    },
+    "conversation_controls": {
+      "description": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery.",
+      "pathCount": 27
     }
   },
   "summary": {
-    "pathCount": 639,
+    "pathCount": 666,
     "dispositionCounts": {
       "delete_old_implementation": 185,
-      "keep_release": 454
+      "keep_release": 481
     },
     "groupCounts": {
       "brand_stellar": 39,
       "composition_refactor": 8,
+      "conversation_controls": 27,
       "lab_backend": 62,
       "lab_tools": 8,
       "local_docs": 122,
@@ -1136,6 +1141,13 @@
       "reason": "Product extension host assembly and module dependency checks."
     },
     {
+      "path": "control-center-web/src/app/preview-control-transport.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/app/register-extension-hosts.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -1227,11 +1239,32 @@
       "reason": "Full Access applies unrestricted paths and direct tool execution consistently for existing and new Sessions."
     },
     {
+      "path": "control-center-web/src/features/agent/composer/ToolPicker.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/ToolPicker.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/features/agent/composer/permission-policy.ts",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_full_access",
       "reason": "Full Access applies unrestricted paths and direct tool execution consistently for existing and new Sessions."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/tool-policy.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "control-center-web/src/features/agent/portable/index.test.tsx",
@@ -1253,6 +1286,20 @@
       "disposition": "keep_release",
       "group": "portable_agent_ui",
       "reason": "Own the source previously located at control-center-web/src/features/eval-lab/projects/portable-agent-ui.css; preserve runtime behavior and attribution."
+    },
+    {
+      "path": "control-center-web/src/features/agent/public-error.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/agent/public-error.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "control-center-web/src/features/agent/sessions/NewSessionDialog.test.tsx",
@@ -1295,6 +1342,20 @@
       "disposition": "keep_release",
       "group": "references_history",
       "reason": "Lossless reference archives, attribution and dated acceptance records."
+    },
+    {
+      "path": "control-center-web/src/features/conversation-ui/adapters/room-transcript.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/conversation-ui/adapters/room-transcript.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "control-center-web/src/features/eval-lab/projects/portable-agent-ui.css",
@@ -1374,6 +1435,13 @@
       "reason": "Regression checks for the included product changes."
     },
     {
+      "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/features/paw-os/app-icons.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -1395,11 +1463,39 @@
       "reason": "Integrate current product source and public contribution guidance."
     },
     {
+      "path": "control-center-web/src/features/paw-os/model/desktop.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/features/paw-os/paw-os-satellite.css",
       "status": "modified",
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/composer/RoomCapabilityControls.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/composer/RoomCapabilityControls.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/composer/RoomComposer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "control-center-web/src/features/trace-agent/diagnostic-start.test.ts",
@@ -1906,6 +2002,41 @@
       "reason": "Regression checks for the included product changes."
     },
     {
+      "path": "control-center-web/src/paw-os/runtime/background-tool-windows.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/background-tool-windows.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/desktop-context.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/desktop-store.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/runtime-tool-window.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/paw-os/shell/PawAppIcon.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -1918,6 +2049,20 @@
       "disposition": "keep_release",
       "group": "brand_stellar",
       "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawBackgroundToolWindows.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawBackgroundToolWindows.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "control-center-web/src/paw-os/shell/PawDesktop.tsx",
@@ -2331,6 +2476,13 @@
       "group": "room_service_refactor",
       "reason": "Explicit Room work, dispatch, cancellation and approval dependencies with stable stores and events.",
       "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_capability_catalog.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "rag_ime/agent_composition.py",
@@ -2991,6 +3143,13 @@
       "reason": "Typed application dependencies and construction using existing Runtime and store owners."
     },
     {
+      "path": "rag_ime/agent_runtime_failure.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "rag_ime/agent_service.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3031,6 +3190,13 @@
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "rag_ime/browser_control.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "rag_ime/contracts/json/observability-trace-get.v1.json",
@@ -3789,6 +3955,13 @@
       "disposition": "keep_release"
     },
     {
+      "path": "scripts/runtime-host-session-resource-policy.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "scripts/score_agent_lab_optimal_path.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3836,6 +4009,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Existing executable regressions updated for the owning package."
+    },
+    {
+      "path": "tests/fixtures/pi_session_resource_policy_probe.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "tests/test_agent_app_owned_sessions.py",
@@ -3899,6 +4079,13 @@
       "group": "refactor_verification",
       "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
       "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_agent_event_projection.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "tests/test_agent_execution_policy.py",
@@ -4291,6 +4478,13 @@
       "disposition": "keep_release",
       "group": "offline_installer",
       "reason": "Offline preview installer, bundled runtime validation and the existing stack installation path."
+    },
+    {
+      "path": "tests/test_browser_control.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "tests/test_build_agent_lab_cost_receipt_from_runtime_db.py",

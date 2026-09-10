@@ -3,6 +3,17 @@
 Personal Agent Workbench follows a source-first development model. A public
 source checkpoint is not a signed and notarized macOS binary release.
 
+## 0.1.0-alpha.6 — 2026-09-10
+
+- Enter the collaboration layout only through its explicit control. Show
+  persistent background Bash and browser observers inside that layout;
+  dismissing an observer leaves its tool running and resource completion closes it.
+- Default conversation memory to off and add partner-specific memory, tool,
+  plugin and Skill controls to Room composers. Honor explicit capability
+  choices in Full Access; filter disabled packages before Pi imports them.
+- Explain invalidated model credentials with account reconnection guidance,
+  including failures retained in existing Room history.
+
 ## 0.1.0-alpha.5 — 2026-09-10
 
 - Make Full Access execute tools without workspace path restrictions or

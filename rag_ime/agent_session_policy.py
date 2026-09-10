@@ -291,8 +291,9 @@ class AgentSessionPolicyService:
         session = self.sessions.get(session_id)
         runtime_policy_update = _has_runtime_policy_update(payload)
         disclosure_update = "capabilityDisclosurePreferences" in payload
-        if runtime_policy_update or disclosure_update:
+        if runtime_policy_update:
             self._validate_room_runtime_policy(session_id)
+        if runtime_policy_update or disclosure_update:
             self._validate_session_idle(session_id)
         self._validate_archive(session_id, payload)
         if "title" in payload:

@@ -135,6 +135,7 @@ export type PawDesktopState = {
   wayfinder: PawWayfinderState;
   collaborationFocusGroup: string | null;
   collaborationFocusReturnWindowId: string | null;
+  dismissedBackgroundToolIds: string[];
   launchpadOpen: boolean;
   overviewOpen: boolean;
   extensionAppGate: PawExtensionAppGate;
@@ -174,6 +175,7 @@ export type PawDesktopSnapshot = Pick<PawDesktopState, 'windows' | 'stack' | 'ac
   wayfinder?: PawPersistedWayfinderState;
   collaborationFocusGroup?: string | null;
   collaborationFocusReturnWindowId?: string | null;
+  dismissedBackgroundToolIds?: string[];
 };
 export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRoute?: string, snapshot?: PawDesktopSnapshot): PawDesktopStore {
   const initialWindows = extensionGatedWindows(snapshot?.windows ?? {}, EMPTY_EXTENSION_IDS);
@@ -206,6 +208,7 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
     },
     collaborationFocusGroup: initialFocusGroup,
     collaborationFocusReturnWindowId: initialFocusReturnWindowId,
+    dismissedBackgroundToolIds: snapshot?.dismissedBackgroundToolIds ?? [],
     launchpadOpen: false,
     overviewOpen: false,
     extensionAppGate: { status: 'unavailable', enabledExtensionIds: EMPTY_EXTENSION_IDS },
@@ -390,7 +393,12 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
         const orphaned = closing
           ? orphanedSatelliteIds(state, satelliteOwnerGroup(closing.target), windowId)
           : new Set<string>();
-        return closeWindowsWhere(state, (node) => node.id === windowId || orphaned.has(node.id));
+        const target = closing?.target;
+        const dismiss = (target?.kind === 'process-terminal' || target?.kind === 'browser-target') && target.backgroundObserver;
+        return {
+          ...closeWindowsWhere(state, (node) => node.id === windowId || orphaned.has(node.id)),
+          ...(dismiss ? { dismissedBackgroundToolIds: [...new Set([...state.dismissedBackgroundToolIds, target.id])].slice(-512) } : {}),
+        };
       });
     },
     closeAppWindows(appId) {
@@ -742,29 +750,20 @@ export function satelliteGroup(target?: PawOsWindowTarget): string {
   return '';
 }
 
-function runtimeSatelliteFocusGroup(target?: PawOsWindowTarget): string {
-  if (target?.kind !== 'process-terminal' && target?.kind !== 'browser-target') return '';
-  return satelliteGroup(target);
-}
-
 function focusForOpenedWindow(
   state: PawDesktopState,
   target: PawOsWindowTarget | undefined,
   background = false,
 ): Pick<PawDesktopState, 'collaborationFocusGroup' | 'collaborationFocusReturnWindowId'> {
-  const runtimeGroup = runtimeSatelliteFocusGroup(target);
   const targetGroup = satelliteGroup(target) || satelliteOwnerGroup(target);
   // Opening another App is an explicit navigation. A retained collaboration
   // layout must not cover it; background work and this group's own windows
   // keep the current focus without closing or cancelling any Session.
-  const group = runtimeGroup || (background || targetGroup === state.collaborationFocusGroup
-    ? state.collaborationFocusGroup : null);
+  const group = background || targetGroup === state.collaborationFocusGroup
+    ? state.collaborationFocusGroup : null;
   return {
     collaborationFocusGroup: group,
-    collaborationFocusReturnWindowId: group
-      ? runtimeGroup && !state.collaborationFocusGroup
-        ? state.activeWindowId : state.collaborationFocusReturnWindowId
-      : null,
+    collaborationFocusReturnWindowId: group ? state.collaborationFocusReturnWindowId : null,
   };
 }
 

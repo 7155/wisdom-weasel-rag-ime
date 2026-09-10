@@ -7,6 +7,7 @@ from typing import Any
 from .agent_blocks import bind_block_scope
 from .agent_prompt_support import bounded_text
 from .agent_protocol import AgentEventEnvelope
+from .agent_runtime_failure import provider_auth_failure_message
 from rag_ime.pi.public import (
     GROUPED_QUESTIONS_SCHEMA_VERSION,
     grouped_questions_from_wire,
@@ -567,7 +568,11 @@ def _public_turn_failure(
         "no_progress",
     }
     kind = "runtime" if runtime_host_exit else "provider"
-    summary = (
+    auth_guidance = provider_auth_failure_message(event.payload.get("error"))
+    if auth_guidance:
+        reason = "provider_auth_failure"
+        next_step = auth_guidance
+    summary = auth_guidance or (
         "工具连续失败，已停止本轮以避免继续空转"
         if no_progress
         else "Agent 运行时中断，任务已暂停等待恢复"

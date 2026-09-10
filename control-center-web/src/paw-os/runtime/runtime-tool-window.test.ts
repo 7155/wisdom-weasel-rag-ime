@@ -157,6 +157,8 @@ describe('runtime tool window projection', () => {
       target: roomRequest.target,
     });
     expect(roomStore.getState().activeWindowId).toBe(roomMain);
+    expect(roomStore.getState().collaborationFocusGroup).toBeNull();
+    roomStore.getState().setCollaborationFocusGroup('room:room-1');
     expect(roomStore.getState().collaborationFocusGroup).toBe('room:room-1');
     expect(roomRequest.target).toMatchObject({
       sessionId: 'session-room-worker',

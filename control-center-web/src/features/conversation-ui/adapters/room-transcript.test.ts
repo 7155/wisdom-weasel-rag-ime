@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { appendOptimisticRoomMessage, createRoomProjection } from '@/contracts/room-reducer';
+import { MODEL_AUTH_FAILURE_TEXT } from '@/features/agent/public-error';
 import type { AssistantMessage, TranscriptMessage, UserMessage } from '../model/types';
 import {
   roomApprovalDecision,
@@ -19,6 +20,21 @@ const options = {
 };
 
 describe('roomTranscript', () => {
+  it.each(['模型服务未能生成最终回复。请继续当前对话，或切换模型后继续。', '已完成文件检查。'])
+  ('recovers persisted OAuth errors while preserving useful partial output: %s', (text) => {
+    const projection = roomProjection();
+    const message = projection.messagesById['message-agent']!;
+    message.status = 'failed';
+    message.text = text;
+    message.message = { blocks: [{ type: 'error', data: {
+      message: 'Encountered invalidated oauth token for user, failing request',
+    } }] } as unknown as typeof message.message;
+    const card = roomTranscript(projection, options).messages.at(-1) as AssistantMessage;
+    expect(card.error).toBe(MODEL_AUTH_FAILURE_TEXT);
+    expect(card.blocks.at(-1)).toMatchObject({
+      kind: 'text', text: text.startsWith('模型服务') ? MODEL_AUTH_FAILURE_TEXT : text,
+    });
+  });
   it('folds one Runtime loop into one assistant card with its public blocks', () => {
     const projection = roomProjection();
 

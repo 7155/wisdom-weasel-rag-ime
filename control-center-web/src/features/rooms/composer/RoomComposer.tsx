@@ -7,6 +7,7 @@ import {
   useState,
   type CompositionEvent,
   type ClipboardEvent,
+  type ReactNode,
 } from 'react';
 
 import { IconButton } from '@/components/primitives';
@@ -58,6 +59,7 @@ export function RoomComposer({
   onPasteImages,
   onPasteFromClipboard,
   onPickAttachments,
+  capabilityControls,
 }: {
   room?: ComposerRoom;
   participantAliases?: Readonly<Record<string, string>>;
@@ -79,6 +81,7 @@ export function RoomComposer({
   onPasteFromClipboard: () => void;
   onPickAttachments: () => void;
   onSend: (value: string) => void | boolean | Promise<boolean>;
+  capabilityControls?: ReactNode;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -371,6 +374,7 @@ export function RoomComposer({
         )}
         controls={(
           <>
+            {capabilityControls}
             <IconButton
               className="agent-composer__attachment room-composer__attachment"
               label="添加附件"

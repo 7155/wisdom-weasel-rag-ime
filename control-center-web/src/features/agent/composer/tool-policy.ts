@@ -45,11 +45,12 @@ export function toolAvailableForConversation(
   tool: ToolManifest,
   session: SessionSummary | undefined,
   capabilityCatalog?: CapabilityCatalog,
+  sessionId = session?.id,
 ): boolean {
   if (capabilityCatalog?.sessionPolicy) {
     // This response already applies the backend's mode, profile and allowlist.
     // A provisional display record must not reinterpret that confirmed result.
-    if (!session || capabilityCatalog.sessionPolicy.sessionId !== session.id) return false;
+    if (!sessionId || capabilityCatalog.sessionPolicy.sessionId !== sessionId) return false;
     const item = capabilityCatalog.items.find(
       (candidate) => candidate.kind === 'tool' && candidate.id === tool.id,
     );
@@ -73,12 +74,13 @@ export function countAvailableTools(
   tools: readonly ToolManifest[],
   session: SessionSummary | undefined,
   capabilityCatalog?: CapabilityCatalog,
+  sessionId = session?.id,
 ): number {
   const ids = new Set<string>();
   for (const tool of tools) {
     const id = tool.id.trim();
     if (!id || ids.has(id)) continue;
-    if (!toolAvailableForConversation(tool, session, capabilityCatalog)) continue;
+    if (!toolAvailableForConversation(tool, session, capabilityCatalog, sessionId)) continue;
     ids.add(id);
   }
   return ids.size;

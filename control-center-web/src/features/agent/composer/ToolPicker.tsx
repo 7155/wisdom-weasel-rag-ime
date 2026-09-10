@@ -1,4 +1,4 @@
-import { BrainCircuit, Search, Settings2, X } from 'lucide-react';
+import { BrainCircuit, Puzzle, Search, Settings2, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import {
@@ -32,6 +32,7 @@ export function ToolPicker({
   tools,
   status: receivedStatus,
   session,
+  sessionId = session?.id,
   disabled,
   requestOpen,
   requestQuery = '',
@@ -44,6 +45,8 @@ export function ToolPicker({
   tools: ToolManifest[];
   status: 'loading' | 'ready' | 'failed';
   session?: SessionSummary;
+  /** A confirmed session catalog can be used by a Room without inventing a Session summary. */
+  sessionId?: string;
   disabled: boolean;
   requestOpen: number;
   requestQuery?: string;
@@ -51,26 +54,31 @@ export function ToolPicker({
   onSelect: (tool: ToolManifest) => void;
 }) {
   const catalogMatchesSession = !capabilityCatalog?.sessionPolicy
-    || capabilityCatalog.sessionPolicy.sessionId === session?.id;
+    || capabilityCatalog.sessionPolicy.sessionId === sessionId;
   const status = catalogMatchesSession ? receivedStatus : 'loading';
   const desktop = usePawOsDesktop();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [section, setSection] = useState<'tools' | 'plugins'>('tools');
   const searchRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   useEffect(() => {
-    if (requestOpen > 0 && status === 'ready' && !disabled) { setQuery(requestQuery); setOpen(true); }
+    if (requestOpen > 0 && status === 'ready' && !disabled) { setSection('tools'); setQuery(requestQuery); setOpen(true); }
   }, [disabled, requestOpen, requestQuery, status]);
 
   const memory = catalogMatchesSession ? capabilityCatalog?.items.find((item) => item.canonicalId === 'tool:memory') : undefined;
   const memoryEnabled = memory?.disclosure.effective === 'enabled';
   useEffect(() => { if (!catalogMatchesSession) setOpen(false); }, [catalogMatchesSession]);
-  const availableCount = countAvailableTools(tools, session, capabilityCatalog);
+  const availableCount = countAvailableTools(tools, session, capabilityCatalog, sessionId);
   const registeredCount = countRegisteredTools(tools);
   const auxiliaryCapabilityCount = capabilityCatalog
     ? capabilityCatalog.items.filter((item) => item.kind !== 'tool').length
     : 0;
   const search = query.trim().toLocaleLowerCase();
+  const plugins = capabilityCatalog?.items.filter((item) => item.kind !== 'tool') ?? [];
+  const visiblePlugins = plugins.filter((item) => !search || [item.displayName, item.description, item.id, item.source.label]
+    .some((value) => value.toLocaleLowerCase().includes(search)));
+  const enabledPlugins = plugins.filter((item) => item.disclosure.effective === 'enabled' && item.authorization.state !== 'denied').length;
   const visibleTools = tools.filter((tool) => {
     const presentation = toolPresentation(tool);
     return !search || [tool.id, tool.displayName, tool.description, presentation.name, presentation.description, tool.id === 'memory' ? '记忆自举 自动召回' : '']
@@ -100,15 +108,24 @@ export function ToolPicker({
           data-memory-enabled={memoryEnabled}
           disabled={disabled || status !== 'ready'}
           leadingIcon={<BrainCircuit size={15} />}
-          onClick={() => { setQuery('记忆'); setOpen(true); }}
+          onClick={() => { setSection('tools'); setQuery('记忆'); setOpen(true); }}
           size="small"
           title={`当前对话记忆${memoryEnabled ? '已开启' : '已关闭'} · ${capabilityScopeLabel(memory.effectiveScope)}；更改从下一轮生效`}
           variant="quiet"
         >记忆 · {memoryEnabled ? '开' : '关'}</Button>
       ) : null}
+      <Button
+        aria-label="当前对话插件与技能"
+        className="agent-composer__picker"
+        disabled={disabled || status !== 'ready'}
+        leadingIcon={<Puzzle size={15} />}
+        onClick={() => { setSection('plugins'); setQuery(''); setOpen(true); }}
+        size="small"
+        variant="quiet"
+      >插件 · {status === 'ready' ? `${enabledPlugins}/${plugins.length}` : '加载中'}</Button>
     <Popover open={open && catalogMatchesSession} onOpenChange={(nextOpen) => {
       setOpen(nextOpen);
-      if (nextOpen) setQuery('');
+      if (nextOpen) { setSection('tools'); setQuery(''); }
     }}>
       <PopoverTrigger asChild>
         <Button
@@ -138,8 +155,8 @@ export function ToolPicker({
       >
         <header className="agent-tool-picker__header">
           <div>
-            <strong id={titleId}>当前对话工具</strong>
-            <p>{availableCount} / {registeredCount} 项可用{auxiliaryCapabilityCount ? ` · 另有 ${auxiliaryCapabilityCount} 项技能与扩展` : ''}</p>
+            <strong id={titleId}>{section === 'plugins' ? '当前对话插件与技能' : '当前对话工具'}</strong>
+            <p>{section === 'plugins' ? `${enabledPlugins} / ${plugins.length} 项已开启` : `${availableCount} / ${registeredCount} 项可用${auxiliaryCapabilityCount ? ` · 另有 ${auxiliaryCapabilityCount} 项技能与扩展` : ''}`}</p>
           </div>
           <button
             aria-label="关闭当前对话工具"
@@ -153,10 +170,10 @@ export function ToolPicker({
         <div className="agent-tool-picker__search">
           <Search aria-hidden="true" size={16} />
           <Input
-            aria-label="搜索工具"
+            aria-label={section === 'plugins' ? '搜索插件与技能' : '搜索工具'}
             autoComplete="off"
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="搜索工具，例如记忆、文件…"
+            placeholder={section === 'plugins' ? '搜索插件或技能…' : '搜索工具，例如记忆、文件…'}
             ref={searchRef}
             value={query}
           />
@@ -173,8 +190,8 @@ export function ToolPicker({
           </p>
         ) : null}
         <div className="agent-tool-picker__list">
-          {visibleTools.map((tool) => {
-            const available = toolAvailableForConversation(tool, session, capabilityCatalog);
+          {section === 'tools' && visibleTools.map((tool) => {
+            const available = toolAvailableForConversation(tool, session, capabilityCatalog, sessionId);
             const presentation = toolPresentation(tool);
             const capability = capabilityCatalog?.items.find(
               (item) => item.kind === 'tool' && item.id === tool.id,
@@ -224,9 +241,30 @@ export function ToolPicker({
               </article>
             );
           })}
-          {!visibleTools.length ? (
+          {section === 'plugins' && visiblePlugins.map((item) => (
+            <article className="agent-tool-picker__row" key={item.canonicalId}>
+              <div className="agent-tool-picker__heading">
+                <strong>{item.displayName}</strong>
+                <span className="agent-tool-picker__effective" data-effective={item.disclosure.effective}>
+                  {item.disclosure.effective === 'disabled' ? '已关闭' : item.authorization.state === 'denied' ? '暂不可用' : '已启用'}
+                </span>
+              </div>
+              <p className="agent-tool-picker__description">{item.description}</p>
+              <div className="agent-tool-picker__preference">
+                <div className="agent-tool-picker__metadata"><span>{item.kind === 'skill' ? '技能' : '扩展'}</span><span>{item.source.label}</span><span>{capabilityScopeLabel(item.effectiveScope)}</span></div>
+                <Select
+                  aria-label={`${item.displayName}的当前对话使用`}
+                  disabled={adjustmentDisabled || capabilityPolicyPending || item.status === 'removed'}
+                  options={capabilityUsagePreferenceOptions}
+                  value={capabilityCatalog?.sessionPolicy?.disclosurePreferences.session[item.canonicalId] ?? 'inherit'}
+                  onValueChange={(preference) => onCapabilityPreferenceChange(item.canonicalId, preference)}
+                />
+              </div>
+            </article>
+          ))}
+          {!(section === 'plugins' ? visiblePlugins : visibleTools).length ? (
             <div className="agent-tool-picker__empty" role="status">
-              <strong>没有找到工具</strong>
+              <strong>{section === 'plugins' ? '没有找到插件或技能' : '没有找到工具'}</strong>
               <p>换个名称或用途试试，也可以清空搜索查看全部。</p>
             </div>
           ) : null}
@@ -240,7 +278,7 @@ export function ToolPicker({
           onClick={() => {
             setOpen(false);
             const params = new URLSearchParams({ view: 'capabilities' });
-            if (session?.id) params.set('sessionId', session.id);
+            if (sessionId) params.set('sessionId', sessionId);
             if (query.includes('记忆')) params.set('capability', 'tool:memory');
             openPawOsRoute(desktop, `/plugins?${params.toString()}`);
           }}

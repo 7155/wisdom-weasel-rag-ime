@@ -40,9 +40,38 @@ export function PawOsSatelliteHost({ target }: { target: PawOsWindowTarget }) {
   if (target.kind === 'participant') return <RoomParticipantSatellite target={target} />;
   if (target.kind === 'subagent') return <SubagentSatellite target={target} />;
   if (target.kind === 'process-terminal') return <ProcessTerminalSatellite target={target} />;
+  if (target.kind === 'browser-target' && target.backgroundObserver) return <BackgroundBrowserSatellite target={target} />;
   if (target.kind === 'package') return <PackageAppSatellite target={target} />;
   if (target.kind === 'result') return null;
   return null;
+}
+
+function BackgroundBrowserSatellite({ target }: { target: Extract<PawOsWindowTarget, { kind: 'browser-target' }> }) {
+  const transport = useControlTransport();
+  const desktop = usePawOsDesktop();
+  const visible = usePageVisibility();
+  const snapshot = useQuery({
+    queryKey: ['paw-background-browser', target.targetId, target.tabId],
+    queryFn: ({ signal }) => transport.request<Record<string, unknown>>({
+      pathId: 'browser.snapshot.latest', query: { tabId: target.tabId!, includeMarkdown: true }, signal,
+    }),
+    enabled: visible && Boolean(target.tabId), refetchInterval: visible ? 2_000 : false, retry: false,
+  });
+  const view = asRecord(snapshot.data);
+  const imageId = stringValue(view.snapshotId);
+  const image = imageId && view.hasScreenshot === true ? transport.browserSnapshotImageUrl?.(imageId) : undefined;
+  return <section className="paw-os-satellite paw-background-browser">
+    <header className="paw-process-terminal__meta">
+      <span>后台浏览器</span>
+      <Button size="small" variant="quiet" onClick={() => {
+        desktop?.setCollaborationFocusGroup?.(null);
+        desktop?.openWindow({ appId: 'browser', target: { ...target, id: target.targetId, backgroundObserver: false } });
+      }}>打开浏览器</Button>
+    </header>
+    <p className="paw-background-browser__url">{target.url}</p>
+    {image ? <img alt="后台浏览器最近的页面快照" src={image} /> : <p>{stringValue(view.markdown, snapshot.isError ? '页面快照暂时不可用，浏览器继续运行。' : '等待页面快照…')}</p>}
+    <small>收起这个窗口，浏览器仍会继续运行。</small>
+  </section>;
 }
 
 function ProcessTerminalSatellite({ target }: { target: Extract<PawOsWindowTarget, { kind: 'process-terminal' }> }) {

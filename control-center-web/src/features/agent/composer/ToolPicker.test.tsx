@@ -125,6 +125,17 @@ function renderPicker({
 }
 
 describe('ToolPicker conversation capability presentation', () => {
+  it('exposes an actual plugin preference without mixing it into tool rows', async () => {
+    const value = catalog();
+    value.items.push({ ...value.items[0]!, id: 'session-review', canonicalId: 'extension:session-review', kind: 'extension', displayName: '对话复盘', description: '复盘插件' });
+    const changed = renderPicker({ capabilityCatalog: value });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '当前对话插件与技能' }));
+    await user.click(screen.getByRole('combobox', { name: '对话复盘的当前对话使用' }));
+    await user.click(screen.getByRole('option', { name: '当前对话关闭' }));
+    expect(changed).toHaveBeenCalledWith('extension:session-review', 'disabled');
+    expect(screen.queryByRole('combobox', { name: '记忆召回的当前对话使用' })).not.toBeInTheDocument();
+  });
   it('keeps a stale Session catalog out of the current memory label and controls', () => {
     const stale = catalog();
     stale.sessionPolicy!.sessionId = 'previous-session';

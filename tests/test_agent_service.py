@@ -4056,7 +4056,6 @@ class AgentServiceTests(unittest.TestCase):
 
         with patch.object(self.service.runtime, "prompt", side_effect=accepted) as prompt, \
              patch.object(self.service.memory_bootstrap, "build", side_effect=build_memory) as build:
-            self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "disabled"})
             disabled = self.service.prompt(session_id, {"message": "首轮关闭"})
             self.assertEqual(disabled["memoryBootstrap"]["status"], "disabled")
             self.assertEqual(disabled["contextItemsDelivered"], 0)
@@ -4082,11 +4081,11 @@ class AgentServiceTests(unittest.TestCase):
 
             self.service.sessions.set_disclosure_preferences(session_id, {})
             restored = self.service.prompt(session_id, {"message": "恢复跟随默认"})
-            self.assertEqual(restored["memoryBootstrap"]["itemId"], item_id)
-            self.assertEqual(restored["contextItemsDelivered"], 1)
+            self.assertEqual(restored["memoryBootstrap"]["status"], "disabled")
+            self.assertEqual(restored["contextItemsDelivered"], 0)
             self.assertEqual(build.call_count, 1)
             contexts = [json.loads(call.args[1][len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]).get("sessionContext", "") for call in prompt.call_args_list]
-            self.assertEqual([marker in context for context in contexts], [False, True, False, True])
+            self.assertEqual([marker in context for context in contexts], [False, True, False, False])
             self.assertTrue(self.service.memory_enabled(), "Session switch must not change the global setting")
 
     def test_new_session_reuses_one_query_aware_bootstrap_until_compaction(self) -> None:

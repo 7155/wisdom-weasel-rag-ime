@@ -17,7 +17,7 @@ from pathlib import Path
 from threading import RLock
 
 from .db import sqlite_connection
-from .agent_capability_catalog import capability_disclosure_enabled
+from .agent_capability_catalog import capability_disclosure_enabled, session_resource_disclosure_policy
 from .agent_composition import build_room_stores, build_session_applications
 from .agent_configuration import (
     AgentConfigurationStore,
@@ -1429,21 +1429,24 @@ class AgentService:
         return execution_policy_prompt(effective_session)
 
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
+        resource_policy = session_resource_disclosure_policy(session, configuration_store=self.configuration_store)
         delegation = getattr(self, "delegation", None)
         if delegation is not None:
             delegated = delegation.runtime_session_context(session)
             if delegated:
-                return delegated
+                return {**delegated, "resourceDisclosurePolicy": resource_policy}
         session_id = str(session.get("id") or "")
         session_context = "\n\n".join(
             value
             for value in (
                 self._execution_policy_prompt_for_session(session),
-                self.memory_context_application.provider_context(session_id),
+                self.memory_context_application.provider_context(session_id)
+                if self.memory_enabled() and self._session_memory_disclosed(session_id)
+                else "",
             )
             if value
         )
-        return {"sessionContext": session_context} if session_context else {}
+        return {"resourceDisclosurePolicy": resource_policy, **({"sessionContext": session_context} if session_context else {})}
 
     def memory_enabled(self) -> bool:
         """Resolve the live memory master switch for the next Runtime call."""

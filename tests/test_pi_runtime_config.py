@@ -885,6 +885,23 @@ class PiRuntimeConfigTests(unittest.TestCase):
         )
         self.assertEqual(message["blocks"][1]["data"]["message"], "fetch failed")
 
+    def test_invalidated_oauth_explains_account_recovery(self) -> None:
+        from rag_ime.agent_runtime_failure import classify_runtime_failure
+
+        error = "Encountered invalidated oauth token for user, failing request"
+        message = pi_message_payload(
+            {"role": "assistant", "content": [], "stopReason": "error",
+             "errorMessage": error, "timestamp": 106},
+            session_id=str(self.session["id"]), turn_id="turn:oauth-error",
+        ).to_payload()
+        self.assertEqual(message["status"], "failed")
+        self.assertIn("模型账号", message["blocks"][0]["data"]["text"])
+        self.assertIn("重新登录", message["blocks"][0]["data"]["text"])
+        self.assertEqual(message["blocks"][1]["data"]["message"], error)
+        classification = classify_runtime_failure(error, had_tool_activity=False)
+        self.assertEqual(classification.reason_code, "provider_auth_failure")
+        self.assertFalse(classification.retryable)
+
     def test_deep_search_transport_prompt_is_not_exposed_as_user_message(self) -> None:
         message = pi_message_payload(
             {

@@ -21,6 +21,7 @@ from rag_ime.agent_blocks import (
     normalize_trusted_agent_blocks,
 )
 from rag_ime.agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
+from rag_ime.agent_runtime_failure import provider_auth_failure_message
 from rag_ime.contracts.json_schema import validate_contract
 
 from rag_ime.pi.values import (
@@ -1590,7 +1591,7 @@ def pi_message_payload(
                         "status": "failed",
                         "presentationKind": "markdown",
                         "data": {
-                            "text": (
+                            "text": provider_auth_failure_message(error_message) or (
                                 "模型服务未能生成最终回复。"
                                 + (
                                     "已完成的工具与文件结果已保留；"

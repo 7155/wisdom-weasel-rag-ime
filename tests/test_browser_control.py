@@ -18,6 +18,13 @@ from rag_ime.paw_browser_runtime import PawBrowserRuntime
 
 
 class BrowserControlServiceTests(unittest.TestCase):
+    def test_failed_browser_poll_does_not_claim_targets_were_closed(self) -> None:
+        with mock.patch.object(self.service, 'managed_status', return_value={'running': True, 'debugPort': 9222}), \
+             mock.patch.object(self.runtime, 'tabs', side_effect=OSError('CDP read interrupted')):
+            self.assertFalse(self.service.tabs()['liveSnapshot'])
+        with mock.patch.object(self.service, 'managed_status', return_value={'running': False, 'debugPort': 0}):
+            self.assertTrue(self.service.tabs()['liveSnapshot'])
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)

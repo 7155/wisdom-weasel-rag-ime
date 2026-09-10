@@ -672,6 +672,11 @@ class PiRuntimeHostManager:
             }
             if skill_allowlist is not None:
                 params["skillAllowlist"] = skill_allowlist
+            resource_policy = as_mapping(session.get("resourceDisclosurePolicy"))
+            if any(resource_policy.get(key) for key in ("disabledSkillNames", "disabledPluginIds")):
+                if not self._host_capabilities.get("sessionResourceDisclosure"):
+                    raise PiRuntimeError("请更新 PAW，以应用当前对话的插件和技能开关")
+                params["resourceDisclosurePolicy"] = dict(resource_policy)
             if candidate_skill_paths:
                 params["candidateSkillPaths"] = candidate_skill_paths
             compaction_instructions = str((prompt_settings or {}).get("compactionInstructions") or "")

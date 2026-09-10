@@ -526,3 +526,9 @@
   .paw-participant-chat__activity-group__summary { grid-template-columns: minmax(0, 1fr) 16px 12px; padding-inline: 8px; }
   .paw-participant-chat__statusline { gap: 6px; padding-inline: 8px; }
 }
+
+.paw-background-browser { display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 12px; overflow: auto; }
+.paw-background-browser img { display: block; width: 100%; height: auto; object-fit: contain; border-radius: 6px; }
+.paw-background-browser__url { overflow-wrap: anywhere; font-size: 12px; color: var(--text-secondary); }
+.paw-background-browser > p { white-space: pre-wrap; }
+.paw-background-browser > small { color: var(--text-secondary); }

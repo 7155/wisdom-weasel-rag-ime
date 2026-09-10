@@ -22,6 +22,7 @@ import {
 import { PawAppProcess } from '../apps/PawApps';
 import { PawAppIcon } from './PawAppIcon';
 import { PawWindowChromeProvider } from './PawWindowChrome';
+import { PawBackgroundToolWindows } from './PawBackgroundToolWindows';
 import { pulsePawComposition } from '../runtime/composition-pulse';
 import { useRoomProjectionBridge } from '@/features/rooms/state/projection-bridge';
 import { roomActivityFlowKind, roomWorkReviewFlow } from '@/features/rooms/room-flow-projection';
@@ -171,10 +172,10 @@ export function PawWindowLayer() {
     if (!request.background && request.target.kind === 'participant' && request.target.roomId === focusedRoomId) {
       setInspectedParticipant({ roomId: focusedRoomId, participantId: request.target.id });
     }
-    const existingBrowser = request.target.kind === 'browser-target'
-      ? Object.values(api.getState().windows).find((node) => node.appId === 'browser')
+    const existingBrowser = request.target.kind === 'browser-target' && !request.target.backgroundObserver
+      ? Object.values(api.getState().windows).find((node) => node.appId === 'browser' && !(node.target?.kind === 'browser-target' && node.target.backgroundObserver))
       : undefined;
-    const entityId = request.target.kind === 'browser-target'
+    const entityId = request.target.kind === 'browser-target' && !request.target.backgroundObserver
       ? existingBrowser?.entityId
       : request.target.kind === 'room' && request.target.panel
         ? `${request.target.id}:${request.target.panel}`
@@ -230,6 +231,7 @@ export function PawWindowLayer() {
   }, [api]);
   return (
     <FeatureDesktopProvider bindAgentMain={bindAgentMain} bindRoomMain={bindRoomMain} collaborationFocusGroup={collaborationFocusGroup} closeWindow={closeWindow} openApp={openFeatureApp} openRoute={openFeatureRoute} openWindow={openFeatureWindow} setCollaborationFocusGroup={setCollaborationFocusGroup}>
+      {focusedRoomId || ids.some((id) => id.includes(':background:')) ? <PawBackgroundToolWindows /> : null}
       <div className="paw-window-layer" data-overview={overviewOpen || undefined} data-room-focus={focusedRoomId || undefined}>
         {focusedRoomId ? <>
           <div aria-hidden="true" className="paw-room-focus-plane" />
@@ -471,13 +473,14 @@ export function isCollaborationSatellite(node: PawWindowNode): boolean {
 
 export function windowBelongsToFocus(node: PawWindowNode, group: string): boolean {
   if (node.minimized) return false;
-  /* A Room focus is a composition of the Room main and compact participant
-     planet observers. Runtime projections (terminal/browser), documents,
-     results and Room tool panels stay ordinary desktop windows; only a
-     Session-created subagent is ever a satellite. */
+  /* Explicit Room focus includes its partners and persistent background
+     resource observers. Ordinary desktop tools retain their own geometry. */
   if (group.startsWith('room:')) {
     const roomId = group.slice('room:'.length);
     if (node.target?.kind === 'room') return node.target.id === roomId && !node.target.panel;
+    if (node.target?.kind === 'process-terminal' || node.target?.kind === 'browser-target') {
+      return node.target.roomId === roomId && node.target.backgroundObserver === true;
+    }
     return node.target?.kind === 'participant' && node.target.roomId === roomId;
   }
   if (satelliteGroup(node.target) === group) return true;
@@ -636,7 +639,7 @@ function layoutRoomCollaborationFocus(
   const top = Math.max(0, reserved.modeBarHeight ?? 0) + 48 + inset;
   const width = Math.max(PAW_WINDOW_MIN_WIDTH, viewport.width - inset * 2);
   const height = Math.max(PAW_WINDOW_MIN_HEIGHT, viewport.height - top - inset);
-  const partners = nodes.filter((node) => node.target?.kind === 'participant' && !node.minimized);
+  const partners = nodes.filter((node) => node.id !== main.id && !node.minimized);
   const frames = new Map<string, PawWindowBounds>([[main.id, { x: inset, y: top, width, height }]]);
   if (!partners.length) return frames;
   const minimumSideWidth = PAW_WINDOW_MIN_WIDTH + ROOM_FOCUS_SCROLL_GUTTER;
@@ -944,7 +947,7 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
       title={node.title || app.label}
       subtitle={node.target?.subtitle}
       targetKind={node.target?.kind}
-      windowChrome={node.target?.kind === 'room' && !node.target.panel ? 'room-workspace' : node.appId === 'agent' ? 'agent-session' : node.appId === 'browser' ? 'browser-tabs' : node.appId === 'files' ? 'files-tools' : node.appId === 'terminal' ? 'terminal-tabs' : undefined}
+      windowChrome={node.target?.kind === 'room' && !node.target.panel ? 'room-workspace' : node.appId === 'agent' ? 'agent-session' : node.appId === 'browser' && !(node.target?.kind === 'browser-target' && node.target.backgroundObserver) ? 'browser-tabs' : node.appId === 'files' ? 'files-tools' : node.appId === 'terminal' ? 'terminal-tabs' : undefined}
       windowId={windowId}
       zIndex={roomFocus && inFocus ? inspector ? 40 : 20 : zIndex}
     >

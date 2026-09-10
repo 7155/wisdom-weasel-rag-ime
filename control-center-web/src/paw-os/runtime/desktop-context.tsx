@@ -33,6 +33,7 @@ export function PawDesktopProvider({ children, initialAppId, initialRoute }: { c
         wayfinder: state.wayfinder,
         collaborationFocusGroup: state.collaborationFocusGroup,
         collaborationFocusReturnWindowId: state.collaborationFocusReturnWindowId,
+        dismissedBackgroundToolIds: state.dismissedBackgroundToolIds,
       };
       try {
         window.localStorage.setItem(pawDesktopSnapshotKey, JSON.stringify(snapshot));
@@ -116,6 +117,7 @@ function sanitizePawDesktopSnapshot(value: unknown): PawDesktopSnapshot | undefi
     activeWindowId,
     collaborationFocusGroup,
     collaborationFocusReturnWindowId,
+    dismissedBackgroundToolIds: Array.isArray(value.dismissedBackgroundToolIds) ? value.dismissedBackgroundToolIds.filter((id): id is string => typeof id === 'string').slice(-512) : [],
     ...(dockAppIds !== undefined ? { dockAppIds } : {}),
     wayfinder: {
       ...(rawWayfinder.layoutVersion === 2 || rawWayfinder.layoutVersion === 3

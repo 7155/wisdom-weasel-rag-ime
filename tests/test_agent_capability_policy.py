@@ -298,18 +298,36 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
                     "extension:session-review",
                 ):
                     disclosure = by_id[canonical_id]["disclosure"]
-                    is_tool = canonical_id.startswith("tool:")
-                    self.assertEqual(disclosure["state"], "hidden" if is_tool else "disclosed")
-                    self.assertEqual(
-                        disclosure["reason"],
-                        "session_preference" if is_tool else "unrestricted_session_profile",
-                    )
+                    self.assertEqual(disclosure["state"], "hidden")
+                    self.assertEqual(disclosure["reason"], "session_preference")
                 self.policy.update_session(session_id, {"capabilityDisclosurePreferences": {}})
                 restored = self._gateway().manifests(session_id=session_id)["items"]
                 for item in restored:
                     if item["canonicalId"] in {"tool:memory", "skill:quality-gate", "extension:session-review"}:
-                        self.assertEqual(item["disclosure"]["effective"], "enabled")
-                        self.assertEqual(item["disclosure"]["reason"], "unrestricted_session_profile")
+                        memory = item["canonicalId"] == "tool:memory"
+                        self.assertEqual(item["disclosure"]["effective"], "disabled" if memory else "enabled")
+                        self.assertEqual(item["disclosure"]["reason"], "inherited_built_in_default" if memory else "unrestricted_session_profile")
+
+    def test_memory_is_opt_in_and_explicit_enabling_reaches_runtime_tools(self) -> None:
+        from rag_ime.agent_capability_catalog import capability_disclosure_enabled, session_resource_disclosure_policy
+
+        session = self.sessions.create(title="memory opt in")
+        session_id = str(session["id"])
+        self.assertFalse(capability_disclosure_enabled(
+            "tool:memory", session=session, configuration_store=self.configuration,
+        ))
+        self.assertNotIn("memory", [item["name"] for item in self._gateway().runtime_manifests(session)])
+        self.policy.update_session(session_id, {"capabilityDisclosurePreferences": {"tool:memory": "enabled"}})
+        updated = self.sessions.get(session_id)
+        self.assertTrue(capability_disclosure_enabled(
+            "tool:memory", session=updated, configuration_store=self.configuration,
+        ))
+        self.policy.update_session(session_id, {"capabilityDisclosurePreferences": {
+            "skill:quality-gate": "disabled", "extension:session-review": "disabled",
+        }})
+        self.assertEqual(session_resource_disclosure_policy(self.sessions.get(session_id), configuration_store=self.configuration), {
+            "disabledSkillNames": ["quality-gate"], "disabledPluginIds": ["session-review"],
+        })
 
     def test_busy_mutation_is_rejected_without_retiring_runtime(self) -> None:
         session = self.sessions.create(title="busy")
@@ -352,23 +370,23 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.assertEqual(self.runtime.open_session_ids, [other_id])
         self.assertEqual(self.runtime.running_jobs, jobs_before)
 
-    def test_active_room_rejects_disclosure_mutation(self) -> None:
+    def test_idle_room_partner_accepts_capability_choices_without_changing_permissions(self) -> None:
         session = self.sessions.create(title="room participant")
         session_id = str(session["id"])
         self.rooms.active_session_id = session_id
-        with self.assertRaisesRegex(ValueError, "managed by the Room"):
-            self.policy.update_session(
-                session_id,
-                {
-                    "capabilityDisclosurePreferences": {
-                        "skill:quality-gate": "enabled"
-                    }
-                },
-            )
+        self.policy.update_session(session_id, {
+            "capabilityDisclosurePreferences": {"skill:quality-gate": "disabled"},
+        })
         self.assertEqual(
             self.sessions.get(session_id)["capabilityDisclosurePreferences"],
-            {},
+            {"skill:quality-gate": "disabled"},
         )
+        self.assertEqual(self.sessions.get(session_id)["executionMode"], session["executionMode"])
+        with self.assertRaisesRegex(ValueError, "managed by the Room"):
+            self.policy.update_session(session_id, {"executionMode": "full_trust"})
+        self.sessions.set_status(session_id, "busy")
+        with self.assertRaisesRegex(ValueError, "Agent Loop"):
+            self.policy.update_session(session_id, {"capabilityDisclosurePreferences": {"tool:memory": "enabled"}})
 
     def test_precedence_catalog_completeness_and_removed_item(self) -> None:
         snapshot = self.configuration.snapshot()

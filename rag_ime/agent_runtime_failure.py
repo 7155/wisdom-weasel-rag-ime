@@ -6,9 +6,23 @@ from dataclasses import dataclass
 
 _AUTH_FAILURE = re.compile(
     r"\b(?:401|403|unauthori[sz]ed|forbidden|invalid[_ -]?(?:api[_ -]?)?key|"
-    r"authentication failed)\b",
+    r"authentication failed|invalidated oauth token|invalid[_ -]grant|"
+    r"refresh[_ -]token[_ -](?:reused|expired|invalid)|"
+    r"(?:access|oauth)[_ -]token (?:is |has )?(?:expired|invalid))\b",
     re.IGNORECASE,
 )
+
+
+def provider_auth_failure_message(error: object) -> str:
+    """Give a recovery action only when the Provider reported authentication failure."""
+    if not _AUTH_FAILURE.search(str(error or "")):
+        return ""
+    return (
+        "模型账号登录已失效或凭据无效。请在系统设置的“模型账号”中"
+        "重新登录或更新密钥，再继续当前对话。"
+    )
+
+
 _CANCEL_FAILURE = re.compile(
     r"\b(?:abort(?:ed)?|cancel(?:led|ed)?|user interrupt)\b",
     re.IGNORECASE,

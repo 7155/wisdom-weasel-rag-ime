@@ -1,4 +1,5 @@
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
+import { isModelAuthError, publicAgentErrorText } from '@/features/agent/public-error';
 import type {
   RoomActivityProjection,
   RoomMessageProjection,
@@ -112,10 +113,18 @@ export function roomTranscript(
     }
     if (entry.kind === 'message') {
       const card = cardFor(entry.message.turnId, entry.message.participantId, entry.message.createdAtMs);
+      const authError = entry.message.status === 'failed'
+        ? entry.message.message?.blocks.find((block) => block.type === 'error'
+          && block.visibility !== 'private_session' && isModelAuthError(block.data.message))
+        : undefined;
+      const authGuidance = authError ? publicAgentErrorText(authError.data.message) : '';
+      if (authGuidance) card.error = authGuidance;
       card.blocks.push({
         id: `text:${entry.message.id}`,
         kind: 'text',
-        text: entry.message.text,
+        text: authGuidance && entry.message.text.startsWith('模型服务未能生成最终回复')
+          ? authGuidance
+          : entry.message.text,
         ...(entry.message.status === 'streaming' ? { streaming: true } : {}),
       });
       continue;
@@ -128,7 +137,7 @@ export function roomTranscript(
       continue;
     }
     const card = cardFor(entry.turn.id, entry.turn.participantIds[0] ?? null, entry.turn.updatedAtMs || entry.turn.createdAtMs);
-    card.error = entry.turn.status === 'aborted'
+    card.error ||= entry.turn.status === 'aborted'
       ? entry.turn.failure || '这轮协作已停止。'
       : entry.turn.failure || '这轮协作未完成。';
     openKey = '';

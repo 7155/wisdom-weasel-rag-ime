@@ -3,10 +3,18 @@ import { describe, expect, it } from 'vitest';
 import {
   agentCommandReceiptFailure,
   MODEL_QUOTA_EXHAUSTED_TEXT,
+  MODEL_AUTH_FAILURE_TEXT,
+  isModelAuthError,
   publicAgentErrorText,
 } from './public-error';
 
 describe('Agent command receipt public recovery', () => {
+  it('recognizes invalidated OAuth without treating a network failure as a login failure', () => {
+    expect(publicAgentErrorText(new Error('Encountered invalidated oauth token for user, failing request')))
+      .toBe(MODEL_AUTH_FAILURE_TEXT);
+    expect(publicAgentErrorText(new Error('refresh_token_reused'))).toBe(MODEL_AUTH_FAILURE_TEXT);
+    expect(isModelAuthError('fetch failed')).toBe(false);
+  });
   it('explains a Room participant reservation without a generic resend loop', () => {
     const expected = '目标伙伴正在处理另一条请求；草稿已保留，待当前请求结束后可再次发送。';
     expect(publicAgentErrorText({

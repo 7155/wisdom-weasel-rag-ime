@@ -17,6 +17,7 @@ export type PawOsWindowTarget =
   | { kind: 'subagent'; id: string; title: string; subtitle?: string; sessionId: string }
   | {
     kind: 'process-terminal';
+    backgroundObserver?: boolean;
     id: string;
     title: string;
     subtitle?: string;
@@ -35,6 +36,7 @@ export type PawOsWindowTarget =
   }
   | {
     kind: 'browser-target';
+    backgroundObserver?: boolean;
     id: string;
     title: string;
     subtitle?: string;

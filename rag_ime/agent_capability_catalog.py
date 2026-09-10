@@ -30,6 +30,25 @@ def capability_disclosure_enabled(
     )["effective"] == "enabled"
 
 
+def session_resource_disclosure_policy(
+    session: Mapping[str, object], *, configuration_store: object | None,
+) -> dict[str, list[str]]:
+    """Resolve resource exclusions through the same preferences as the UI."""
+    global_preferences, _project_id, project_preferences = _configuration_preferences(
+        configuration_store, session=session,
+    )
+    session_preferences = _preferences(session.get("capabilityDisclosurePreferences"))
+    ids = set(global_preferences) | set(project_preferences) | set(session_preferences)
+    hidden = [canonical_id for canonical_id in sorted(ids) if _capability_disclosure(
+        canonical_id, session=session, global_preferences=global_preferences,
+        project_preferences=project_preferences, session_preferences=session_preferences,
+    )["effective"] == "disabled"]
+    return {
+        "disabledSkillNames": [value.removeprefix("skill:") for value in hidden if value.startswith("skill:")],
+        "disabledPluginIds": [value.removeprefix("extension:") for value in hidden if value.startswith("extension:")],
+    }
+
+
 def build_capability_catalog(
     *,
     tool_manifests: Sequence[Mapping[str, object]],
@@ -533,7 +552,7 @@ def _disclosure(
         reason = "inherited_global_default"
     else:
         preference = "inherit"
-        effective = "enabled"
+        effective = "disabled" if canonical_id == "tool:memory" else "enabled"
         scope = "built_in_default"
         reason = "inherited_built_in_default"
     return {
@@ -561,15 +580,13 @@ def _capability_disclosure(
     if (
         session is None
         or not unrestricted_workspace_policy_active(session)
-        or (
-            canonical_id.startswith("tool:")
-            and session_preferences.get(canonical_id, "inherit") != "inherit"
-        )
+        or canonical_id == "tool:memory"
+        or disclosure["scope"] != "built_in_default"
     ):
         return disclosure
-    # An unrestricted profile supplies the default; an explicit tool choice
-    # in this conversation must still take effect. Permission to use a tool
-    # does not require the user to keep that capability enabled.
+    # Full access removes execution restrictions, not capability choices.
+    # Memory remains opt-in; tool, skill and extension preferences at every
+    # scope still determine what is loaded into a conversation.
     return {
         "preference": "inherit",
         "effective": "enabled",
