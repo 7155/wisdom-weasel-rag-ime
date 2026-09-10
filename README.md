@@ -16,8 +16,10 @@ PAWOS 前端参考 React OS，把对话、项目、协作、记忆、知识库�
 
 ![PAWOS 桌面与应用入口](assets/showcase/current/pawos-desktop.webp)
 
-当前提供源码预览版，面向本地开发和自托管体验。macOS 桌面宿主为 Electron；
-正式安装包的签名、公证与完整前台验收状态见
+提供源码预览版与 Apple Silicon macOS 离线安装预览版。安装器包含桌面端、听写组件、
+Python 和 Pi Runtime，无需另装开发工具；请下载 Release 中的 `.dmg` 文件。
+该安装预览版未获得 Developer ID 签名或 Apple 公证。macOS 桌面宿主为 Electron；
+签名、公证与完整前台验收状态见
 [发布说明](release/README.md#source-publication-and-binary-release)。
 
 > 本页图片采集自当前源码的公开演示数据，不含个人 Session 或凭据。

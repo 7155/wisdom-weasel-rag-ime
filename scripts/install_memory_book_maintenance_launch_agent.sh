@@ -15,10 +15,13 @@ INSTALL_MARKER="$APP_CODE_DIR/rag-ime-install-marker.json"
 INTERVAL_SECONDS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_INTERVAL_SECONDS:-3600}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
+source "$ROOT/scripts/support/prebuilt_product.sh"
+if ! paw_prebuilt_identity; then
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 SOURCE_DIRTY="false"
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
   SOURCE_DIRTY="true"
+fi
 fi
 
 if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then

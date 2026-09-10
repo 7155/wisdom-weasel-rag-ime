@@ -41,10 +41,13 @@ NO_SEED="${RAG_IME_SIDECAR_NO_SEED:-0}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-foreground-rag-proof}"
 HEALTH_TIMEOUT_SECONDS="${RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS:-45}"
+source "$ROOT/scripts/support/prebuilt_product.sh"
+if ! paw_prebuilt_identity; then
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 SOURCE_DIRTY="false"
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
   SOURCE_DIRTY="true"
+fi
 fi
 
 EMBEDDING_PROVIDER_HINT="${RAG_IME_EMBEDDING_PROVIDER:-}"

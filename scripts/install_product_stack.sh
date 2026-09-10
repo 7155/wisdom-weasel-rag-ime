@@ -34,6 +34,7 @@ usage() {
 Usage: scripts/install_product_stack.sh [options]
 
 Options:
+  --binary-payload PATH  Install verified bundled binaries without developer tools.
   --include-squirrel    Rebuild and install the patched Squirrel input method.
   --skip-desktop        Do not install the Accessibility-only desktop bridge.
   --skip-voice          Do not install the optional voice agent.
@@ -130,6 +131,13 @@ prepare_stack_squirrel_workspace() {
 
 while (($#)); do
   case "$1" in
+    --binary-payload)
+      shift
+      [[ $# -gt 0 ]] || { echo "--binary-payload requires a path" >&2; exit 2; }
+      export PAW_BINARY_PAYLOAD="$(cd "$1" && pwd)"
+      INCLUDE_PI=1
+      INCLUDE_MLX=0
+      ;;
     --include-squirrel) INCLUDE_SQUIRREL=1 ;;
     --skip-desktop) INCLUDE_DESKTOP=0 ;;
     --skip-voice) INCLUDE_VOICE=0 ;;
@@ -151,6 +159,14 @@ while (($#)); do
   shift
 done
 
+source "$ROOT/scripts/support/prebuilt_product.sh"
+if paw_prebuilt_identity; then
+  [[ "$INCLUDE_SQUIRREL" == "0" && "$INCLUDE_MLX" == "0" ]] || {
+    echo "Squirrel and MLX builds are not included in the binary installer" >&2; exit 2;
+  }
+  PI_PYTHON="${RAG_IME_PYTHON:-$(command -v python3)}"
+  "$PI_PYTHON" "$ROOT/scripts/install_binary_payload.py" --verify "$PAW_BINARY_PAYLOAD"
+else
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 SOURCE_BRANCH="$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 if [[ "$SOURCE_BRANCH" != "main" ]]; then
@@ -182,6 +198,8 @@ if [[ "$INCLUDE_PI" == "1" ]]; then
     --preflight >/dev/null
 fi
 
+fi
+
 if [[ "$INCLUDE_SQUIRREL" == "1" ]]; then
   prepare_stack_squirrel_workspace
 fi
@@ -201,10 +219,14 @@ echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
 required=(--require control --require sidecar)
 
 if [[ "$INCLUDE_PI" == "1" ]]; then
+  if [[ -n "${PAW_BINARY_PAYLOAD:-}" ]]; then
+    PI_BUILD_DIR="$PAW_BINARY_PAYLOAD/pi-runtime"
+  else
   PI_BUILD_DIR="$ROOT/build/managed-pi-runtime/install-stack-current"
   pi_build_args=(--output "$PI_BUILD_DIR" --force)
   pi_build_args+=(--pi-worktree "$PI_WORKTREE")
   "$PI_PYTHON" "$ROOT/scripts/build_managed_pi_runtime_v2.py" "${pi_build_args[@]}"
+  fi
   PI_STAGE_REPORT="$PI_BUILD_DIR.install-stage.json"
   PI_ACCEPTANCE_REPORT="$PI_BUILD_DIR.acceptance.json"
   PI_ROOM_ACCEPTANCE_REPORT="$PI_BUILD_DIR.room-acceptance.json"

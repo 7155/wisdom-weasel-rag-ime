@@ -46,6 +46,13 @@ hydrate_electron_runtime() {
   }
 }
 
+source "$ROOT/scripts/support/prebuilt_product.sh"
+if paw_prebuilt_identity; then
+  [[ "$ACTION" == "install-release" ]] || { echo "prebuilt payload supports install-release only" >&2; exit 2; }
+  APP="$PAW_BINARY_PAYLOAD/apps/RagImeControlElectron.app"
+  codesign --verify --deep --strict "$APP"
+else
+
 hydrate_electron_runtime
 
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
@@ -217,6 +224,8 @@ codesign --verify --deep --strict "$APP"
 # Refresh it after assembly so LaunchServices sees the new branded icon even
 # when an update replaces the same app path. This changes no signed content.
 touch "$APP"
+
+fi
 
 verify_release_provenance() {
   local candidate="$1"

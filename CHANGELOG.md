@@ -5,6 +5,9 @@ source checkpoint is not a signed and notarized macOS binary release.
 
 ## 0.1.0-alpha.3 — 2026-09-10
 
+- Add an unsigned Apple Silicon offline DMG installer with a native installation
+  window, bundled Python and Pi Runtime, payload verification and pre-update
+  component backups. Reuse the stack installer without target-machine builds.
 - Connect installed Electron voice settings to the existing Voice Agent for
   status, service controls, permission requests and credential configuration.
   Desktop voice status no longer waits on unrelated global runtime probes.

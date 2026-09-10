@@ -3,6 +3,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/control-center-web"
+source "$ROOT/scripts/support/prebuilt_product.sh"
+if paw_prebuilt_identity; then
+  "$ROOT/scripts/check_control_center_web_dist.sh" "$WEB/dist" http production "$SOURCE_COMMIT"
+  echo "$WEB/dist"
+  exit 0
+fi
 CONTROL_TRANSPORT="${RAG_IME_CONTROL_TRANSPORT:-mock}"
 BUILD_CHANNEL="${RAG_IME_CONTROL_BUILD_CHANNEL:-preview}"
 if [[ "$BUILD_CHANNEL" == "production" ]]; then

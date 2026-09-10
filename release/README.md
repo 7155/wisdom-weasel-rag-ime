@@ -1,16 +1,42 @@
 # Build, Install, And Release
 
-This directory separates three different claims that must not be confused:
+This directory separates source, preview installers, and notarized distribution:
 
 | Scope | What it proves | Current gate |
 | --- | --- | --- |
 | Public source | The tracked repository is clean, licensed, and free of known private artifacts or secret-shaped content. | `python3 scripts/check_public_release.py --repository-only` |
 | Local source build | The Web Control Center, native helpers, and pinned managed Pi Runtime can be built from source on the current Mac. | The non-destructive walkthrough below |
+| Unsigned offline preview | A DMG installs prebuilt desktop/voice/bridge apps, Python and managed Pi through the existing stack installer. No developer tools are needed on the target Mac. | Payload hashes, native signatures, staged Pi canaries and installed component audit; no Developer ID or notarization claim |
 | Public macOS distribution | A package is Developer ID signed, notarized, stapled, foreground-accepted, and hash-bound to its corresponding source. | `python3 scripts/check_public_release.py` |
 
-The first two scopes can pass while the public macOS distribution remains
-blocked. An ad-hoc signed `.app` produced by the local build is not a public
-release artifact.
+The source and preview scopes can pass while notarized distribution remains
+blocked. An unsigned preview must be labelled explicitly; it does not satisfy
+the signed public macOS distribution gate.
+
+## Offline Preview Installer
+
+Download the `macOS-arm64-unsigned.dmg` asset from the GitHub Release, check its
+`SHA256SUMS.txt`, open the image and run **Install Personal Agent Workbench**.
+The installer targets the current user's `~/Applications` and keeps its bundled
+runtime under `~/Library/Application Support/RagIme/InstallerGenerations` so the
+image can be ejected after installation. Existing databases and credentials stay
+in place; previous components are copied to `InstallerRecovery` before update.
+
+The preview requires Apple Silicon and macOS 14+. It does not need Git, Xcode,
+Node, pnpm or Python installed separately. It is ad-hoc signed, without Developer
+ID or Apple notarization, so macOS may require an explicit Open Anyway decision
+in Privacy & Security. Voice permissions and Provider credentials are configured
+in Input Studio after installation. Patched Squirrel and MLX model weights are
+optional and are not included in this installer.
+
+Packagers use `scripts/build_macos_installer.py --help` with explicit prebuilt
+apps, Pi payload/source, a portable Python runtime with the project's runtime
+dependencies, and the pinned Electron license notices. The manifest records
+product and installer revisions separately: packaging-only script updates do
+not rewrite the provenance of already built apps. Corresponding source and
+third-party notices are included. The graphical wrapper only prepares a durable
+payload and invokes `install_product_stack.sh --binary-payload`; existing
+installers remain the owners of LaunchAgents, managed Pi activation and checks.
 
 The `RAG_IME_*` environment variables, `RagIme` Application Support directory,
 and existing bundle identifiers are compatibility identifiers. The user-facing
@@ -18,7 +44,7 @@ product and Python package are named Personal Agent Workbench; changing the
 stored paths or bundle identities requires a separate migration and is not part
 of a source-repository rename.
 
-## Requirements
+## Source Build Requirements
 
 - macOS 14 or newer on Apple Silicon;
 - Python 3.12 or newer;

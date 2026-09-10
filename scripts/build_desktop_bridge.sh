@@ -9,6 +9,12 @@ MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 ACTION="${1:-build}"
 CODESIGN_IDENTITY="${RAG_IME_CODESIGN_IDENTITY:--}"
+source "$ROOT/scripts/support/prebuilt_product.sh"
+if paw_prebuilt_identity; then
+  [[ "$ACTION" == "install" ]] || { echo "prebuilt payload supports install only" >&2; exit 2; }
+  APP="$PAW_BINARY_PAYLOAD/apps/RagImeDesktopBridge.app"
+  codesign --verify --deep --strict "$APP"
+else
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 SOURCE_DIRTY="false"
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]]; then
@@ -78,6 +84,8 @@ if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
     "$APP" >/dev/null
 else
   codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP" >/dev/null
+fi
+
 fi
 
 if [[ "$ACTION" == "install" ]]; then
