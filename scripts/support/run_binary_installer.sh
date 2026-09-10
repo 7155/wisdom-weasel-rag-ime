@@ -7,7 +7,7 @@ umask 077
 BASE="$HOME/Library/Application Support/RagIme/InstallerGenerations"
 LOGS="$HOME/Library/Logs/PAW Installer"
 mkdir -p "$BASE" "$LOGS"
-GENERATION="$(mktemp -d "$BASE/alpha3.XXXXXX")"
+GENERATION="$(mktemp -d "$BASE/install.XXXXXX")"
 LOG="$LOGS/$(basename "$GENERATION").log"
 exec > >(tee -a "$LOG") 2>&1
 echo "安装日志：$LOG"

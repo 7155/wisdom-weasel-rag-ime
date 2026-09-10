@@ -104,7 +104,10 @@ def main() -> None:
             shutil.copy2(path, target)
     # Public metadata must not expose the packager's local checkout path.
     pi['source']['productRepository'] = 'https://github.com/7155/personal-agent-workbench.git'
-    pi['runtimeVersion'] += '-offline1'
+    # A UI-only product update can reuse identical Pi code. Give its changed
+    # product provenance a separate generation rather than colliding with the
+    # previously accepted manifest at the same runtime directory.
+    pi['runtimeVersion'] += f'-offline-{commit[:8]}'
     pi_manifest_path.write_text(json.dumps(pi, indent=2) + '\n')
     run('/usr/bin/ditto', args.python, payload / 'python')
     # These development convenience scripts carry the build machine's Python
