@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-10T10:30:44.187073+00:00",
+  "generatedAt": "2026-09-10T10:35:01.744141+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -107,19 +107,19 @@
     },
     "conversation_controls": {
       "description": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery.",
-      "pathCount": 27
+      "pathCount": 28
     }
   },
   "summary": {
-    "pathCount": 666,
+    "pathCount": 667,
     "dispositionCounts": {
       "delete_old_implementation": 185,
-      "keep_release": 481
+      "keep_release": 482
     },
     "groupCounts": {
       "brand_stellar": 39,
       "composition_refactor": 8,
-      "conversation_controls": 27,
+      "conversation_controls": 28,
       "lab_backend": 62,
       "lab_tools": 8,
       "local_docs": 122,
@@ -1492,6 +1492,13 @@
     },
     {
       "path": "control-center-web/src/features/rooms/composer/RoomComposer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/rooms.css",
       "status": "modified",
       "disposition": "keep_release",
       "group": "conversation_controls",

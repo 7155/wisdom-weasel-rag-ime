@@ -64,6 +64,7 @@ export function RoomCapabilityControls({ participants, aliases = {}, busy, disab
   if (!selected) return null;
   return <>
     <Select
+      className="room-composer__partner-picker"
       aria-label="选择要设置记忆和插件的伙伴"
       value={selected.id}
       options={active.map((participant) => ({ value: participant.id, label: aliases[participant.id] ?? roomParticipantPlanetName(participant) }))}
