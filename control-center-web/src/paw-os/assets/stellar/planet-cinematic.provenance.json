@@ -1,0 +1,17 @@
+{
+  "schema": "paw.stellar-cinematic-planet.v1",
+  "source": "built-in image_gen",
+  "generatedSource": "exec-8f89e483-91ed-47c7-8092-50de9acb2802.png",
+  "direction": "Cinematic ultramarine gas giant; detailed turbulent clouds and two cyclonic storms; strong upper-left sunlight, dark navy hemisphere, icy atmospheric rim and fine champagne/silver icy rings. Landscape 3:2 composition on pure black, with all ring ends visible. No lettering or additional planets.",
+  "export": "The WebGL material exported a static premultiplied composite at time zero. For black-backed input, alpha is the maximum RGB channel, with an opaque interior globe; preserve the original RGB in premultiplied output to avoid dark edge contamination. The PNG is the static fallback and the live material input.",
+  "dimensions": {
+    "width": 960,
+    "height": 640
+  },
+  "hasAlpha": true,
+  "sha256": "cd1931fea8a686e733319f53085eed7e9ab93baa1400c9e2a6035baf20b8ae8e",
+  "motion": "Bounded longitude advection of the visible cloud surface. The single-view asset does not reconstruct a full 360-degree rotation. The ring/silhouette and baked light remain fixed.",
+  "relatedSource": "../../shell/stellar-planet-material.ts",
+  "moon": "The desktop moon reuses /paw-media/starfield/moon-512.jpg; its attribution is in public/paw-media/starfield/ATTRIBUTION.md.",
+  "supersedes": "The procedural satin globe and two rejected macOS image-generation studies are not shipped."
+}
