@@ -1,0 +1,24 @@
+name: Memory lifecycle source review
+on:
+  push:
+    branches: [codex/memory-lifecycle-20260911]
+    paths: [.github/workflows/memory-lifecycle-source-review.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b42db02b8202ccc4b58c0ee36f490fe2c5d57e1f
+          persist-credentials: false
+      - name: Archive only tracked source at the reviewed base
+        run: git archive --format=tar.gz --output=paw-base-b42db02.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paw-memory-review-base-b42db02
+          path: paw-base-b42db02.tar.gz
+          retention-days: 1
+          if-no-files-found: error
