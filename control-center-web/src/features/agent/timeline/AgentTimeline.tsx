@@ -1122,7 +1122,11 @@ export const AgentTurn = memo(function AgentTurn({
   const retainedResults = assistantMessages.some((message) => (
     message.blocks.some((block) => block.type === 'file' || block.type === 'artifact' || block.type === 'diff')
   ));
-  const safeContinuation = runtimeInterrupted || networkInterrupted || retryExhausted;
+  // A failed latest turn is resumable from the retained Session state. The
+  // continuation prompt is a new user turn; it does not replay the failed
+  // request. Restricting this to a few classified failure kinds left generic
+  // Trace/Provider failures with a misleading “重试本轮” action.
+  const safeContinuation = turn.status === 'failed' && latestTurnId === turnId && Boolean(onContinueTurn);
   const failureTitle = runtimeInterrupted
     ? '运行时中断'
     : networkInterrupted

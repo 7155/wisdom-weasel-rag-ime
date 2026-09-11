@@ -1,4 +1,5 @@
 import { MarkdownBody } from '@/features/agent/timeline/MarkdownRenderer';
+import { Play } from 'lucide-react';
 import { useConversationSurface } from '../ConversationSurfaceContext';
 import type { AssistantMessage } from '../model/types';
 import { MessageActions } from './MessageActions';
@@ -59,7 +60,8 @@ export function AssistantTurn({ message }: { message: AssistantMessage }) {
       {footer ? <div className="ccui-assistant-host-footer">{footer}</div> : null}
       <div className="ccui-assistant-footer">
         <MessageActions
-          retryLabel="再试一次"
+          retryLabel="继续"
+          retryIcon={<Play aria-hidden="true" size={12} />}
           retryPending={Boolean(surface.retryPending)}
           text={copyText}
           {...(capabilities.copy && copyText ? { onCopy: () => undefined } : {})}

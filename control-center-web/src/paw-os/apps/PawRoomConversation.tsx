@@ -41,6 +41,7 @@ export function PawRoomConversation({
   onApprovalDecision,
   onOpenProcessActivity,
   onRetryTurn,
+  onContinueTurn,
   participantId,
   projection,
   readOnly = false,
@@ -52,6 +53,8 @@ export function PawRoomConversation({
   /** Only a mount that owns the Room composer can resend a failed request; a
    *  planet observer reads the same history without offering retry. */
   onRetryTurn?: (message: string, rootId: string) => void;
+  /** Continue is a new Room prompt that uses the retained Room context. */
+  onContinueTurn?: (rootId: string) => void;
   /** Restrict the transcript to one partner's public lane (planet view). */
   participantId?: string;
   projection: RoomProjectionState;
@@ -132,10 +135,10 @@ export function PawRoomConversation({
     messages: transcript.messages,
     phase: transcript.phase,
     capabilities: {
-      /* A Room turn is retried by resending its request, so retry is the one
-       * conversation-level action Runtime backs here. Fork, rewind and
+      /* Executed failed Room turns continue from retained context. Retry is a
+       * compatibility fallback for callers without Continue. Fork, rewind and
        * message edit belong to a Session, not to shared Room history. */
-      retry: Boolean(onRetryTurn) && !readOnly,
+      retry: Boolean(onRetryTurn || onContinueTurn) && !readOnly,
       edit: false,
       fork: false,
       rewind: false,
@@ -143,20 +146,24 @@ export function PawRoomConversation({
       copy: true,
     },
     canRetry: (message: AssistantMessage) => Boolean(
-      !readOnly && onRetryTurn && message.error && message.turnId && roomTranscriptRetrySource(projection, message.turnId),
+      !readOnly && (onRetryTurn || onContinueTurn) && message.error && message.turnId && roomTranscriptRetrySource(projection, message.turnId),
     ),
     retry: (message: AssistantMessage) => {
       if (readOnly) return;
       const source = message.turnId ? roomTranscriptRetrySource(projection, message.turnId) : undefined;
-      if (source) onRetryTurn?.(source.text, source.rootId);
+      if (source) {
+        if (onContinueTurn) onContinueTurn(source.rootId);
+        else onRetryTurn?.(source.text, source.rootId);
+      }
     },
-    retryPending: !readOnly && Boolean(retryingTurn),
+      retryPending: !readOnly && Boolean(retryingTurn),
     renderBlockDetail,
     renderBlockAction,
     readOnly,
     formatTimestamp: conversationClock,
   }), [
     onRetryTurn,
+    onContinueTurn,
     participantId,
     projection,
     renderBlockAction,

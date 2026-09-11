@@ -23,6 +23,22 @@ import type { AgentBackgroundJobV1 } from './generated/agent-background-job.v1';
 import type { AgentLifecycleCancellationAuditV1 } from './generated/agent-lifecycle-cancellation-audit.v1';
 
 describe('AgentEventReducer', () => {
+  it('keeps a failed provider attempt running while a snapshot says Pi is retrying', () => {
+    const snapshot = {
+      messages: [{ ...serverMessage('attempt', 'assistant', 'turn-1', 'overloaded'), status: 'failed' }],
+      liveEvents: [agentEvent(1, 'status_changed', {
+        status: 'retrying', phase: 'provider_retry', activityState: 'running',
+        summary: '正在自动重试', attempt: 7, maxAttempts: 7,
+      })],
+      status: 'busy', partial: true, runtimeQuiescent: false,
+      lastSequence: 1, resumeToken: 'session-1:1',
+    };
+    const running = applyAgentSnapshot(createAgentProjection('session-1'), snapshot);
+    expect(running.turnsById['turn-1'].status).toBe('running');
+    const settled = applyAgentSnapshot(running, { ...snapshot, status: 'failed', runtimeQuiescent: true });
+    expect(settled.turnsById['turn-1'].status).toBe('failed');
+  });
+
   it('does not mark a settled user-only snapshot as a completed turn', () => {
     const state = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [

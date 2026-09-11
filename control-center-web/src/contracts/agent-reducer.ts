@@ -2411,7 +2411,18 @@ function reconcileSnapshotTurnStatuses(
     const statuses = new Set(messages
       .filter((message) => message.role !== 'assistant' || message === latestAssistant)
       .map((message) => message.status));
-    if (statuses.has('failed')) turn.status = 'failed';
+    const retryActive = turn.activityIds.some((id) => {
+      const activity = state.activitiesById[id];
+      return activity?.kind === 'status_changed'
+        && activity.payload.phase === 'provider_retry'
+        && activity.status === 'running';
+    });
+    const terminalFailure = turn.activityIds.some((id) => state.activitiesById[id]?.kind === 'turn_failed');
+    if (retryActive && !terminalFailure && runtimeStatus === 'running') {
+      turn.status = 'running';
+      delete turn.failure;
+    }
+    else if (statuses.has('failed')) turn.status = 'failed';
     else if (statuses.has('streaming')) turn.status = 'running';
     else if (statuses.has('queued')) {
       turn.status = messages.some((message) => (

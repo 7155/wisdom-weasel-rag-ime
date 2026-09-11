@@ -135,7 +135,11 @@ export function createPreviewTransport(): MockControlTransport {
   let nextTerminalId = 1;
   let previewTerminals: Record<string, unknown>[] = [];
   const previewTerminalOutput = new Map<string, string>();
-  let previewKnowledgeBases = [previewKnowledgeBase()];
+  // Keep the preview aligned with the two corpora used in the Knowledge
+  // acceptance pass. These are local fixtures: they make the library switcher
+  // exercise the same multi-base path as the real service without pretending
+  // that an external Google Earth or paper service is connected.
+  let previewKnowledgeBases = previewKnowledgeBasesFixture();
   const previewKnowledgeDocuments: Record<string, unknown>[] = [{
     id: 'file:preview-yuxi',
     baseId: 'kb:preview-project-docs',
@@ -148,6 +152,30 @@ export function createPreviewTransport(): MockControlTransport {
     parserProvider: 'builtin',
     revision: 1,
     updatedAtMs: Date.now() - 180_000,
+  }, {
+    id: 'file:preview-google-earth',
+    baseId: 'kb:preview-google-earth',
+    fileName: 'Google Earth 地理资料.md',
+    mimeType: 'text/markdown',
+    byteSize: 72_640,
+    status: 'ready',
+    stage: 'ready',
+    chunkCount: 28,
+    parserProvider: 'builtin',
+    revision: 1,
+    updatedAtMs: Date.now() - 210_000,
+  }, {
+    id: 'file:preview-reinforcement-learning',
+    baseId: 'kb:preview-reinforcement-learning',
+    fileName: '强化学习论文测试集.md',
+    mimeType: 'text/markdown',
+    byteSize: 94_208,
+    status: 'ready',
+    stage: 'ready',
+    chunkCount: 64,
+    parserProvider: 'builtin',
+    revision: 1,
+    updatedAtMs: Date.now() - 240_000,
   }];
   let previewKnowledgeJobs: Record<string, unknown>[] = [];
   let previewTransport: MockControlTransport | undefined;
@@ -2499,6 +2527,36 @@ function previewKnowledgeBase(): Record<string, unknown> {
   };
 }
 
+function previewKnowledgeBasesFixture(): Record<string, unknown>[] {
+  return [
+    previewKnowledgeBase(),
+    {
+      id: 'kb:preview-google-earth',
+      name: '谷歌地球资料库',
+      description: 'Google Earth 地理、遥感与地图资料测试库。',
+      documentCount: 1,
+      chunkCount: 28,
+      status: 'ready',
+      agentEnabled: true,
+      parserMode: 'auto',
+      revision: 1,
+      updatedAtMs: Date.now() - 210_000,
+    },
+    {
+      id: 'kb:preview-reinforcement-learning',
+      name: '强化学习论文测试库',
+      description: '用于检索、阅读和核对强化学习论文的测试资料库。',
+      documentCount: 1,
+      chunkCount: 64,
+      status: 'ready',
+      agentEnabled: true,
+      parserMode: 'auto',
+      revision: 1,
+      updatedAtMs: Date.now() - 240_000,
+    },
+  ];
+}
+
 function previewWorkflowState(sessionId: string): AgentWorkflowStateV1 {
   const now = Date.now();
   return {
@@ -2871,6 +2929,24 @@ function previewInstalledExtensionItems(): Record<string, unknown>[] {
     rollbackAvailable: true,
     resources: { extensions: ['extensions/timeline-inspector.ts'], skills: [], prompts: [], themes: [] },
     source: { kind: 'bundled', requested: 'timeline-inspector', resolved: 'timeline-inspector@1.0.0' },
+  }, {
+    // The source-isolated Extension App is present in the checkout and its
+    // Pi package is bundled by the managed-runtime builder. Keep the preview
+    // activation inventory in sync so Launchpad/App Center can discover it.
+    id: '@paw/zhanggui-wenshu',
+    displayName: '掌柜问数',
+    description: '对经营数据提问、对账并解释差异',
+    version: '0.2.0',
+    enabled: true,
+    installed: true,
+    rollbackAvailable: false,
+    resources: {
+      extensions: [],
+      skills: ['skills/zhanggui-wenshu/SKILL.md'],
+      prompts: [],
+      themes: [],
+    },
+    source: { kind: 'bundled', requested: '@paw/zhanggui-wenshu', resolved: '@paw/zhanggui-wenshu@0.2.0' },
   }];
 }
 

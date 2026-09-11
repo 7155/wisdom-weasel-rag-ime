@@ -15,12 +15,14 @@ function TraceRouteBridge({ initialRoute }: { initialRoute: string }) {
   const previousInitialRoute = useRef(initialRoute);
   const route = `${location.pathname}${location.search}${location.hash}`;
   useEffect(() => {
+    // `initialRoute` is the desktop-owned handoff boundary. Once the Trace
+    // window is mounted, its MemoryRouter owns tab/report navigation. Sending
+    // every internal `?view=` change back through the desktop reopened the
+    // same window and dropped the route before the page could render.
     if (previousInitialRoute.current !== initialRoute) {
       previousInitialRoute.current = initialRoute;
       if (route !== initialRoute) navigate(initialRoute, { replace: true });
-      return;
     }
-    if (route !== initialRoute) openPawOsRoute(desktop, route);
-  }, [desktop, initialRoute, navigate, route]);
+  }, [initialRoute, navigate, route]);
   return null;
 }

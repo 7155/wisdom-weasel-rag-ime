@@ -548,7 +548,9 @@
   display: grid;
   min-width: 0;
   gap: 8px;
-  padding: 13px 14px 12px;
+  padding: 17px 18px 15px;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-text) 5%, transparent);
   border-block: 1px solid var(--color-border);
   background: color-mix(in srgb, var(--color-surface-subtle) 66%, transparent);
 }
@@ -610,7 +612,7 @@
 .activity-day-map__track-line {
   position: relative;
   min-width: 0;
-  height: 18px;
+  height: 22px;
   border-radius: 999px;
   background-color: color-mix(in srgb, var(--color-border) 48%, transparent);
   background-image: linear-gradient(to right, transparent calc(25% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(25% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(25% + .5px), transparent calc(25% + .5px), transparent calc(50% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(50% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(50% + .5px), transparent calc(50% + .5px), transparent calc(75% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(75% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(75% + .5px), transparent calc(75% + .5px));
@@ -619,8 +621,8 @@
 .activity-day-map__track-line > button {
   position: absolute;
   z-index: 1;
-  top: 3px;
-  bottom: 3px;
+  top: 4px;
+  bottom: 4px;
   min-width: 7px;
   padding: 0;
   border: 0;
@@ -659,7 +661,7 @@
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: 36px;
+  min-height: 42px;
   align-items: center;
   padding: 7px 2px;
   border: 0;

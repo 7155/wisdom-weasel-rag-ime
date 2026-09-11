@@ -69,6 +69,8 @@
 .paw-agent-project-folder__summary svg { flex: 0 0 auto; color: var(--paw-accent); }
 .paw-agent-project-folder__summary strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
 .paw-agent-project-folder__summary small { margin-left: auto; color: var(--paw-muted); font-size: 12px; white-space: nowrap; }
+.paw-agent-project-folder--trace > summary { border-color: color-mix(in srgb, var(--paw-accent) 36%, var(--paw-line)); background: color-mix(in srgb, var(--paw-accent) 8%, var(--paw-panel)); }
+.paw-agent-project-folder--trace .paw-agent-project-folder__summary svg { color: var(--paw-accent); }
 .paw-agent-project-folder__contents { padding-top: 3px; }
 .paw-agent-project-folder .paw-agent-group > header { font-size: 12px; line-height: 1.2; }
 .paw-agent-group { display: grid; gap: 2px; margin-bottom: 12px; }

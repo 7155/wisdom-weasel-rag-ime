@@ -2544,6 +2544,15 @@ async function settleBeforeDeadline<T>(
 
 function latestActiveTurnId(projection?: AgentProjectionState): string {
   if (!projection) return '';
+  // A rejected follow-up is not a terminal fence for Pi's ongoing retry.
+  if (projection.status === 'retrying') {
+    for (const id of [...projection.activityOrder].reverse()) {
+      const activity = projection.activitiesById[id];
+      if (activity?.payload.phase === 'provider_retry' && activity.status === 'running'
+        && projection.turnsById[activity.turnId]?.status === 'running') return activity.turnId;
+    }
+  }
+
   // The newest visible turn owns retry, stop, and model-change availability.
   // A stale older streaming flag must not revive after a later terminal turn.
   for (let index = projection.turnOrder.length - 1; index >= 0; index -= 1) {

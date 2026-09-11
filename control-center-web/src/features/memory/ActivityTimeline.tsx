@@ -1005,7 +1005,7 @@ function ActivityDayMap({
           <Clock3 aria-hidden="true" size={15} />
           <strong>一天的活动分布</strong>
         </div>
-        <span>{tasks.length} 项活动 · 点击轨道查看详情</span>
+        <span>{tasks.length} 项活动 · Asia/Shanghai · 点击轨道查看详情</span>
       </header>
       <div className="activity-day-map__axis" aria-hidden="true">
         {[0, 6, 12, 18, 24].map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}
@@ -1018,7 +1018,7 @@ function ActivityDayMap({
               {lane.tasks.map((task) => {
                 const marker = densityMarker(task, bounds);
                 const unclassified = task.activityKind === 'unclassified_activity';
-                const label = densityActivityLabel(task, unclassified);
+            const label = densityActivityLabel(task, unclassified, date);
                 return (
                   <button
                     aria-label={label}
@@ -1040,7 +1040,7 @@ function ActivityDayMap({
         {tasks.map((task) => (
           <li key={task.id}>
             <button aria-label={densityActivityLabel(task, task.activityKind === 'unclassified_activity')} onClick={() => onSelect(task.id)} type="button">
-              <time>{task.activityKind === 'unclassified_activity' ? '待归类' : formatTimeRange(task.startMs, task.endMs)}</time>
+              <time>{task.activityKind === 'unclassified_activity' ? '待归类' : displayTimeRange(task, date)}</time>
               <strong>{task.title}</strong>
               <span>{activitySummaryMeta(task)}</span>
               <ChevronRight aria-hidden="true" size={14} />
@@ -1077,9 +1077,16 @@ function densityMarker(
   return { left: start, width: Math.max(0.65, Math.min(end - start, 100 - start)) };
 }
 
-function densityActivityLabel(task: SemanticTimelineTask, unclassified: boolean): string {
-  const time = unclassified ? '时间未归类' : formatTimeRange(task.startMs, task.endMs);
+function densityActivityLabel(task: SemanticTimelineTask, unclassified: boolean, date?: string): string {
+  const time = unclassified ? '时间未归类' : displayTimeRange(task, date);
   return `查看活动：${task.title}，${time}，${task.evidenceCount} 条来源`;
+}
+
+function displayTimeRange(task: SemanticTimelineTask, date?: string): string {
+  const range = formatTimeRange(task.startMs, task.endMs);
+  if (!date || !task.startMs) return range;
+  const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date(task.startMs));
+  return localDate === date ? range : `${localDate} ${range}`;
 }
 
 function activitySummaryMeta(task: SemanticTimelineTask): string {

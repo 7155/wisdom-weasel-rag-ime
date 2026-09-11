@@ -290,4 +290,31 @@ describe('RoomComposer macOS input methods', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenCalledWith('补充发布边界');
   });
+  it('uses Continue for an admitted failed Room turn when the draft is empty', () => {
+    const onContinue = vi.fn();
+    render(
+      <TooltipProvider>
+        <RoomComposer
+          room={{ id: 'room-continue', status: 'active', participants: [] }}
+          personas={[]}
+          draft=""
+          attachments={[]}
+          sending={false}
+          continuationAvailable
+          onContinue={onContinue}
+          onDraftChange={vi.fn()}
+          onAttachmentsChange={vi.fn()}
+          onPasteImages={vi.fn()}
+          onPasteFromClipboard={vi.fn()}
+          onPickAttachments={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+
+    const button = screen.getByRole('button', { name: '继续当前 Room 协作' });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(onContinue).toHaveBeenCalledTimes(1);
+  });
 });

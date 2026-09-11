@@ -100,3 +100,17 @@
 .agent-composer__memory-picker { white-space: nowrap; }
 .agent-composer__memory-picker[data-memory-enabled='true'] { color: var(--color-success); }
 .agent-tool-picker__manage { flex: none; align-self: flex-start; margin: 0 12px 10px; }
+
+.agent-tool-picker__categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 12px;
+}
+.agent-tool-picker__category {
+  flex: 0 0 auto;
+}
+.agent-tool-picker__category[aria-pressed='true'] {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}

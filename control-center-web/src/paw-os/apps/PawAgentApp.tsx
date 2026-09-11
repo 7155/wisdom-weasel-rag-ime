@@ -548,7 +548,7 @@ function ProjectFolder({
   const total = group.sessions.length + group.rooms.length;
   return (
     <Disclosure
-      className="paw-agent-project-folder"
+      className={`paw-agent-project-folder${group.key === '__trace-agent__' ? ' paw-agent-project-folder--trace' : ''}`}
       defaultOpen
       onOpenChange={setOpen}
       summary={(
@@ -698,11 +698,15 @@ function projectWorkGroups(
   const groups = new Map<string, ProjectWorkGroup>();
   const add = (item: SessionSummary | RoomSummary, kind: 'session' | 'room') => {
     const roots = workspaceBindingRoots(item.workspaceRoots);
-    const key = roots.length ? roots.join('\u001f') : '__unbound__';
+    // Trace diagnostics are Agent sessions technically, but they are a
+    // separate work stream. Keeping them in their own folder prevents a
+    // diagnostic conversation from hiding among ordinary project chats.
+    const traceConversation = kind === 'session' && isTraceConversation(item as SessionSummary);
+    const key = traceConversation ? '__trace-agent__' : roots.length ? roots.join('\u001f') : '__unbound__';
     const group = groups.get(key) ?? {
       key,
-      label: roots.length ? pathName(roots[0]) : '未绑定项目',
-      roots,
+      label: traceConversation ? 'Trace Agent 对话' : roots.length ? pathName(roots[0]) : '未绑定项目',
+      roots: traceConversation ? [] : roots,
       sessions: [],
       rooms: [],
     };
@@ -713,6 +717,11 @@ function projectWorkGroups(
   sessions.forEach((session) => add(session, 'session'));
   rooms.forEach((room) => add(room, 'room'));
   return [...groups.values()];
+}
+
+function isTraceConversation(session: SessionSummary): boolean {
+  const owner = `${session.ownerAppId ?? ''} ${session.surfaceKey ?? ''}`.toLocaleLowerCase();
+  return owner.includes('trace-agent') || owner.includes('trace_agent') || owner.includes('traceagent');
 }
 
 function workspaceBindingRoots(roots: readonly string[] | undefined): string[] {

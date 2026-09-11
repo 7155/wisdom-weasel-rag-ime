@@ -404,6 +404,16 @@
   cursor: not-allowed;
 }
 
+/* A failed, already-admitted Room turn is resumed from retained context. */
+.room-composer__send--continue:not(:disabled) {
+  background: var(--color-success, #36b37e);
+  color: #fff;
+}
+
+.room-composer__send--continue:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-success, #36b37e) 86%, #17202b);
+}
+
 /* ----------------------------------------------------- status side pane -- */
 
 .agent-status-panel,

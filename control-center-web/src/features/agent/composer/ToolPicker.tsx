@@ -101,35 +101,13 @@ export function ToolPicker({
 
   return (
     <>
-      {memory ? (
-        <Button
-          aria-label={`当前对话记忆${memoryEnabled ? '已开启' : '已关闭'}，打开记忆开关`}
-          className="agent-composer__picker agent-composer__memory-picker"
-          data-memory-enabled={memoryEnabled}
-          disabled={disabled || status !== 'ready'}
-          leadingIcon={<BrainCircuit size={15} />}
-          onClick={() => { setSection('tools'); setQuery('记忆'); setOpen(true); }}
-          size="small"
-          title={`当前对话记忆${memoryEnabled ? '已开启' : '已关闭'} · ${capabilityScopeLabel(memory.effectiveScope)}；更改从下一轮生效`}
-          variant="quiet"
-        >记忆 · {memoryEnabled ? '开' : '关'}</Button>
-      ) : null}
-      <Button
-        aria-label="当前对话插件与技能"
-        className="agent-composer__picker"
-        disabled={disabled || status !== 'ready'}
-        leadingIcon={<Puzzle size={15} />}
-        onClick={() => { setSection('plugins'); setQuery(''); setOpen(true); }}
-        size="small"
-        variant="quiet"
-      >插件 · {status === 'ready' ? `${enabledPlugins}/${plugins.length}` : '加载中'}</Button>
     <Popover open={open && catalogMatchesSession} onOpenChange={(nextOpen) => {
       setOpen(nextOpen);
       if (nextOpen) { setSection('tools'); setQuery(''); }
     }}>
       <PopoverTrigger asChild>
         <Button
-          aria-label={label}
+          aria-label={`对话功能：记忆、工具、插件与技能；${label}`}
           className="agent-composer__picker"
           data-effective-tool-count={availableCount}
           data-registered-tool-count={registeredCount}
@@ -137,10 +115,10 @@ export function ToolPicker({
           size="small"
           title={label}
           variant="quiet"
-          disabled={status !== 'ready' || !tools.length || disabled}
+          disabled={status !== 'ready' || disabled}
           leadingIcon={<CapabilityMark size={16} />}
         >
-          <span className="agent-composer__picker-text">工具</span>
+          <span className="agent-composer__picker-text">功能</span>
           <span className="agent-composer__picker-detail">{detail}</span>
         </Button>
       </PopoverTrigger>
@@ -167,6 +145,40 @@ export function ToolPicker({
             <X aria-hidden="true" size={18} />
           </button>
         </header>
+        <div className="agent-tool-picker__categories" role="group" aria-label="对话功能分类">
+          <Button
+            aria-pressed={section === 'tools' && query !== '记忆'}
+            className="agent-tool-picker__category"
+            leadingIcon={<CapabilityMark size={16} />}
+            onClick={() => { setSection('tools'); setQuery(''); }}
+            size="small"
+            variant="quiet"
+          >工具 · {availableCount}/{registeredCount}</Button>
+      {memory ? (
+        <Button
+          aria-label={`当前对话记忆${memoryEnabled ? '已开启' : '已关闭'}，打开记忆开关`}
+          className="agent-tool-picker__category"
+          aria-pressed={section === 'tools' && query === '记忆'}
+          data-memory-enabled={memoryEnabled}
+          disabled={disabled || status !== 'ready'}
+          leadingIcon={<BrainCircuit size={15} />}
+          onClick={() => { setSection('tools'); setQuery('记忆'); setOpen(true); }}
+          size="small"
+          title={`当前对话记忆${memoryEnabled ? '已开启' : '已关闭'} · ${capabilityScopeLabel(memory.effectiveScope)}；更改从下一轮生效`}
+          variant="quiet"
+        >记忆 · {memoryEnabled ? '开' : '关'}</Button>
+      ) : null}
+      <Button
+        aria-label="当前对话插件与技能"
+        aria-pressed={section === 'plugins'}
+        className="agent-tool-picker__category"
+        disabled={disabled || status !== 'ready'}
+        leadingIcon={<Puzzle size={15} />}
+        onClick={() => { setSection('plugins'); setQuery(''); setOpen(true); }}
+        size="small"
+        variant="quiet"
+      >插件 · {status === 'ready' ? `${enabledPlugins}/${plugins.length}` : '加载中'}</Button>
+        </div>
         <div className="agent-tool-picker__search">
           <Search aria-hidden="true" size={16} />
           <Input

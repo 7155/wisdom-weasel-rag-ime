@@ -166,11 +166,17 @@ describe('AgentComposer macOS input methods', () => {
       </TooltipProvider>,
     );
 
-    const trigger = screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：1 个' });
+    const trigger = screen.getByRole('button', { name: '对话功能：记忆、工具、插件与技能；这段对话可执行工具：1 个；已登记工具：1 个' });
+    expect(trigger).toHaveTextContent('功能');
+    expect(screen.queryByRole('button', { name: '当前对话插件与技能' })).not.toBeInTheDocument();
     fireEvent.click(trigger);
     const dialog = screen.getByRole('dialog', { name: '当前对话工具' });
     expect(within(dialog).getByRole('combobox', { name: '规划与任务的当前对话使用' })).toBeInTheDocument();
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(within(dialog).getByRole('button', { name: '当前对话插件与技能' }));
+    expect(screen.getByRole('dialog', { name: '当前对话插件与技能' })).toHaveTextContent('没有找到插件或技能');
+    fireEvent.click(screen.getByRole('button', { name: '工具 · 1/1' }));
+    expect(screen.getByRole('dialog', { name: '当前对话工具' })).toHaveTextContent('规划与任务');
     fireEvent.click(within(dialog).getByRole('button', { name: '关闭当前对话工具' }));
     expect(screen.queryByRole('dialog', { name: '当前对话工具' })).not.toBeInTheDocument();
     expect(trigger).toHaveAttribute('aria-expanded', 'false');

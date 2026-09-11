@@ -146,6 +146,12 @@ export function publicAgentErrorText(
   if (memoryBootstrapFailureCodePattern.test(errorCode) || memoryBootstrapBudgetPattern.test(message)) {
     return MEMORY_BOOTSTRAP_SKIPPED_TEXT;
   }
+  if (/(?:servers?.*overloaded|model.*at capacity|overloaded_error)/i.test(message)) {
+    return '模型服务当前繁忙。自动重试结束后可稍后继续，或停止本轮后切换模型。';
+  }
+  if (isAgentTurnConflict(value)) {
+    return '当前对话仍在处理或自动重试，输入已保留。请等待本轮结束，或先停止本轮。';
+  }
   if (modelQuotaPattern.test(message)) {
     return MODEL_QUOTA_EXHAUSTED_TEXT;
   }

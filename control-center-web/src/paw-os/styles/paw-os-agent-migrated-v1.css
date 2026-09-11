@@ -30,6 +30,29 @@
   grid-template-rows: 48px minmax(0, 1fr);
 }
 
+/* The Session conversation owns a deliberately separate paper palette. The
+   old light constants here otherwise win over the global night-mode tokens,
+   producing a white panel with near-white assistant text (the Trace failure
+   screenshot). Keep the same hierarchy while changing only its surfaces. */
+:root[data-theme='dark'] .paw-desktop-root .paw-session-workspace,
+:root[data-theme='dark'] .paw-desktop-root .paw-window-titlebar[data-window-chrome='agent-session']:has(.paw-session-workspace__header) {
+  --paw-chat-surface: #171d2b;
+  --paw-chat-surface-subtle: #20283a;
+  --paw-chat-surface-hover: rgb(255 255 255 / 8%);
+  --paw-chat-user-bubble: #26385d;
+  --paw-chat-text: #f0f4ff;
+  --paw-chat-text-secondary: #c2cbe0;
+  --paw-chat-text-tertiary: #91a0bd;
+  --paw-chat-icon: #aab8d0;
+  --paw-chat-border: #3a4862;
+  --paw-chat-border-translucent: rgb(255 255 255 / 14%);
+  --paw-chat-accent: #78a7ff;
+  --paw-chat-ok: #6bd69b;
+  --paw-chat-warn: #f0bd69;
+  --paw-chat-violet: #d39aef;
+  --paw-chat-danger: #ff9292;
+}
+
 /* The Agent window already owns its identity in the shared titlebar. The
    Session rail is an opaque navigation surface; individual rows carry only
    information that distinguishes one record from another. */
@@ -786,6 +809,14 @@
 .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__send:active:not(:disabled) {
   background: color-mix(in srgb, var(--paw-chat-accent) 80%, #18202b);
   transform: scale(.94);
+}
+
+.paw-desktop-root .paw-room-workspace__composer .room-composer__send--continue:not(:disabled) {
+  background: var(--paw-chat-success, #36b37e);
+}
+
+.paw-desktop-root .paw-room-workspace__composer .room-composer__send--continue:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--paw-chat-success, #36b37e) 86%, #18202b);
 }
 
 :root[data-reduce-motion='true'] .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer__send:not(:disabled) {

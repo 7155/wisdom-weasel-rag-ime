@@ -903,7 +903,7 @@ export function PawSessionWorkspace({
   function continueTurn(turnId: string): boolean {
     const current = agentProjection(recordId);
     if (current.turnOrder.at(-1) !== turnId || current.turnsById[turnId]?.status !== 'failed') return false;
-    void send('prompt', '继续完成上一轮。请基于当前 Session 已保留的工具结果和文件生成最终回复，不要重复已经完成的操作。');
+    void send('prompt', '继续。请基于当前 Session 已保留的工具结果和文件生成最终回复，不要重试或重复已经完成的操作；如果仍缺少信息，明确说明下一步。');
     return true;
   }
 
@@ -1686,6 +1686,15 @@ function timelineOwnsTurnFailure(
 
 function latestActiveTurnId(projection?: AgentProjectionState): string {
   if (!projection) return '';
+  // A rejected follow-up is not a terminal fence for Pi's ongoing retry.
+  if (projection.status === 'retrying') {
+    for (const id of [...projection.activityOrder].reverse()) {
+      const activity = projection.activitiesById[id];
+      if (activity?.payload.phase === 'provider_retry' && activity.status === 'running'
+        && projection.turnsById[activity.turnId]?.status === 'running') return activity.turnId;
+    }
+  }
+
   /* The newest visible turn is a terminal fence. An older turn can retain a
      stale running flag after recovery, but it must never revive the composer,
      stop button or planet once a later turn has completed. Keep this aligned

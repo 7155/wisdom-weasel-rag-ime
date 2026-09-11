@@ -1,4 +1,4 @@
-import { AtSign, ListPlus, Plus, Send } from 'lucide-react';
+import { AtSign, ListPlus, Play, Plus, Send } from 'lucide-react';
 import {
   startTransition,
   useCallback,
@@ -55,6 +55,8 @@ export function RoomComposer({
   onDraftChange,
   onQueue,
   onSend,
+  continuationAvailable = false,
+  onContinue,
   onAttachmentsChange,
   onPasteImages,
   onPasteFromClipboard,
@@ -81,6 +83,9 @@ export function RoomComposer({
   onPasteFromClipboard: () => void;
   onPickAttachments: () => void;
   onSend: (value: string) => void | boolean | Promise<boolean>;
+  /** Continue an already-started failed turn using its retained Room context. */
+  continuationAvailable?: boolean;
+  onContinue?: () => void;
   capabilityControls?: ReactNode;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -104,6 +109,15 @@ export function RoomComposer({
   const canSend = Boolean(
     roomCanSend
     && (pendingAnswerMode ? composerDraft.trim() : composerDraft.trim() || attachments.length)
+    && !sending,
+  );
+  const canContinue = Boolean(
+    continuationAvailable
+    && onContinue
+    && roomCanSend
+    && !pendingAnswerMode
+    && !composerDraft.trim()
+    && attachments.length === 0
     && !sending,
   );
   /* Queueing is offered only where it is the real alternative to steering: a
@@ -406,17 +420,19 @@ export function RoomComposer({
               tooltip
             /> : null}
           <IconButton
-            className="agent-composer__send room-composer__send"
-            label={pendingAnswerMode
+            className={`agent-composer__send room-composer__send${canContinue ? ' room-composer__send--continue' : ''}`}
+            label={canContinue
+              ? '继续当前 Room 协作'
+              : pendingAnswerMode
               ? '发送问题回答'
               : taskBusyState === 'blocked'
                 ? '告诉伙伴怎样继续'
                 : taskBusyState
                   ? '立即干预当前回合'
                   : '发送消息'}
-            icon={<Send size={18} />}
-            disabled={!canSend}
-            onClick={submit}
+            icon={canContinue ? <Play size={17} fill="currentColor" /> : <Send size={18} />}
+            disabled={!canSend && !canContinue}
+            onClick={canContinue ? onContinue : submit}
             tooltip
           />
           </>

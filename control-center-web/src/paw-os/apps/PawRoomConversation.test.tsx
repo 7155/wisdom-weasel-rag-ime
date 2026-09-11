@@ -188,7 +188,7 @@ describe('PawRoomConversation', () => {
     renderRoom({ onRetryTurn: retry, projection, room });
 
     expect(screen.getByText('503 upstream request failed')).toBeVisible();
-    await user.click(screen.getByRole('button', { name: '再试一次' }));
+    await user.click(screen.getByRole('button', { name: '继续' }));
     expect(retry).toHaveBeenCalledWith('请完成主线迁移', 'root-a');
   });
 
@@ -214,7 +214,7 @@ describe('PawRoomConversation', () => {
     renderRoom({ projection, room });
 
     expect(screen.getByText('503 upstream request failed')).toBeVisible();
-    expect(screen.queryByRole('button', { name: '再试一次' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '继续' })).not.toBeInTheDocument();
   });
 
   it('tells the writer a steer is not delivered yet, then clears the receipt', () => {

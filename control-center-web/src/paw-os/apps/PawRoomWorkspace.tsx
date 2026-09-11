@@ -304,6 +304,16 @@ export function PawRoomWorkspace({
     : activeWork?.state === 'blocked'
       ? 'blocked' as const
       : 'running' as const;
+  // A failed latest turn means the Room already admitted and retained work.
+  // The composer exposes Continue for that state; it must not resubmit the
+  // original request or invoke the Runtime retry path.
+  const continuationAvailable = Boolean(
+    record?.status === 'active'
+    && latestTurn?.status === 'failed'
+    && !activeTurn
+    && !sending
+    && !pendingQuestion
+  );
   /* Sending into a running Room steers the active partner. Queueing is the
    * other honest choice: the follow-up stays in the browser, ahead of the
    * Runtime send path, until this turn settles — so it can still be reordered,
@@ -943,6 +953,7 @@ export function PawRoomWorkspace({
                 onApprovalDecision={decideApproval}
                 onOpenProcessActivity={openProcessActivity}
                 onRetryTurn={(message, retryOfRootId) => void send(message, { retryOfRootId, preserveDraft: true })}
+                onContinueTurn={(rootId) => void send('继续。请基于当前 Room 已保留的上下文、工具结果和伙伴进展接着完成，不要重复已经完成的操作。', { preserveDraft: true })}
                 projection={projection}
                 retryingTurn={sending}
                 room={record}
@@ -1023,6 +1034,8 @@ export function PawRoomWorkspace({
                     onDraftChange={setDraft}
                     onQueue={queueFollowUp}
                     onSend={(value) => send(value, { question: pendingQuestion?.roomId === recordId ? pendingQuestion : undefined })}
+                    continuationAvailable={continuationAvailable}
+                    onContinue={() => void send('继续。请基于当前 Room 已保留的上下文、工具结果和伙伴进展接着完成，不要重复已经完成的操作。', { preserveDraft: true })}
                     onAttachmentsChange={setAttachments}
                     onPasteImages={(files) => void pasteFiles(files)}
                     onPasteFromClipboard={() => void pasteFiles()}

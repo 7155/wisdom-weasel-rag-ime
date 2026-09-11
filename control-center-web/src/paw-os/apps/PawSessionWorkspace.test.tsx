@@ -174,6 +174,24 @@ describe('PAWOS Agent Session structural migration', () => {
 
     expect(sessionWorkspaceProjectionSlice(state, sessionId).activeTurnId).toBe('');
   });
+  it('keeps the Stop action available behind a rejected follow-up during provider retry', () => {
+    const sessionId = 'retry-with-rejected-followup';
+    const projection = createAgentProjection(sessionId);
+    projection.status = 'retrying';
+    projection.turnOrder = ['running', 'rejected'];
+    projection.turnsById = {
+      running: { id: 'running', status: 'running', messageIds: ['original'], activityIds: ['retry'], createdAtMs: 1, updatedAtMs: 3 },
+      rejected: { id: 'rejected', status: 'failed', messageIds: ['followup'], activityIds: [], createdAtMs: 2, updatedAtMs: 2 },
+    };
+    projection.activityOrder = ['retry'];
+    projection.activitiesById.retry = { id: 'retry', turnId: 'running', kind: 'status_changed', status: 'running',
+      summary: '正在重试', payload: { phase: 'provider_retry' }, createdAtMs: 1, updatedAtMs: 3 };
+    const state = { ...useAgentLiveStore.getState(), projections: { [sessionId]: projection } };
+    expect(sessionWorkspaceProjectionSlice(state, sessionId).activeTurnId).toBe('running');
+    projection.status = 'faulted';
+    expect(sessionWorkspaceProjectionSlice(state, sessionId).activeTurnId).toBe('');
+  });
+
 
   it('keeps Memory steward tool receipts visible but collapsed in the embedded conversation', async () => {
     const sessionId = 'session-memory-steward-tools';

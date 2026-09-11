@@ -9,6 +9,13 @@ import {
 } from './public-error';
 
 describe('Agent command receipt public recovery', () => {
+  it('explains provider overload and active-turn conflicts', () => {
+    expect(publicAgentErrorText(new Error('Codex error: Our servers are currently overloaded. Please try again later.')))
+      .toContain('模型服务当前繁忙');
+    expect(publicAgentErrorText({ payload: { code: 'AGENT_COMMAND_FAILED',
+      commandReceipt: { state: 'failed', clientMessageId: 'busy', causeCode: 'AGENT_TURN_CONFLICT' } } }))
+      .toContain('仍在处理或自动重试');
+  });
   it('recognizes invalidated OAuth without treating a network failure as a login failure', () => {
     expect(publicAgentErrorText(new Error('Encountered invalidated oauth token for user, failing request')))
       .toBe(MODEL_AUTH_FAILURE_TEXT);
