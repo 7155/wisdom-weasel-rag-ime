@@ -130,9 +130,11 @@ class MemorySchemaV2Tests(unittest.TestCase):
             )
         )
         payload = self.core.inspect_memory_v2(project="wisdom-weasel-rag-ime", limit=10)
-        sensitive = next(item for item in payload["items"] if item["text"] == "Bearer sk-secret-value")
-        self.assertEqual(sensitive["privacyClass"], "sensitive")
+        sensitive = next(item for item in payload["items"] if item["memoryId"] == f"raw:{phrase_event}")
+        self.assertEqual(sensitive["text"], "[REDACTED]")
         self.assertEqual(sensitive["status"], "hidden")
+        self.assertNotIn("Bearer sk-secret-value", str(payload))
+        self.assertFalse(any(item["memoryId"].startswith("phrase:") for item in payload["items"]))
 
     def test_retrieve_candidates_v2_prefers_phrase_memory_and_filters_raw_echo(self) -> None:
         phrase_event = self.core.record_event(

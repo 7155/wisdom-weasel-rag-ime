@@ -11,7 +11,6 @@ from scripts.run_rag_agent_ablation import (
     _LUNA_PROMPT_ONLY_V4_PROFILE,
     _LUNA_PROMPT_ONLY_V5_PROFILE,
     _LUNA_PROMPT_ONLY_V5_RULE,
-    _RUNTIME_CONTRACT_PATHS,
     _lane_prompt,
     _sha256_json,
     _validate_prompt_profile,
@@ -120,9 +119,19 @@ class EnterpriseRagLunaPromptV5Tests(unittest.TestCase):
         )
         # This historical preflight binds its original runtime contract, not
         # future edits to the Runner or Host. Keep the receipt immutable.
+        runtime_paths = (
+            "scripts/run_rag_agent_ablation.py",
+            "scripts/canary_rag_benchmark_agent.py",
+            "scripts/rag_agent_spool_runtime_wrapper.mjs",
+            "rag_ime/managed_pi_runtime.py",
+            "rag_ime/pi_runtime.py",
+            "rag_ime/rag_agent_ablation.py",
+            "rag_ime/rag_benchmark_agent.py",
+            "rag_ime/rag_benchmark_sandbox.py",
+        )
         runtime_files = {
-            str(path.relative_to(ROOT)): frozen_source_sha256(str(path.relative_to(ROOT)))
-            for path in _RUNTIME_CONTRACT_PATHS
+            path: frozen_source_sha256(path)
+            for path in runtime_paths
         }
         self.assertEqual(runtime_files, receipt["frozenInputs"]["runtimeContractFiles"])
         self.assertEqual(

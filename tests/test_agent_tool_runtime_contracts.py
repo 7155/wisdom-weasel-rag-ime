@@ -49,6 +49,8 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             tool_profile_version=profile,
             created_at_ms=1,
         )
+        store.set_disclosure_preferences(str(session["id"]), {"tool:memory": "enabled"})
+        session = store.get(str(session["id"]))
         gateway = ControlToolGateway(
             sessions=store,
             management=object(),

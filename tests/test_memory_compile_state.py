@@ -463,10 +463,25 @@ class MemoryCompileStateTest(unittest.TestCase):
             f"Linux 文件 {sensitive_values[7]}",
             f"Windows 文件 {sensitive_values[8]}",
         )
+        legacy_rows = []
         for index, text in enumerate(texts, start=1):
-            self.core.record_event(self._event(text, f"doc:privacy-{index}"))
+            event = self._event(f"旧版输入 {index}", f"doc:privacy-{index}")
+            event_id = int(self.core.record_event(event).split(":", 1)[1])
+            legacy_capture = {
+                **event.capture_metadata,
+                "contentSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "fieldContextChars": len(text),
+                "imeBufferChars": len(text),
+            }
+            legacy_rows.append((text, json.dumps(legacy_capture), event_id))
 
         with self._connect() as conn:
+            # Current ingress redacts before storage. Exercise the compiler's
+            # separate protection for raw rows captured by older versions.
+            conn.executemany(
+                "UPDATE input_events SET committed_text = ?, capture_metadata_json = ? WHERE id = ?",
+                legacy_rows,
+            )
             bundle = build_memory_book_source_bundle(conn, project="ime")
 
         serialized = json.dumps(bundle, ensure_ascii=False)

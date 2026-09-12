@@ -138,7 +138,8 @@ class MemoryCompilerDiffTests(unittest.TestCase):
         self.assertNotIn("test@example.com", serialized)
         self.assertIn("[REDACTED_SECRET]", serialized)
         self.assertIn("[REDACTED_PATH]", serialized)
-        self.assertIn("[REDACTED_EMAIL]", serialized)
+        # Email has already been removed by the capture ingress policy.
+        self.assertIn("[REDACTED]", serialized)
 
     def test_memory_compile_cli_is_dry_run_by_default_and_apply_rollback_uses_diff(self) -> None:
         original = memory_compiler_module.VcpRebuildMemoryGenerator

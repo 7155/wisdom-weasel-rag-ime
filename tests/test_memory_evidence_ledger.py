@@ -248,34 +248,23 @@ class MemoryEvidenceLedgerTests(unittest.TestCase):
             )
         )
         with closing(sqlite3.connect(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                """
-                SELECT source.disposition, source.disposition_reason,
-                       source.processed_at_ms, evidence.admission_state,
-                       evidence.admission_reason
-                FROM agent_memory_sources AS source
-                JOIN agent_memory_evidence AS evidence
-                  ON evidence.idempotency_key =
-                     'canonical-input-event:' || source.input_event_id
-                WHERE source.input_event_id = ?
-                """,
-                (int(event.split(":", 1)[1]),),
-            ).fetchone()
             audit = conn.execute(
                 """
-                SELECT new_disposition, reason_code, actor_kind
-                FROM memory_source_disposition_events
-                """
+                SELECT outcome, reason_code, input_event_id
+                FROM input_capture_receipts WHERE capture_id = ?
+                """,
+                ("capture:sensitive:1",),
             ).fetchone()
+            for table in ("input_events", "agent_memory_sources", "agent_memory_evidence", "memory_source_disposition_events"):
+                self.assertEqual(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
 
-        self.assertEqual(row["disposition"], "not_for_memory")
-        self.assertEqual(row["disposition_reason"], "sensitive_input")
-        self.assertEqual(int(row["processed_at_ms"]), 200)
-        self.assertEqual(row["admission_state"], "rejected")
-        self.assertEqual(row["admission_reason"], "sensitive_input")
-        self.assertEqual(receipt["evidenceState"], "rejected")
-        self.assertEqual(tuple(audit), ("not_for_memory", "sensitive_input", "rule"))
+        # Preserve a durable native acknowledgement without copying sensitive
+        # text into the input or Memory evidence/audit ledgers.
+        self.assertEqual(event, "skipped:typed_capture_requires_no_store")
+        self.assertEqual(receipt["outcome"], "no_store")
+        self.assertEqual(receipt["reason"], "typed_capture_requires_no_store")
+        self.assertNotIn(text, json.dumps(receipt, ensure_ascii=False))
+        self.assertEqual(audit, ("no_store", "typed_capture_requires_no_store", None))
 
     def test_historical_backfill_is_review_only_without_a_receipt(self) -> None:
         text = "项目 A 的长期约束。"

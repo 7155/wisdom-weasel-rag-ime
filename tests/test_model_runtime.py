@@ -565,6 +565,11 @@ class ModelRuntimePlanTests(unittest.TestCase):
                 runtime_root = root / "checkout"
                 scripts = runtime_root / "scripts"
                 scripts.mkdir(parents=True)
+                (scripts / "support").mkdir()
+                shutil.copy2(
+                    ROOT / "scripts" / "support" / "prebuilt_product.sh",
+                    scripts / "support" / "prebuilt_product.sh",
+                )
                 shutil.copytree(ROOT / "rag_ime", runtime_root / "rag_ime")
                 shutil.copytree(ROOT / "integrations" / "pi", runtime_root / "integrations" / "pi")
                 (runtime_root / "examples").mkdir()

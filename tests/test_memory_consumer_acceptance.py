@@ -127,6 +127,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         )
         session = created["session"]
         session_id = str(session["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
 
         accepted = [
             {
@@ -223,6 +224,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
             }
         )["session"]
         governed_session_id = str(governed_session["id"])
+        self.service.sessions.set_disclosure_preferences(governed_session_id, {"tool:memory": "enabled"})
         evidence = self.service.memory_evidence.record_user_message(
             session_id=governed_session_id,
             pi_entry_id="message:memory-correction-acceptance",
@@ -332,6 +334,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
 
         new_session = self.service.create_session({"title": "更正后的新会话"})["session"]
         new_session_id = str(new_session["id"])
+        self.service.sessions.set_disclosure_preferences(new_session_id, {"tool:memory": "enabled"})
         with patch.object(
             self.service.runtime,
             "prompt",

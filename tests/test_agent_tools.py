@@ -680,6 +680,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.store = AgentSessionStore(Path(self.tmp.name) / "rag-ime.sqlite")
         self.store.initialize()
         self.session = self.store.create(title="tool test", created_at_ms=1)
+        self.store.set_disclosure_preferences(
+            str(self.session["id"]), {"tool:memory": "enabled"}, updated_at_ms=1,
+        )
         self.management = _Management()
         self.facade = _Facade()
         self.knowledge = _KnowledgeClient()
@@ -999,7 +1002,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "memory tool is disabled"):
             self.gateway.execute(self._call("recent", query="当前对话已关闭"))
         self.assertEqual(self.management.memory_requests, [])
-        self.store.set_disclosure_preferences(session_id, {})
+        self.store.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         restored = self.gateway.execute(self._call("recent", limit=1))["result"]
         self.assertEqual(restored["count"], 1)
 

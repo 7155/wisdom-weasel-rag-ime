@@ -4092,6 +4092,7 @@ class AgentServiceTests(unittest.TestCase):
         created = self.service.create_session({"title": "个人上下文"})
         session = created["session"]
         session_id = str(session["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         real_memory_build = self.service.memory_bootstrap.build
 
         def build_memory_with_turn_marker(*args, **kwargs):
@@ -4294,6 +4295,7 @@ class AgentServiceTests(unittest.TestCase):
     def test_context_trace_explains_why_timeline_recall_was_enabled(self) -> None:
         session = self.service.create_session({"title": "时间线门控"})["session"]
         session_id = str(session["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         with patch.object(
             self.service.runtime,
             "prompt",
@@ -4339,6 +4341,7 @@ class AgentServiceTests(unittest.TestCase):
     def test_old_consumed_bootstrap_is_migrated_to_persistent_session_context(self) -> None:
         session = self.service.create_session({"title": "旧启动上下文"})["session"]
         session_id = str(session["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         legacy = self.service.context_runtime.enqueue(
             session_id=session_id,
             source_kind="memory_bootstrap",
@@ -4620,6 +4623,7 @@ class AgentServiceTests(unittest.TestCase):
     def test_next_prompt_repairs_first_query_bootstrap_failure(self) -> None:
         created = self.service.create_session({"title": "可恢复启动上下文"})
         session_id = str(created["session"]["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         self.assertEqual(
             created["memoryBootstrap"]["status"],
             "awaiting_first_prompt",
@@ -4665,6 +4669,7 @@ class AgentServiceTests(unittest.TestCase):
     def test_lost_runtime_response_stays_pending_without_reexecution(self) -> None:
         session = self.service.create_session({"title": "响应丢失"})["session"]
         session_id = str(session["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         sent_messages: list[str] = []
 
         def lose_response(
@@ -4788,6 +4793,7 @@ class AgentServiceTests(unittest.TestCase):
         ) as ensure_seeded:
             created = self.service.create_session({"title": "降级对话"})
             session = created["session"]
+            self.service.sessions.set_disclosure_preferences(str(session["id"]), {"tool:memory": "enabled"})
             self.assertEqual(session["roleBookRevisionId"], "")
             self.assertTrue(created["roleBook"]["ok"])
             self.assertEqual(
@@ -9060,6 +9066,7 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_governed_memory_approval_recovers_from_committed_store_journal(self) -> None:
         session = self.service.create_session({"title": "记忆审批崩溃恢复"})["session"]
+        self.service.sessions.set_disclosure_preferences(str(session["id"]), {"tool:memory": "enabled"})
         evidence = self.service.memory_evidence.record_user_message(
             session_id=str(session["id"]),
             pi_entry_id="message:memory-recovery",

@@ -684,6 +684,7 @@ def _run_fixture(
             {"title": f"continuation-{fixture['fixtureId']}"}
         )["session"]
         session_id = str(session["id"])
+        service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         first_messages: list[str] = []
         with patch.object(
             service.runtime,

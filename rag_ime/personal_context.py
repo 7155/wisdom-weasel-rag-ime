@@ -448,7 +448,9 @@ class AgentMemoryEvidenceStore:
             raise ValueError("evidence text must not be empty")
         if len(canonical) > _MAX_EVIDENCE_CHARS:
             raise ValueError(f"evidence text exceeds {_MAX_EVIDENCE_CHARS} characters")
-        if _contains_sensitive_content(canonical):
+        # Ingress may already have removed sensitive spans. A redacted body
+        # cannot support an Evidence claim; metadata-only redaction is safe.
+        if is_redacted_or_sensitive(canonical):
             return {
                 "schemaVersion": "rag-ime.agent-memory-evidence-write.v1",
                 "ok": True,

@@ -136,6 +136,7 @@ class AgentMemoryEvidenceStoreTests(unittest.TestCase):
             "挂载数据来自 /Volumes/private-disk/export.json",
             r"Windows 文件位于 C:\Users\alice\secrets.txt",
             "SSH 配置位于 ~/.ssh/config",
+            "上游已脱敏的正文：[REDACTED]",
         )
         skipped_items = [
             self.store.record(

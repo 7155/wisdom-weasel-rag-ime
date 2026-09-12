@@ -390,7 +390,7 @@ class LabHttpErrorTests(unittest.TestCase):
             with (
                 self.subTest(route=key),
                 patch.dict(ROUTE_TABLE, {("GET", route.path): route}),
-                patch("rag_ime.debug_server.validate_contract", side_effect=validate),
+                patch("rag_ime.control_api.dispatch.validate_contract", side_effect=validate),
             ):
                 self.assertEqual(self.get(route.path), (200, {"ok": True}))
                 self.assertEqual(
@@ -400,7 +400,7 @@ class LabHttpErrorTests(unittest.TestCase):
             with (
                 patch.dict(ROUTE_TABLE, {("GET", route.path): route}),
                 patch(
-                    "rag_ime.debug_server.validate_contract",
+                    "rag_ime.control_api.dispatch.validate_contract",
                     side_effect=ValueError("bad request"),
                 ),
             ):
@@ -410,7 +410,7 @@ class LabHttpErrorTests(unittest.TestCase):
             with (
                 patch.dict(ROUTE_TABLE, {("GET", route.path): response_only}),
                 patch(
-                    "rag_ime.debug_server.validate_contract",
+                    "rag_ime.control_api.dispatch.validate_contract",
                     side_effect=ValueError("bad response"),
                 ),
             ):

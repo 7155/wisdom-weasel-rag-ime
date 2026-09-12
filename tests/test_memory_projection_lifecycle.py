@@ -35,10 +35,8 @@ class MemoryProjectionLifecycleTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(
             prefix="rag-ime-projection-lifecycle-"
         )
+        self.addCleanup(self.temporary.cleanup)
         self.db_path = Path(self.temporary.name) / "rag-ime.sqlite"
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
 
     def test_sidecar_service_starts_real_worker_exposes_freshness_and_stops_it(self) -> None:
         provider = HashingEmbeddingProvider(dimensions=16)
