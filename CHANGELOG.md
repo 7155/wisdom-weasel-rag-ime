@@ -5,6 +5,10 @@ source checkpoint is not a signed and notarized macOS binary release.
 
 ## 0.1.0-alpha.7 — 2026-09-12
 
+- Lead the README with reducing communication and model costs, with a labeled
+  context-reuse example and source-linked vertical task evaluation results.
+- Keep Memory lifecycle metric labels in the text column when no icon is
+  supplied, with responsive layout checks for PAWOS and the compatibility UI.
 - Preserve Browser connection failures and Chromium error-page state instead
   of reporting an invalid URL. Project failed tool receipts consistently in
   live and restored conversations, and support recovery in the same tab.

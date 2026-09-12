@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-12T10:02:05.826362+00:00",
+  "generatedAt": "2026-09-12T10:40:14.925752+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -115,7 +115,7 @@
     },
     "memory_lifecycle": {
       "description": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
-      "pathCount": 12
+      "pathCount": 15
     },
     "browser_recovery": {
       "description": "Preserve Browser load errors, terminal receipts and same-tab recovery.",
@@ -127,10 +127,10 @@
     }
   },
   "summary": {
-    "pathCount": 789,
+    "pathCount": 792,
     "dispositionCounts": {
       "delete_old_implementation": 185,
-      "keep_release": 604
+      "keep_release": 607
     },
     "groupCounts": {
       "agent_capsule": 3,
@@ -142,7 +142,7 @@
       "lab_frontend": 11,
       "lab_tools": 8,
       "local_docs": 122,
-      "memory_lifecycle": 12,
+      "memory_lifecycle": 15,
       "offline_installer": 12,
       "owner_boundaries": 7,
       "pi_runtime_refactor": 23,
@@ -1077,6 +1077,13 @@
       "reason": "Own the source previously located at paw-agent-chat-ui-kit-source.zip; preserve runtime behavior and attribution."
     },
     {
+      "path": "control-center-web/e2e/management-visual-contracts.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Keep shared metric labels readable without icons, including Memory lifecycle at desktop and narrow widths."
+    },
+    {
       "path": "control-center-web/electron/main.mjs",
       "status": "modified",
       "group": "voice_desktop",
@@ -1726,6 +1733,20 @@
       "group": "verification",
       "reason": "Regression checks for the included product changes.",
       "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/overview/management-ui.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Keep shared metric labels readable without icons, including Memory lifecycle at desktop and narrow widths."
+    },
+    {
+      "path": "control-center-web/src/features/overview/management.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Keep shared metric labels readable without icons, including Memory lifecycle at desktop and narrow widths."
     },
     {
       "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.test.tsx",

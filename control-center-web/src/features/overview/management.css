@@ -1033,7 +1033,9 @@
   color: var(--color-text-tertiary);
 }
 
-.mgmt-metric dt > svg ~ * { grid-column: 2; }
+/* Labels need their own grid item even when no icon is provided. A bare text
+   node is auto-placed in the 16px icon column when dt uses display: contents. */
+.mgmt-metric dt > span { grid-column: 2; min-width: 0; }
 .mgmt-metric dd { grid-column: 2; line-height: 1.2; }
 .mgmt-metric .mgmt-metric__detail { grid-column: 2; line-height: 1.45; }
 

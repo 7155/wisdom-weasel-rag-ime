@@ -197,7 +197,7 @@ export function MetricStrip({
           <div className="mgmt-metric" key={item.label} data-tone={item.tone ?? 'neutral'}>
             <dt>
               {Icon ? <Icon size={15} aria-hidden="true" /> : null}
-              {item.label}
+              <span>{item.label}</span>
             </dt>
             <dd>{item.value}</dd>
             {item.detail ? <dd className="mgmt-metric__detail">{item.detail}</dd> : null}
