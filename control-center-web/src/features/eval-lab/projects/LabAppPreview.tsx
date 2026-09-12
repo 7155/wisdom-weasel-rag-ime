@@ -25,6 +25,7 @@ const bridge = `<script>(()=>{
       return result.finally(()=>options.signal?.removeEventListener('abort',stop));
     },
     models:()=>request('paw.lab-app.models'),
+    storage:Object.freeze({get:key=>request('paw.lab-app.state.get',{key}),set:(key,value)=>request('paw.lab-app.state.set',{key,value})}),
     reconcile:(callId)=>request('paw.lab-app.reconcile',{callId}),
     history:()=>request('paw.lab-app.history')});
   addEventListener('message',e=>{
@@ -80,6 +81,24 @@ export function LabAppPreview({ app, version, calls, onActivity }: { app: LabApp
       const data = object(event.data);
       if (typeof data.requestId !== 'string' || !/^[a-f0-9-]{36}$/u.test(data.requestId)) return;
       if (data.kind === 'paw.lab-app.ready') { setIntegratedProgress(true); return; }
+      if (data.kind === 'paw.lab-app.state.get' || data.kind === 'paw.lab-app.state.set') {
+        try {
+          if (typeof data.key !== 'string' || !/^[a-zA-Z0-9_.:-]{1,80}$/u.test(data.key)) throw new Error('应用状态名称无效。');
+          const key = `paw.lab.app-state.v1:${transport.connectionIdentity}:${app.appId}:${data.key}`;
+          let result: JsonValue = null;
+          if (data.kind === 'paw.lab-app.state.set') {
+            const serialized = JSON.stringify(data.value);
+            if (!serialized || serialized.length > 128_000) throw new Error('应用状态超过 128,000 字符，请导出文件保存。');
+            localStorage.setItem(key, serialized);
+          } else {
+            result = JSON.parse(localStorage.getItem(key) ?? 'null') as JsonValue;
+          }
+          frame.current?.contentWindow?.postMessage({ kind: 'paw.lab-app.result', requestId: data.requestId, ok: true, result }, '*');
+        } catch {
+          frame.current?.contentWindow?.postMessage({ kind: 'paw.lab-app.result', requestId: data.requestId, ok: false, state: 'rejected', message: '浏览器未能读取或保存应用状态。当前输入仍可使用，请导出文件留存。' }, '*');
+        }
+        return;
+      }
       if (data.kind === 'paw.lab-app.cancel') {
         if (inFlight.current.has(data.requestId)) {
           cancelWanted.current.add(data.requestId);
@@ -168,7 +187,7 @@ export function LabAppPreview({ app, version, calls, onActivity }: { app: LabApp
       <Button size="small" disabled={call.cancelRequested && call.state !== 'interrupted'} onClick={() => void send({ action: 'cancel', appId: app.appId, expectedRevision: app.revision, clientRequestId: `app-cancel:${crypto.randomUUID()}`, input: { callId: call.callId } })}>{call.cancelRequested && call.state === 'interrupted' ? '重试停止' : '停止'}</Button>
     </span>)}</div> : null}
     <div className="lab-app-preview__panes">
-    <iframe ref={frame} data-pane="chat" title={`${version.spec.title} · 应用预览`} hidden={!split && workspaceVisible} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" src={previewUrl} />
+    <iframe ref={frame} data-pane="chat" title={`${version.spec.title} · 应用预览`} hidden={!split && workspaceVisible} sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" src={previewUrl} />
     {external && (workspaceOpened || split) ? workspaceUrl
       ? <iframe data-pane="workspace" title={external.title} hidden={!split && !workspaceVisible} sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" src={workspaceUrl} />
       : <p hidden={!split && !workspaceVisible} className="lab-project-error" role="alert">工作台地址不可用。请检查应用声明的 HTTPS 或本机服务地址；不能嵌入当前控制服务。</p> : null}

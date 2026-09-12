@@ -6,7 +6,6 @@ import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context
 import { dockMagnetics } from './dock-magnification';
 import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 import { PawStellarWallpaper } from './PawStellarBackdrop';
-import { pulsePawComposition } from '../runtime/composition-pulse';
 import { PawContextMenu, type PawContextMenuCloseReason, type PawContextMenuItem } from './PawContextMenu';
 import { pawDesktopGridEntries, pawDesktopGridPosition, pawDesktopMovePosition, pawDesktopOccupiedPositions, pawDesktopResolvePersistedPositions, pawDesktopSnapPosition, usePawDesktopGridLayout } from './desktop-grid';
 import { PawFieldLede } from './PawFieldLede';
@@ -221,7 +220,6 @@ function PawDesktopSurface() {
       } else if (event.key === 'F5') {
         event.preventDefault();
         setContextMenu(null);
-        pulsePawComposition('system', .58);
         api.getState().setOverviewOpen(!api.getState().overviewOpen);
       } else if (event.key === 'Escape') {
         setContextMenu(null);
@@ -276,7 +274,6 @@ function PawDesktopSurface() {
       const route = `/plugins?packageId=${encodeURIComponent(extension.packageId)}`;
       state.openApp('app-center', { initialRoute: route, title: pawApp('app-center').label });
       state.setLaunchpadOpen(false);
-      pulsePawComposition('app', .72);
       window.history.replaceState(null, '', `${window.location.search}#${route}`);
       return;
     }
@@ -285,7 +282,6 @@ function PawDesktopSurface() {
     if (existingWindowId) state.focusWindow(existingWindowId);
     else state.openApp(appId, { title: pawApp(appId).label });
     state.setLaunchpadOpen(false);
-    pulsePawComposition('app', .72);
     // Returning to an existing window keeps its page. The reload entry point
     // must follow that page too, rather than silently pointing at the App home.
     const currentRoute = existingWindowId ? api.getState().windows[existingWindowId]?.initialRoute : undefined;
@@ -298,7 +294,6 @@ function PawDesktopSurface() {
   }, [api]);
   const closeLaunchpad = useCallback(() => api.getState().setLaunchpadOpen(false), [api]);
   const toggleOverview = useCallback(() => {
-    pulsePawComposition('system', .58);
     const state = api.getState();
     state.setOverviewOpen(!state.overviewOpen);
   }, [api]);

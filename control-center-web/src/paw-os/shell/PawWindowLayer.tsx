@@ -23,7 +23,6 @@ import { PawAppProcess } from '../apps/PawApps';
 import { PawAppIcon } from './PawAppIcon';
 import { PawWindowChromeProvider } from './PawWindowChrome';
 import { PawBackgroundToolWindows } from './PawBackgroundToolWindows';
-import { pulsePawComposition } from '../runtime/composition-pulse';
 import { useRoomProjectionBridge } from '@/features/rooms/state/projection-bridge';
 import { roomActivityFlowKind, roomWorkReviewFlow } from '@/features/rooms/room-flow-projection';
 import type { RoomProjectionState } from '@/contracts/room-reducer';
@@ -919,25 +918,20 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
       }}
       onClose={() => {
         if (inspector) { onDismissInspector(windowId); return; }
-        pulsePawComposition('system', .84);
         api.getState().closeWindow(windowId);
       }}
       onFocus={() => {
-        pulsePawComposition('system', .38);
         api.getState().focusWindow(windowId);
       }}
       onDetach={inspector ? () => onDetachInspector(windowId) : undefined}
       onMinimize={() => {
-        pulsePawComposition('system', .62);
         api.getState().minimizeWindow(windowId);
       }}
       onOpenFromOverview={() => api.getState().focusWindow(windowId)}
       onSnap={(placement) => {
-        pulsePawComposition('system', .76);
         api.getState().snapWindow(windowId, placement);
       }}
       onToggleMaximize={() => {
-        pulsePawComposition('system', .72);
         api.getState().toggleMaximize(windowId);
       }}
       placement={node.placement}

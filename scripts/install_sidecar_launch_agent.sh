@@ -324,7 +324,17 @@ EVAL_LAB_RECEIPTS="$(
 
 SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
 
+# Lab freezes these compiled controls into each exported App. Install them
+# with the runtime, including when this script runs before the main web build.
+PORTABLE_UI_SOURCE="$ROOT/control-center-web/.generated/portable-agent-ui"
+if [[ ! -s "$PORTABLE_UI_SOURCE/agent-ui.js" || ! -s "$PORTABLE_UI_SOURCE/agent-ui.css" ]]; then
+  pnpm --dir "$ROOT/control-center-web" run build:app-ui
+fi
+PORTABLE_UI_TARGET="$APP_CODE_DIR/control-center-web/.generated/portable-agent-ui"
+
 mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
+mkdir -p "$PORTABLE_UI_TARGET"
+cp "$PORTABLE_UI_SOURCE/agent-ui.js" "$PORTABLE_UI_SOURCE/agent-ui.css" "$PORTABLE_UI_TARGET/"
 rm -f "$INSTALL_MARKER"
 rm -rf "$APP_CODE_DIR/rag_ime"
 cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"

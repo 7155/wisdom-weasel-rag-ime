@@ -1,6 +1,5 @@
 import { useControlTransport } from '@/app/control-transport';
 import { useRoomLiveSession } from '@/features/rooms/runtime/use-room-live-session';
-import { pulsePawCompositionForRuntimeEvents } from '../runtime/composition-pulse';
 
 /**
  * A satellite Room surface still needs its canonical live projection when its
@@ -18,7 +17,7 @@ export default function PawRoomProjectionKeeper({ roomId }: { roomId: string }) 
     onConnectionRestored: () => undefined,
     onConnectionError: () => undefined,
     onRecoveryState: () => undefined,
-    onEvents: (_roomId, events) => pulsePawCompositionForRuntimeEvents('room', events.map((event) => event.eventType)),
+    onEvents: () => undefined,
   });
   return null;
 }

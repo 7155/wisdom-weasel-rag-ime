@@ -17,6 +17,46 @@ function mount() {
 }
 
 describe('portable App interaction starter', () => {
+  it('draws only observed processing stages and safely visualizes structured answers', async () => {
+    const { dom, element, question } = mount();
+    try {
+      let progress!: (value: object) => void; let finish!: (value: object) => void;
+      Object.assign(dom.window, { pawApp: { invoke: (_action: unknown, _input: unknown, options: { onProgress: typeof progress }) => { progress = options.onProgress; return new Promise((resolve) => { finish = resolve; }); } } });
+      element('answer-button').click();
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      const map = dom.window.document.querySelector('.process-map')!;
+      expect(map.textContent).toBe('接收');
+      expect(map.textContent).not.toContain('资料');
+      progress({ stage: 'answering', text: '正在整理' });
+      expect(map.textContent).toBe('接收模型');
+      finish({ text: JSON.stringify({ schemaVersion: 'paw.app-result.v1', summary: '小样本对照', steps: [{ title: '核对来源', detail: '<img src=x onerror=alert(1)>', status: '建议步骤' }], metrics: [{ label: '通过案例', before: 0, after: 3 }, { label: '成本', before: null, after: .02, unit: 'USD' }] }) });
+      await vi.waitFor(() => expect(question.readOnly).toBe(false));
+      expect(map.textContent).toBe('接收模型回答完成');
+      expect(element('answer').querySelectorAll('.result-metric')).toHaveLength(2);
+      expect(element('answer').textContent).toContain('未记录');
+      expect(element('answer').textContent).toContain('<img src=x onerror=alert(1)>');
+      expect(element('answer').querySelector('img')).toBeNull();
+      expect(element('answer').textContent).not.toContain('schemaVersion');
+    } finally { dom.window.close(); }
+  });
+  it('returns keyboard focus after closing history or sources without dropping the other panel', async () => {
+    const { dom, element, question } = mount();
+    try {
+      Object.assign(dom.window, { pawApp: { invoke: async () => ({ text: 'Answer [1]', sources }), history: async () => [] } });
+      element('answer-button').click(); await vi.waitFor(() => expect(question.readOnly).toBe(false));
+      const chip = dom.window.document.querySelector('.source-chip') as HTMLButtonElement;
+      chip.focus(); chip.click();
+      expect(dom.window.document.activeElement).toBe(element('close-sources'));
+      element('history-toggle').click();
+      expect(dom.window.document.activeElement).toBe(element('close-history'));
+      await vi.waitFor(() => expect(element('history-list').textContent).toContain('还没有调用记录'));
+      dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(element('evidence').classList.contains('hidden')).toBe(false);
+      expect(dom.window.document.activeElement).toBe(element('history-toggle'));
+      dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(dom.window.document.activeElement).toBe(chip);
+    } finally { dom.window.close(); }
+  });
   it('keeps first citation numbers for repeated document chunks and labels retrieval completion accurately', async () => {
     const { dom, element, question } = mount();
     try {

@@ -27,6 +27,29 @@ and materially changes the work. Continue inspectable or already authorized
 work while that judgment is pending. Respect the user's existing execution scope
 and budget; Pi and the actual Tool owner keep their execution authority.
 
+## Carry the Project Forward
+
+Resume from the current project and actual execution receipts. Support the user's
+chosen pace: autonomous work continues all authorized, affordable steps; guided
+work completes the next useful step and asks only for a material business choice.
+Neither mode creates a second Agent loop or an unbounded model-spending loop.
+Do not stop after merely publishing a plan or describing a missing directory.
+First inspect the bound workspace, supplied materials and reusable project assets.
+Continue independent setup, implementation and visualization while an essential
+input is missing. Offer concrete ways to supply it: file upload, pasted text,
+an accessible path, or an explicitly labelled example. After the user supplies
+input, read the new material version and continue without asking them to repeat
+the task. A sample walkthrough uses a separate, clearly labelled synthetic or
+public dataset; it never proves the historical run or the real business outcome.
+
+Maintain one actionable progress artifact showing the project's steps, dependencies,
+observed results and blockers. Use the optional structured progress view described
+in [artifact behavior](references/artifacts.md), or a domain-specific interactive
+surface. Add a declared action for the next user decision when it helps. A status
+snapshot is not live runtime state. Publish actual comparisons and failure evidence,
+then continue the next affordable experiment or the usable application delivery;
+if blocked, leave a concrete input/action and preserve everything needed to resume.
+
 ## Make the Work Visible in Its Own Form
 
 Use `lab_project` to publish durable artifacts and update their versions. Choose

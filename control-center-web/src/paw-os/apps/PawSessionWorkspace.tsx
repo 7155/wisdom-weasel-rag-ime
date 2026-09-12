@@ -57,7 +57,6 @@ import {
   type AgentLiveSnapshotLoader,
 } from '@/features/agent/runtime/use-agent-live-session';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
-import { pulsePawCompositionForRuntimeEvent } from '../runtime/composition-pulse';
 import {
   backgroundJobWindowRequest,
   createRuntimeToolWindowProjector,
@@ -362,7 +361,6 @@ export function PawSessionWorkspace({
       if (failure.recoverable) refreshControlCatalog();
     },
     onEvent: (event) => {
-      pulsePawCompositionForRuntimeEvent('agent', event.eventType);
       if (event.eventType === 'snapshot_required') return;
       const completedMessage = asRecord(asRecord(event.payload).message);
       if (

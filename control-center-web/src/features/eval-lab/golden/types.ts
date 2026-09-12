@@ -76,7 +76,7 @@ export type ExperimentResult = {
   referenceAuthority?: 'human' | 'agent_assisted' | 'unrecorded';
   labelAuthors?: { human: number; agent: number; unrecorded: number } | null;
   schemaVersion: 'rag-ime.agent-lab-golden-experiment.v1'; suiteId: string; snapshotId: string;
-  executionMode: 'context_qa' | 'knowledge_qa'; optimizationScope: 'prompt'; judgeConfig: ModelConfig;
+  executionMode: 'context_qa' | 'knowledge_qa'; optimizationScope: 'prompt' | 'model' | 'model_and_prompt' | 'repeat'; judgeConfig: ModelConfig;
   baseline: ModelConfig; candidate: ModelConfig; development: PhaseReport; holdout: PhaseReport;
   optimization: { enabled: boolean; maxCandidates: number; selectedCandidateIndex: number; proposals: { candidateIndex: number; modelConfig: ModelConfig; developmentMetrics: ExperimentMetrics; selected: boolean; proposalRequestId: string }[] };
   comparison: { decision: 'improved' | 'no_improvement' | 'inconclusive'; comparable: boolean | number; developmentDelta: number | null; holdoutDelta: number | null; reasons: string[]; sameSnapshot: true; goldenChanged: false; improvementBasis?: 'quality' | 'answer_cost' | 'answer_cost_estimate' | null; groupRegressions?: unknown[] };
@@ -172,7 +172,7 @@ export function isExperimentResult(value: unknown): value is ExperimentResult {
     });
   };
   return result.schemaVersion === 'rag-ime.agent-lab-golden-experiment.v1' && fields(result, ['suiteId', 'snapshotId'])
-    && ['context_qa', 'knowledge_qa'].includes(String(result.executionMode)) && result.optimizationScope === 'prompt'
+    && ['context_qa', 'knowledge_qa'].includes(String(result.executionMode)) && ['prompt', 'model', 'model_and_prompt', 'repeat'].includes(String(result.optimizationScope))
     && (result.validationUse === undefined || (Number.isSafeInteger(validation.ordinal) && Number(validation.ordinal) > 0 && typeof validation.reused === 'boolean'
       && number(validation.priorStartedRuns) && number(validation.priorCompletedRuns) && number(validation.startedAtMs)
       && (validation.overlappingQuestionCount === undefined || number(validation.overlappingQuestionCount))))

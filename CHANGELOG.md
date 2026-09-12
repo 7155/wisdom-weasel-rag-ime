@@ -3,6 +3,20 @@
 Personal Agent Workbench follows a source-first development model. A public
 source checkpoint is not a signed and notarized macOS binary release.
 
+## Unreleased
+
+- Redesign the Lab home, project navigation and experiment reports. Visualize
+  recorded stages, quality and cost, with precise artifact selection and source
+  references; retain historical limitations and the original records.
+- Guide projects through material intake, execution, optimization and App
+  delivery, with responsive previews, local App state and file downloads.
+- Browse local files independently of Agent Sessions; keep existing Session
+  authority for editing and saving.
+- Include the actual retrieved evidence when judging Knowledge answers, under
+  a newly versioned protocol. Preserve previous judgments and calibrations.
+- Install and package the shared Agent controls needed by exported Apps, and
+  remove unused frontend components, assets and dependencies.
+
 ## 0.1.0-alpha.7 — 2026-09-12
 
 - Lead the README with reducing communication and model costs, with a labeled

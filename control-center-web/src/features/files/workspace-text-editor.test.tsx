@@ -17,12 +17,25 @@ function readResult(content = 'original', revision = firstRevision, path = fileP
   return { ok: true, path, content, resourceRevision: revision, byteSize, nextOffset: byteSize, truncated: false, editability: { editable: true, maxBytes: 2 * 1024 * 1024 } };
 }
 function setup(read: MockRouteHandler = () => readResult(), save: MockRouteHandler = () => ({ ok: true, saved: true, sessionId: 'session-a', path: filePath, resourceRevision: nextRevision }), options: { initialRoute?: string; routes?: MockControlTransportOptions['routes'] } = {}) {
-  const transport = new MockControlTransport({ routes: {
+  const routes = {
     'agent.sessions.list': { ok: true, activeSessionId: 'session-a', items: ['a', 'b'].map((id) => ({ id: `session-${id}`, title: `Session ${id.toUpperCase()}`, updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' })) },
     'agent.session.workspace.list': { ok: true, items: ['notes.md', 'other.txt'].map((name) => ({ path: `/workspace/paw/${name}`, name, kind: 'file' })) },
     'agent.session.workspace.read': read,
     'agent.session.workspace.save': save,
     ...options.routes,
+  };
+  // Preview/list now use independent local routes; the complete editor and saves
+  // retain their Session routes and canonical ownership checks.
+  const transport = new MockControlTransport({ routes: { ...routes,
+    'files.list': async (request: ControlRequest) => {
+      if (!request.query?.path) return { ok: true, path: '/home/qa', homePath: '/home/qa', items: [] };
+      const handler = routes['agent.session.workspace.list'];
+      const response = typeof handler === 'function' ? await handler(request) : handler;
+      const path = String(request.query.path);
+      const file = /\.(md|txt|html)$/u.test(path);
+      return { ...(response as object), path: file ? '/workspace/paw' : path, selectedPath: file ? path : '' };
+    },
+    'files.read': (request: ControlRequest) => typeof read === 'function' ? read({ ...request, params: { sessionId: String(request.query?.sessionId ?? '') } }) : read,
   } });
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ControlTransportProvider transport={transport}><TooltipProvider><PawOsFilesApp initialRoute={options.initialRoute} /></TooltipProvider></ControlTransportProvider></QueryClientProvider>);
   return transport;

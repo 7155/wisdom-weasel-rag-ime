@@ -12,7 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -50,7 +50,6 @@ import {
   useMemoryQueries,
   type MemoryKind,
 } from './api';
-import { MemoryRelations } from './MemoryRelations';
 import { MemoryTopicPage } from './MemoryTopicPage';
 import { MemoryCurationWorkbench } from './MemoryCurationWorkbench';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -86,6 +85,8 @@ import {
 } from '@/features/overview/management-mutation';
 import type { JsonValue } from '@/platform/transport';
 import './memory.css';
+
+const MemoryRelations = lazy(() => import('./MemoryRelations').then((module) => ({ default: module.MemoryRelations })));
 
 type MemoryLayer = 'evidence' | 'atoms' | 'books';
 type MemoryRouteLayer = MemoryLayer | 'timelines' | 'role-books';
@@ -437,7 +438,9 @@ export function MemoryFeature() {
             />
           </TabsContent>
           <TabsContent value="relations">
-            <MemoryRelations enabled={view === 'relations'} onOpenBook={openBook} />
+            <Suspense fallback={<p role="status">正在读取记忆关系…</p>}>
+              <MemoryRelations enabled={view === 'relations'} onOpenBook={openBook} />
+            </Suspense>
           </TabsContent>
           <TabsContent value="timeline">
             {view === 'timeline' ? <ActivityTimeline

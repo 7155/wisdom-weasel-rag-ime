@@ -1,7 +1,7 @@
 /* ==========================================================================
    Files App — one coherent stylesheet.
 
-   Files is the Session workspace inspector: a chrome scope bar, a directory
+   Files is the local file inspector with optional Session shortcuts: a chrome scope bar, a directory
    rail, and a paper reading pane, both built as inspection instruments. The
    rail carries a scan readout and sticky workspace authority plates; the
    reader names its active renderer and loaded lines, and the bounded-read
@@ -918,7 +918,7 @@ i.paw-files-tree__disclosure {
   gap: 2px;
 }
 
-.paw-files-preview__id h2 {
+.paw-files-app .paw-files-preview > header .paw-files-preview__id h2 {
   overflow: hidden;
   margin: 0;
   color: var(--color-text);
@@ -938,7 +938,7 @@ i.paw-files-tree__disclosure {
   align-items: center;
   overflow: hidden;
   font: 12px/1.5 var(--paw-files-mono);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 
@@ -1877,4 +1877,17 @@ i.paw-files-tree__disclosure {
   .paw-files-preview__action:active:not(:disabled) {
     transform: none;
   }
+}
+/* An address row belongs to the App body, including when window chrome is portaled. */
+.paw-files-location { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; margin: 8px 12px; min-width: 0; height: 36px; border: 1px solid var(--paw-files-hairline); border-radius: 6px; background: var(--paw-files-control-bg); color: var(--paw-files-control-ink); }
+.paw-files-location input { flex: 1; min-width: 0; height: 100%; padding: 0 6px; border: 0; background: transparent; color: var(--paw-files-control-ink); font: inherit; font-size: 12px; }
+.paw-files-location button { display: grid; place-items: center; width: 34px; height: 100%; flex: none; border: 0; background: transparent; color: var(--paw-files-control-ink); cursor: pointer; }
+.paw-files-location button:disabled { opacity: .45; cursor: default; }
+.paw-files-location:focus-within { outline: 2px solid var(--paw-accent, #3567b7); outline-offset: 2px; }
+.paw-files-location input:focus { outline: none; }
+.paw-files-session-notice { display: flex; gap: 10px; align-items: center; padding: 8px 14px; color: var(--paw-files-muted); font-size: 12px; flex: none; }
+.paw-files-session-notice button, .paw-files-tree__limit button { color: var(--paw-accent, #3567b7); font: inherit; border: 0; background: none; padding: 6px; cursor: pointer; }
+@container paw-files (max-width: 620px) {
+  .paw-files-location { height: 46px; }
+  .paw-files-location button { min-width: 44px; }
 }

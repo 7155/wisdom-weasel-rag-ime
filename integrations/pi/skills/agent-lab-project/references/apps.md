@@ -23,6 +23,16 @@ Do not ask users to inspect JSON
 unless structured data is the result they need. Handle Markdown or structured
 answers without inserting untrusted model output as executable HTML.
 
+The starter also renders optional `paw.app-result.v1` JSON answers as readable
+results: `summary`, `steps` (`title`, `detail`, optional `status`), and `metrics`
+(`label`, numeric or null `before`/`after`, optional `unit` and `source`). Adapt
+the method to return this shape only if steps or numerical comparisons help the
+business task. These are answer-authored values, not runtime receipts; keep that
+distinction visible and never invent missing measurements. The always-visible
+process map uses only actual bridge events and remains separate from steps
+proposed in an answer. Existing frozen versions are immutable; prepare a new
+version to deliver interface changes.
+
 An existing browser workbench can be connected with optional
 `externalWorkspace: {title, url, presentation?: "tabs" | "split"}` in `app.json`. Use a credential-free HTTPS URL
 or loopback HTTP address. PAW and the standalone export show a separate workspace
@@ -154,3 +164,7 @@ Use the portable HTML starter's `window.pawAgentUI.mount` integration for model/
 `pawApp.models()` reads Pi's model capabilities and the App default; pass an explicit `{model: {provider, model, thinkingLevel}}` as the third `invoke` argument for a per-call selection. The selected model is stored with that call; it does not change the evaluated frozen default. Every retry keeps the original business inputs/context and goes through the App's declared action, retrieval and method before Pi runs.
 
 `pawApp.reconcile(requestId)` reads the original receipt without dispatching another prompt. Keep the original ID on interrupted/unknown turns. Use the shared recovery surface to offer reconciliation for unknown outcomes and explicit retry for definite failure. Do not add a browser timer that turns an active Pi turn into a failure; finish and Stop follow Runtime receipts.
+
+### 本机应用状态与下载
+
+PAW 预览提供可选的 `pawApp.storage.get(key)` / `set(key, value)`，按当前连接和 App 隔离保存在浏览器中，跨应用版本保留。每个值最多 128,000 字符，失败必须保留当前输入并提供文件导出。独立导出可使用自身 origin 的 localStorage；这不是服务器数据库或跨设备同步。应用内明确触发的下载可用于导出本地生成文件。

@@ -48,7 +48,7 @@ describe('PAWOS native Apps', () => {
     expect(target).toHaveAttribute('aria-current', 'page');
   });
 
-  it.each(['project-workbench', 'memory', 'eval-lab'] as const)('keeps %s page navigation collapsible without remounting the page', async (appId) => {
+  it.each(['project-workbench', 'memory'] as const)('keeps %s page navigation collapsible without remounting the page', async (appId) => {
     const user = userEvent.setup();
     const view = renderNative(appId, nativeTransport());
     const toggle = screen.getByRole('button', { name: /(?:展开|收起).*导航$/ });
@@ -62,6 +62,13 @@ describe('PAWOS native Apps', () => {
     expect(view.container.querySelector('.paw-native-page')).toBe(page);
     await user.click(toggle);
     expect(navigation).toBeVisible();
+  });
+
+  it('lets Lab own its navigation without a redundant one-page rail', async () => {
+    const view = renderNative('eval-lab', nativeTransport());
+    expect(view.container.querySelector('.paw-native-nav')).toBeNull();
+    expect(view.container.querySelector('[data-owns-navigation]')).toHaveAttribute('data-owns-navigation', 'true');
+    expect(view.container.querySelector('.paw-native-page')).not.toBeNull();
   });
 
   it('recomposes Project routes as one OS workspace instead of rendering legacy pages', async () => {
@@ -162,13 +169,7 @@ describe('PAWOS native Apps', () => {
     expect(handoffDraft).toContain('任务：统一 Agent 入口（task-1）');
 
     await user.click(screen.getByRole('button', { name: '定时安排' }));
-    expect(await screen.findByRole('heading', { name: '自动执行安排' })).toBeInTheDocument();
-    expect(await screen.findByText('还没有定时安排')).toBeInTheDocument();
-    await waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(expect.arrayContaining([
-      'agent.sessions.list',
-      'agent.roles.list',
-      'agent.wakeSchedules.list',
-    ])));
+    expect(openApp).toHaveBeenLastCalledWith('schedules', '/schedules?view=agent');
   });
 
   it('registers a WorkDocument through the disclosed production route and refreshes the list', async () => {

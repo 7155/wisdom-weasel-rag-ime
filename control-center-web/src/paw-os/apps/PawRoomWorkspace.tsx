@@ -50,7 +50,6 @@ import {
 } from '@/features/rooms/runtime/room-execution-lanes';
 import { useRoomLiveSession } from '@/features/rooms/runtime/use-room-live-session';
 import { usePageVisibility } from '@/platform/use-page-visibility';
-import { pulsePawCompositionForRuntimeEvents } from '../runtime/composition-pulse';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
 import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-store';
 import {
@@ -344,7 +343,6 @@ export function PawRoomWorkspace({
     onConnectionError: (_roomId, reason, fallback) => setConnectionError(roomErrorText(reason, fallback)),
     onEvents: (_roomId, events) => {
       acknowledgeOptimisticSteer(events);
-      pulsePawCompositionForRuntimeEvents('room', events.map((event) => event.eventType));
     },
   });
 

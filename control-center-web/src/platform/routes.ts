@@ -534,6 +534,17 @@ export const CONTROL_ROUTES = {
     params: { sessionId: null },
     query: ['path', 'depth', 'limit'],
   },
+  'files.list': {
+    method: 'GET',
+    path: '/api/files/list',
+    query: ['path', 'offset', 'limit'],
+  },
+  'files.read': {
+    method: 'GET',
+    path: '/api/files/read',
+    query: ['path', 'offset', 'limit', 'sessionId'],
+    requiredQuery: ['path'],
+  },
   'agent.session.workspace.read': {
     method: 'GET',
     path: '/api/agent/sessions/:sessionId/workspace-file',

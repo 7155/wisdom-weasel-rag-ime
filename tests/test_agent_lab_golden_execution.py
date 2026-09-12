@@ -154,6 +154,7 @@ class GoldenExecutionTests(unittest.TestCase):
         job = self.run_job(app, store)
         self.assertEqual(job["state"], "completed")
         self.assertEqual(job["result"]["executionMode"], "knowledge_qa")
+        self.assertEqual(job["result"]["optimizationScope"], "model")
         self.assertEqual(job["result"]["knowledge"], binding)
         self.assertEqual(job["result"]["referenceAuthority"], "agent_assisted")
         self.assertEqual(job["result"]["labelAuthors"]["agent"], 3)
@@ -166,6 +167,28 @@ class GoldenExecutionTests(unittest.TestCase):
             for secret in ("REFERENCE-FACT-SECRET", "RUBRIC-SECRET", "HUMAN-LABEL-SECRET", SOURCES[0]["text"]):
                 self.assertNotIn(secret, request["prompt"])
         self.assertEqual(job["result"]["development"]["cases"][0]["baseline"]["retrieval"]["sourceCount"], 1)
+        for request in pi.calls:
+            if ":judge:" in request["request_id"]:
+                sources = task_data(request["prompt"])["sources"]
+                self.assertIn("RETRIEVED-EVIDENCE-ONLY", [source["text"] for source in sources])
+
+    def test_knowledge_judge_accepts_quotes_from_the_actual_packet(self):
+        store = self.experiment_store()
+        store.snapshot["knowledge"] = {"indexId": "index-1", "corpusHash": "frozen"}
+        pi = PiDouble()
+        original = pi.__call__
+        def complete(**request):
+            result = original(**request)
+            if ":judge:" in request["request_id"]:
+                data = task_data(request["prompt"])
+                self.assertIn("retrieved-source", [source["sourceId"] for source in data["sources"]])
+                result["text"] = json.dumps({"verdict": "pass", "reason": "Supported by the actual retrieval packet", "evidence": [{"sourceId": "retrieved-source", "quote": "Packet evidence"}]})
+            return result
+        app = AgentLabGoldenApplication(store=store, complete=complete, abort=lambda _: None, start_workers=False,
+            retrieve_knowledge=lambda *_: [{"sourceId": "retrieved-source", "title": "Actual packet", "text": "Packet evidence", "chunkId": "chunk-1", "uri": "kb://1"}])
+        self.addCleanup(app.close)
+        result = self.run_job(app, store)["result"]
+        self.assertEqual(result["holdout"]["baselineMetrics"]["passRate"], 1.0)
 
     def test_missing_knowledge_retrieval_never_falls_back_to_reference_corpus(self):
         store = FakeStore("experiment", {"snapshotId": "snapshot-1", "baseline": MODEL,

@@ -33,7 +33,7 @@ const KnowledgeFeature = lazy(async () => ({ default: (await import('@/features/
 const EvalLabFeature = lazy(async () => ({ default: (await import('@/features/eval-lab')).EvalLabFeature }));
 const MemoryFeature = lazy(async () => ({ default: (await import('@/features/memory')).MemoryFeature }));
 
-export type PawNativeAppId = Exclude<PawOsAppId, 'agent' | 'agent-capsule' | 'browser' | 'files' | 'terminal' | 'trace-agent'>;
+export type PawNativeAppId = Exclude<PawOsAppId, 'agent' | 'agent-capsule' | 'browser' | 'files' | 'terminal' | 'trace-agent' | 'schedules'>;
 type PawFeatureAppId = Exclude<PawNativeAppId, PawSystemAppId>;
 
 type NativePage = { id: string; label: string; icon: LucideIcon; route: string };
@@ -73,8 +73,8 @@ function PawFeatureApp({ appId, initialRoute }: { appId: PawFeatureAppId; initia
   const route = initialRoute || app.route;
   const pageId = pageForRoute(pages, route).id;
   return (
-    <div className="paw-native-app" data-app-id={appId} data-page-id={pageId} data-sidebar-collapsed={sidebar.collapsed} data-owns-navigation={appId === 'knowledge' || undefined} data-single-page={pages.length === 1 || undefined}>
-      {appId === 'knowledge' ? null : <aside className="paw-native-nav">
+    <div className="paw-native-app" data-app-id={appId} data-page-id={pageId} data-sidebar-collapsed={sidebar.collapsed} data-owns-navigation={appId === 'knowledge' || appId === 'eval-lab' || undefined} data-single-page={pages.length === 1 || undefined}>
+      {appId === 'knowledge' || appId === 'eval-lab' ? null : <aside className="paw-native-nav">
         <AppSidebarToggle collapsed={sidebar.collapsed} controlsId={sidebar.controlsId} label={`${app.label}导航`} onToggle={() => sidebar.setCollapsed(!sidebar.collapsed)} toggleRef={sidebar.toggleRef} />
         <nav aria-label={`${app.label}页面`} {...sidebar.contentProps}>
           {pages.map((page) => {

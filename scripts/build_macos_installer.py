@@ -83,6 +83,12 @@ def main() -> None:
         if native.get('gitCommit') != commit or native.get('gitDirty') is not False:
             raise SystemExit(f'Native component differs from product source: {app_name}')
     run('/usr/bin/ditto', control / 'Contents/Resources/app/dist', source / 'control-center-web/dist')
+    # App preparation on a binary-only installation must not require Node or
+    # a fresh frontend build. Ship the same compiled shared controls as source.
+    portable_ui = ROOT / 'control-center-web/.generated/portable-agent-ui'
+    if not all((portable_ui / name).is_file() for name in ('agent-ui.js', 'agent-ui.css')):
+        raise SystemExit('Build portable Agent UI controls before packaging the installer.')
+    run('/usr/bin/ditto', portable_ui, source / 'control-center-web/.generated/portable-agent-ui')
     run('/usr/bin/ditto', args.pi_payload, payload / 'pi-runtime')
     pi_manifest_path = payload / 'pi-runtime/manifest.json'
     pi = json.loads(pi_manifest_path.read_text())

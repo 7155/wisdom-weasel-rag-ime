@@ -9,6 +9,7 @@ import { PawSessionWorkspace, sessionWorkspaceProjectionSlice } from '@/paw-os/a
 import type { ControlTransport } from '@/platform/transport';
 import { labConnectionKey, requestLabControl } from '../control-request';
 import { object, type LabProject } from './types';
+import { projectGuidanceMessage } from './project-guidance';
 
 export function ProjectGuide({ project, draftRequest, onNewProject, onProjectActivity, onEnsure }: {
   project: LabProject; draftRequest?: { id: number; text: string }; onNewProject: () => void;
@@ -95,4 +96,4 @@ export async function sendProjectGuideMessage(transport: ControlTransport, proje
     throw reason;
   }
 }
-export const initialProjectMessage = '请带领我完成这个 Lab 项目。先使用 lab_project 读取真实描述、材料与当前成果，按需加载 agent-lab-project 和相关专业 Skill。根据项目决定成果结构、展示形式和下一步，必要时使用或调整 Skill 模板；不要套用固定业务表单。能检查和执行的工作请继续推进，将可阅读、可操作的成果发布到当前项目；实际运行和交付结果以对应工具回执为准。';
+export const initialProjectMessage = projectGuidanceMessage('guided');

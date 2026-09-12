@@ -4,11 +4,14 @@ import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/primitives';
 import { useRichHtmlUrl } from '@/features/agent/file-preview/use-rich-html-url';
 import { object, type ArtifactAction, type ArtifactCode, type ArtifactForm, type ArtifactTable, type JsonValue, type LabArtifact } from './types';
+import { ExperimentArtifactVisual, ExperimentTableVisual, RawArtifactData } from './ExperimentArtifactVisual';
+import { ExperimentReport, experimentReportMode, isExperimentSnapshot } from './ExperimentReport';
 
 export type ArtifactDraft = { revision: number; content: JsonValue; raw?: string };
 const viewLabels = { markdown:'文档', table:'表格', form:'表单', code:'代码', html:'交互页面', json:'结构化数据' };
-export function ArtifactSurface({ artifact, draft, busy, onDraft, onSave, onAction }: {
+export function ArtifactSurface({ artifact, draft, busy, onDraft, onSave, onAction, reportSnapshot, selectedExperiment, onSelectExperiment }: {
   artifact: LabArtifact; draft?: ArtifactDraft; busy: boolean;
+  reportSnapshot?: JsonValue; selectedExperiment?: string; onSelectExperiment?: (id: string) => void;
   onDraft: (draft?: ArtifactDraft) => void;
   onSave: (content: JsonValue, revision: number) => Promise<boolean>;
   onAction: (action: ArtifactAction, values: Record<string, JsonValue>, staged?: boolean) => void;
@@ -27,27 +30,32 @@ export function ArtifactSurface({ artifact, draft, busy, onDraft, onSave, onActi
     }
     if (await onSave(next, revision)) { onDraft(undefined); setEditing(false); setError(''); }
   };
+  const reportMode = experimentReportMode(artifact);
+  const reportContent = reportMode === 'records' ? content : reportSnapshot;
+  const showReport = Boolean(reportMode && isExperimentSnapshot(reportContent) && (!changed || showLatest));
   const actionValues = artifact.view === 'form' ? (content as unknown as ArtifactForm).values : {};
-  return <section className="lab-artifact" aria-label={artifact.title}>
-    <header className="lab-artifact__header">
-      <div><small>{viewLabels[artifact.view]} · v{artifact.revision}</small><h2>{artifact.title}</h2>{artifact.summary ? <p>{artifact.summary}</p> : null}</div>
-      <div className="lab-artifact__toolbar">
+  const toolbar = <div className="lab-artifact__toolbar">
         {artifact.view !== 'form' ? <Button size="small" disabled={busy || showLatest} onClick={() => setEditing((value) => !value)}>{editing ? '查看成果' : '编辑内容'}</Button> : null}
         {changed ? <Button size="small" disabled={busy} onClick={() => { onDraft(undefined); setError(''); }}>放弃本地修改</Button> : null}
         {changed ? <Button size="small" variant="primary" disabled={busy || stale} onClick={() => void save()}>保存新版本</Button> : null}
-      </div>
-    </header>
+      </div>;
+  return <section className="lab-artifact" aria-label={artifact.title}>
+    {!showReport || editing ? <header className="lab-artifact__header">
+      <div><small>{viewLabels[artifact.view]} · v{artifact.revision}</small><h2>{artifact.title}</h2>{artifact.summary ? <p>{artifact.summary}</p> : null}</div>
+      {toolbar}
+    </header> : null}
     {stale ? <div className="lab-project-notice" role="status"><strong>成果已有新版本，你的草稿仍在。</strong><p>可以先查看新版，再决定要保留的内容。</p><Button size="small" onClick={() => { setShowLatest((value) => !value); setEditing(false); }}>{showLatest ? '返回我的草稿' : '查看新版，保留草稿'}</Button><Button size="small" onClick={() => { onDraft({ ...draft!, revision: artifact.revision }); setShowLatest(false); }}>用草稿作为新版内容</Button></div> : null}
     {error ? <p className="lab-project-error" role="alert">{error}</p> : null}
     <div className={`lab-artifact__content lab-artifact__content--${artifact.view}`}>
       {editing ? <textarea className="lab-artifact__source" aria-label="成果内容草稿" spellCheck={false} value={valueText} readOnly={busy}
         onChange={(event) => update(['markdown', 'html'].includes(artifact.view) ? event.target.value : content, event.target.value)} />
+        : showReport ? <><ExperimentReport content={reportContent!} mode={reportMode!} selectedId={selectedExperiment} onSelect={onSelectExperiment} toolbar={toolbar} /><details className="lab-visual-raw"><summary>{artifact.view === 'markdown' ? '查看完整说明文档' : artifact.view === 'table' ? '查看原始数据表' : '查看原始 JSON'}</summary>{artifact.view === 'markdown' ? <div className="lab-artifact__markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{String(content)}</ReactMarkdown></div> : artifact.view === 'table' ? <ProjectTable content={content as unknown as ArtifactTable} rawOnly /> : <pre>{JSON.stringify(content, null, 2)}</pre>}</details></>
         : artifact.view === 'markdown' ? <div className="lab-artifact__markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{String(content)}</ReactMarkdown></div>
           : artifact.view === 'html' ? <IsolatedProjectHtml artifact={artifact} content={String(content)} onAction={(action, values) => { if (!changed) onAction(action, values, true); }} />
             : artifact.view === 'table' ? <ProjectTable content={content as unknown as ArtifactTable} />
               : artifact.view === 'form' ? <ProjectForm content={content as unknown as ArtifactForm} disabled={busy || showLatest} onChange={(next) => update(next as unknown as JsonValue)} />
                 : artifact.view === 'code' ? <ProjectCode content={content as unknown as ArtifactCode} />
-                  : <pre className="lab-artifact__json">{JSON.stringify(content, null, 2)}</pre>}
+                  : <><ExperimentArtifactVisual content={content} /><RawArtifactData content={content} /></>}
     </div>
     {artifact.actions.length ? <footer className="lab-artifact__actions">{artifact.actions.map((action) => <Button key={action.actionId} disabled={busy || changed} onClick={() => {
       const form = artifact.view === 'form' ? content as unknown as ArtifactForm : undefined;
@@ -59,12 +67,15 @@ export function ArtifactSurface({ artifact, draft, busy, onDraft, onSave, onActi
   </section>;
 }
 
-function ProjectTable({ content }: { content: ArtifactTable }) {
-  return <div className="lab-artifact__table-scroll"><table>{content.caption ? <caption>{content.caption}</caption> : null}
+function ProjectTable({ content, rawOnly = false }: { content: ArtifactTable; rawOnly?: boolean }) {
+  const visual = !rawOnly && (['experiment', 'metric', 'baseline', 'candidate'].every((key) => content.columns.some((column) => column.key === key))
+    || ['experimentId', 'comparedTo', 'decision', 'whyContinue'].every((key) => content.columns.some((column) => column.key === key)));
+  const table = <div className="lab-artifact__table-scroll"><table>{!visual && content.caption ? <caption>{content.caption}</caption> : null}
     <thead><tr>{content.columns.map((column) => <th key={column.key} scope="col">{column.label}</th>)}</tr></thead>
     <tbody>{content.rows.length ? content.rows.map((row, index) => <tr key={index}>{content.columns.map((column) => <td key={column.key}>{formatValue(row[column.key])}</td>)}</tr>)
       : <tr><td colSpan={content.columns.length}>当前还没有记录。</td></tr>}</tbody>
   </table></div>;
+  return visual ? <>{content.caption ? <p className="lab-visual-note">{content.caption}</p> : null}<ExperimentTableVisual content={content} /><details className="lab-visual-raw"><summary>查看数据表</summary>{table}</details></> : table;
 }
 function formatValue(value: JsonValue | undefined): string {
   return value === null || value === undefined ? '—' : typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value);

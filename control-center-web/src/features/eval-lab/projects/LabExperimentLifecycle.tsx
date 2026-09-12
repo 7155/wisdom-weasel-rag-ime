@@ -1,65 +1,85 @@
-import { ArrowRight, CheckCircle2, CircleDot, FileText, MessageSquare, Play, RotateCcw, Target } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { ArrowRight, CheckCircle2, CircleDot, FileText, FlaskConical, PackageCheck, Play, Plus } from 'lucide-react';
+import { useMemo, type ReactNode } from 'react';
 import { Button } from '@/components/primitives';
 import type { ArtifactSummary, LabProject } from './types';
+import type { ProjectGuidanceMode } from './project-guidance';
 
 type Props = {
   project: LabProject;
   onOpenArtifact: (artifactId: string) => void;
   onOpenRuns: () => void;
   onDirection: (direction: string) => void;
+  onOpenMaterials?: () => void;
+  onAddMaterials?: () => void;
+  onOpenApps?: () => void;
+  onContinue?: (mode: ProjectGuidanceMode) => void;
+  busy?: boolean;
 };
 const directions = [
-  ['prompt', 'Prompt 优化'], ['tool', 'Tool 优化'], ['workflow', 'MCP / Workflow 优化'],
-  ['retrieval', '检索优化'], ['model', 'Model 优化'],
+  ['prompt', 'Prompt 优化'], ['model', 'Model 优化'], ['retrieval', '检索优化'],
+  ['tool', 'Tool 优化'], ['workflow', 'MCP / Workflow 优化'],
 ] as const;
 
+// These matches locate presentation documents only. A matching title never
+// establishes dataset approval, a completed run or a successful experiment.
 const artifactFor = (artifacts: ArtifactSummary[], ...names: string[]) => artifacts.find((item) => names.some((name) => item.title.includes(name)));
-const titleOf = (artifact?: ArtifactSummary) => artifact?.title ?? '尚未生成';
+const titleOf = (artifact?: ArtifactSummary) => artifact?.title ?? '尚无记录';
 
-/**
- * The project-owned lifecycle surface. It renders the causal chain recorded by
- * Agent Lab; it does not calculate or invent metrics in the client.
- */
-export function LabExperimentLifecycle({ project, onOpenArtifact, onOpenRuns, onDirection }: Props) {
-  const [round, setRound] = useState(0);
-  const artifacts = project.artifacts;
-  const modelBinding = project.bindings.find((item) => item.ownerRef.kind === 'golden_suite');
+export function LabExperimentLifecycle({ project, onOpenArtifact, onOpenRuns, onDirection, onOpenMaterials, onAddMaterials, onOpenApps, onContinue, busy = false }: Props) {
   const records = useMemo(() => ({
-    materials: artifactFor(artifacts, '冻结材料', '材料目录'),
-    overview: artifactFor(artifacts, '实验总览', '评测数据'),
-    metrics: artifactFor(artifacts, '指标对照', '指标'),
-    changes: artifactFor(artifacts, '改动与结论', '逐步实验卡', '变更'),
-    snapshot: artifactFor(artifacts, '原始评测记录', '原始运行', '聊天记录'),
-    best: artifactFor(artifacts, '最优方案', '最终方案', '总结'),
-    failure: artifactFor(artifacts, '失败', '诊断', '问题'),
-  }), [artifacts]);
-  const execution = modelBinding?.execution;
+    materials: artifactFor(project.artifacts, '冻结材料', '材料目录'),
+    overview: artifactFor(project.artifacts, '实验总览', '评测数据'),
+    metrics: artifactFor(project.artifacts, '指标对照', '指标'),
+    changes: artifactFor(project.artifacts, '改动与结论', '逐步实验卡', '变更'),
+    snapshot: artifactFor(project.artifacts, '原始评测记录', '原始运行', '聊天记录'),
+    best: artifactFor(project.artifacts, '最优方案', '最终方案', '总结'),
+    failure: artifactFor(project.artifacts, '失败', '诊断', '问题'),
+  }), [project.artifacts]);
+  const binding = project.bindings.find((item) => ['queued', 'running'].includes(item.execution?.status ?? ''))
+    ?? project.bindings.find((item) => item.ownerRef.kind === 'golden_suite');
+  const execution = binding?.execution;
+  const running = execution?.status === 'running' || execution?.status === 'queued';
   const completed = execution?.status === 'completed' && execution.latestJob?.kind === 'experiment';
-  const decision = execution?.latestJob?.decision;
-  const step = (number: number, title: string, description: string, artifact?: ArtifactSummary, action?: ReactNode, statusLabel?: string) => (
-    <section className="lab-lifecycle-stage" key={title}>
-      <div className="lab-lifecycle-stage__index">{number}</div>
+  const noImprovement = completed && execution.latestJob?.decision === 'no_improvement';
+  const failed = ['failed', 'cancelled', 'interrupted', 'unavailable'].includes(execution?.status ?? '');
+  const outcome = noImprovement ? '本轮无提升，沿用基线' : completed ? '本轮评测已完成' : execution?.label ?? '尚未开始运行';
+  const openRecord = (artifact: ArtifactSummary, label = '查看记录') => <Button size="small" variant="secondary" onClick={() => onOpenArtifact(artifact.artifactId)}>{label}<ArrowRight size={14} /></Button>;
+  const step = (number: number, title: string, description: string, status: string, available: boolean, action: ReactNode, artifact?: ArtifactSummary) => (
+    <li className="lab-lifecycle-stage" data-state={available ? 'available' : 'pending'}>
+      <span className="lab-lifecycle-stage__index" aria-hidden="true">{number}</span>
       <div className="lab-lifecycle-stage__body">
-        <div className="lab-lifecycle-stage__heading"><div><h3>{title}</h3><p>{description}</p></div>{artifact ? <span className="lab-lifecycle-stage__record"><FileText size={13} />{titleOf(artifact)}</span> : statusLabel ? <span className="lab-lifecycle-stage__record"><CheckCircle2 size={13} />{statusLabel}</span> : <span className="lab-lifecycle-stage__missing">尚未记录</span>}</div>
-        <div className="lab-lifecycle-stage__actions">
-          {artifact ? <Button size="small" variant="secondary" onClick={() => onOpenArtifact(artifact.artifactId)}>打开真实记录<ArrowRight size={14} /></Button> : null}
-          {action}
-        </div>
+        <div className="lab-lifecycle-stage__heading"><h3>{title}</h3><span className="lab-lifecycle-stage__status">{available ? <CheckCircle2 size={14} /> : <CircleDot size={14} />}{status}</span></div>
+        <p>{description}</p>
+        {artifact ? <span className="lab-lifecycle-stage__record"><FileText size={13} />{artifact.title}</span> : null}
+        <div className="lab-lifecycle-stage__actions">{action}</div>
       </div>
-    </section>
+    </li>
   );
   return <section className="lab-lifecycle" aria-label="实验闭环">
-    <header className="lab-lifecycle__header"><div><small>项目实验闭环 · 真实记录</small><h2>材料 → 评测 → 运行 → 多轮指标 → 最优方案</h2><p>每个结论都必须能回到评测集、原始运行和对应变更；客户端只展示已保存回执。</p></div><Button size="small" onClick={onOpenRuns}><Play size={14} />查看原始运行记录</Button></header>
-    <div className="lab-lifecycle-chain" aria-label="实验因果链"><span>失败证据</span><ArrowRight size={14} /><span>修改假设</span><ArrowRight size={14} /><span>实际运行</span><ArrowRight size={14} /><span>指标判定</span><ArrowRight size={14} /><span>保留 / 淘汰</span></div>
-    <div className="lab-lifecycle-stages">
-      {step(1, '接入材料与知识库', `${project.materialCount} 份材料已接入；来源、版本和解析问题保存在材料快照中。`, records.materials, <Button size="small" variant="secondary" onClick={() => onOpenArtifact(records.materials?.artifactId ?? '')} disabled={!records.materials}>查看材料关联</Button>, records.materials ? undefined : project.materialCount ? `${project.materialCount} 份材料已冻结` : undefined)}
-      {step(2, '选择或生成评测数据', '先选择“我提供评测集”或“Agent 起草评测集”，审核题目和标准后才允许产生指标。', records.overview, <div className="lab-lifecycle-source"><span>当前记录：{records.overview ? '已绑定评测回执' : completed ? '已随本轮真实运行核对' : '等待评测集'}</span></div>, !records.overview && completed ? '评测回执已进入本轮运行' : undefined)}
-      {step(3, '运行基线并保留原始记录', '聊天、Tool/MCP 调用、模型配置、题集版本和终态回执必须来自同一次运行。', records.snapshot, <div className="lab-lifecycle-run-action"><Button size="small" variant="secondary" onClick={onOpenRuns}><MessageSquare size={14} />{execution?.status === 'running' || execution?.status === 'queued' ? '查看模型运行' : completed ? '查看本轮回执' : '开始真实模型运行'}</Button><span>{execution?.label ?? '尚未读取运行状态'}</span></div>, !records.snapshot && completed ? `真实运行回执 · ${execution?.label ?? '已完成'}` : undefined)}
-      {step(4, `第 ${round + 1} 轮优化与指标`, '每轮只改一个主要方向；上一轮结果作为对照，指标和失败 Case 不覆盖历史。', records.metrics, <div className="lab-lifecycle-rounds"><div className="lab-lifecycle-rounds__toolbar"><Button size="small" variant="secondary" onClick={() => setRound((value) => Math.max(0, value - 1))} disabled={round === 0}><RotateCcw size={13} />上一轮</Button><span>Round {round + 1} · 与上一轮直接对照</span><Button size="small" variant="secondary" onClick={() => setRound((value) => value + 1)}>下一轮</Button></div><div className="lab-lifecycle-directions">{directions.map(([id, label]) => <Button key={id} size="small" variant="secondary" onClick={() => onDirection(label)} data-direction={id}>{label}</Button>)}</div></div>, !records.metrics && completed ? `已完成 · ${decision || '判定已记录'}` : undefined)}
-      {step(5, '最优方案与完整变更链', '最终方案必须逐项说明 Prompt、Tool、MCP/Workflow、Model、检索和 Skill 从基线到当前版本的实际变化。', records.best ?? records.changes, <div className="lab-lifecycle-best"><Target size={15} />{records.best ? '已保存最优方案快照' : completed && decision === 'no_improvement' ? '本轮无提升 · 保留基线并可继续' : '尚未生成最优方案快照'}{records.best ? <Button size="small" variant="secondary" onClick={() => onOpenArtifact(records.best!.artifactId)}>打开总结</Button> : null}</div>, !records.best && !records.changes && completed ? (decision === 'no_improvement' ? '本轮无提升 · 保留基线' : '本轮判定已记录') : undefined)}
+    <header className="lab-lifecycle__header"><div><h2>实验进展</h2><p>固定评测条件，比较质量与成本，再把验证过的方案交付为应用。</p></div><Button size="small" variant="secondary" onClick={onOpenRuns}><Play size={14} />查看原始运行记录</Button></header>
+    <div className="lab-lifecycle-current" data-state={running ? 'running' : failed ? 'attention' : completed ? 'completed' : 'pending'} role="status">
+      <FlaskConical size={19} /><div><strong>{outcome}</strong><p>{execution?.reason || project.nextAction?.reason || '先接入项目材料，再和项目 Agent 确定评测任务与通过标准。'}</p></div>
+      {running || failed ? <Button size="small" onClick={onOpenRuns}>{running ? '查看模型运行' : '处理运行问题'}</Button> : null}
     </div>
-    <section className="lab-lifecycle-causality" aria-label="失败证据与修改依据"><header><div><small>为什么做这次修改</small><h3>失败证据 → 修改方向</h3></div>{records.failure ? <Button size="small" variant="secondary" onClick={() => onOpenArtifact(records.failure!.artifactId)}>查看失败记录</Button> : null}</header><p>{records.failure?.summary ?? '当前项目还没有绑定失败证据；先完成一次基线运行，才会出现可追溯的修改依据。'}</p><div className="lab-lifecycle-causality__links"><span><CircleDot size={13} />本轮变更：{titleOf(records.changes)}</span><span><CircleDot size={13} />指标记录：{titleOf(records.metrics)}</span><span><CircleDot size={13} />原始运行：{titleOf(records.snapshot)}</span></div></section>
-    <footer><CheckCircle2 size={15} />当前项目：{project.artifactCount} 份成果 · {project.bindings.length} 个执行绑定 · Round {round + 1}{completed ? ` · ${decision || '已完成'}` : ''}</footer>
+    {onContinue ? <div className="lab-lifecycle-continue"><div><h3>从当前进度继续</h3><p>Agent 检查已有工作，按实际结果推进。你可以随时在项目对话中补充方向或停止。</p></div><div><Button variant="primary" disabled={busy || running} onClick={() => onContinue('auto')}>自动推进优化</Button><Button variant="secondary" disabled={busy || running} onClick={() => onContinue('guided')}>带我逐步完成</Button></div></div> : null}
+    <ol className="lab-lifecycle-stages" aria-label="从材料到应用的评测流程">
+      {step(1, '材料与知识库', project.materialCount ? `已接入 ${project.materialCount} 份材料，可查看内容、来源和接入问题。` : '添加业务资料、已有代码或失败案例，让评测围绕你的实际任务展开。', project.materialCount ? '已接入材料' : '待添加材料', project.materialCount > 0,
+        <>{onAddMaterials ? <Button size="small" variant={project.materialCount ? 'secondary' : 'primary'} onClick={onAddMaterials}><Plus size={14} />添加材料</Button> : null}{project.materialCount && onOpenMaterials ? <Button size="small" variant="secondary" onClick={onOpenMaterials}>查看材料</Button> : null}{!project.materialCount && onContinue ? <Button size="small" variant="secondary" disabled={busy || running} onClick={() => onContinue('sample')}>用示例走通流程</Button> : null}{records.materials ? openRecord(records.materials, '查看材料记录') : null}</>, records.materials)}
+      {step(2, '评测集与通过标准', '使用你提供的题目，或让 Agent 起草评测集。先核对题目和标准，再开始比较。', records.overview ? '有评测文档' : completed ? '回执已保存在运行中' : '等待评测集', Boolean(records.overview) || completed,
+        <>{records.overview ? openRecord(records.overview, '查看评测文档') : <Button size="small" variant="secondary" disabled={busy || running} onClick={() => onDirection('准备评测集与基线运行')}>与 Agent 准备评测</Button>}{binding ? <Button size="small" variant="secondary" onClick={onOpenRuns}>查看评测与运行</Button> : null}</>, records.overview)}
+      {step(3, '运行与原始记录', '在同一评测条件下运行基线与候选，保留每个案例的回答、工具调用和结果。', completed ? '运行已完成' : running ? '运行中' : records.snapshot ? '有运行文档' : '待运行', completed || Boolean(records.snapshot),
+        <>{records.snapshot ? openRecord(records.snapshot, '查看运行文档') : null}<Button size="small" variant="secondary" onClick={onOpenRuns}><Play size={14} />{completed ? '查看本轮回执' : '查看运行'}</Button></>, records.snapshot)}
+      {step(4, '指标对照与下一步优化', '每轮只改变一个主要方向。比较通过率、成本和失败案例，并保留此前结果。', records.metrics ? '有指标文档' : completed ? '判定已记录' : '待评测结果', Boolean(records.metrics) || completed,
+        <>{records.metrics ? openRecord(records.metrics, '查看指标对照') : null}<Button size="small" variant="secondary" onClick={onOpenRuns}>查看历史运行</Button><div className="lab-lifecycle-directions" aria-label="选择下一轮优化方向">{directions.map(([id, label]) => <Button key={id} size="small" variant="secondary" disabled={busy || running} onClick={() => onDirection(label)} data-direction={id}>{label}</Button>)}</div>{running ? <span className="lab-lifecycle-help">当前运行结束后，可以选择下一轮优化方向。</span> : <span className="lab-lifecycle-help">选择方向会交给项目 Agent；新的结果以实际运行记录为准。</span>}</>, records.metrics)}
+      {step(5, '方案与应用交付', noImprovement ? '本轮没有获得更好的方案，保留基线。你仍可以查看改动依据，或继续验证其他方向。' : '汇总已验证的配置与改动，先试用，再添加至 PAW 或导出独立应用。', records.best ? '有方案文档' : noImprovement ? '沿用基线' : '待整理方案', Boolean(records.best) || noImprovement,
+        <>{records.best ? openRecord(records.best, '打开总结') : records.changes ? openRecord(records.changes, '查看改动与结论') : null}{onOpenApps ? <Button size="small" variant="secondary" onClick={onOpenApps}><PackageCheck size={14} />前往应用交付</Button> : null}</>, records.best ?? records.changes)}
+    </ol>
+    <details className="lab-lifecycle-causality">
+      <summary>失败证据与修改依据{records.failure ? ' · 已有记录' : ''}</summary>
+      <p>{records.failure?.summary || '完成一次基线运行后，再根据实际失败案例选择修改方向。当前尚无关联的失败文档。'}</p>
+      {records.failure ? openRecord(records.failure, '查看失败记录') : null}
+      <div className="lab-lifecycle-causality__links"><span>变更：{titleOf(records.changes)}</span><span>指标：{titleOf(records.metrics)}</span><span>原始记录：{titleOf(records.snapshot)}</span></div>
+    </details>
+    <footer>{project.artifactCount} 份成果文档 · {project.bindings.length} 个执行绑定<span>文档状态与真实运行状态分别展示。</span></footer>
   </section>;
 }

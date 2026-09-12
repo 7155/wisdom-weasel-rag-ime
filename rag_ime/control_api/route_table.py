@@ -24,6 +24,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Any
+from ..desktop_files import file_error_response
 
 from .lab_errors import (
     lab_golden_error_response,
@@ -124,6 +125,13 @@ def _tag_phonetic_correction(payload: dict[str, Any]) -> dict[str, Any]:
 # Vocabulary is the first migrated family: seven routes, entirely local, each a
 # straight payload-to-service call, so the descriptor shape can be proven
 # against a family whose behaviour is unambiguous.
+FILES_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(method="GET", path="/api/files/list", handler="desktop_files.list",
+                    query_args=("path", "offset", "limit"), error_response=file_error_response),
+    RouteDescriptor(method="GET", path="/api/files/read", handler="desktop_files.read",
+                    query_args=("path", "offset", "limit", "sessionId"), error_response=file_error_response),
+)
+
 VOCABULARY_ROUTES: tuple[RouteDescriptor, ...] = (
     RouteDescriptor(
         method="GET",
@@ -801,6 +809,7 @@ WORK_DOCUMENT_ROUTES: tuple[RouteDescriptor, ...] = (
 
 
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
+    *FILES_ROUTES,
     *EXTENSION_SANDBOX_EXPERIMENT_ROUTES,
     *SYSTEM_TERMINAL_ROUTES,
     *WORK_DOCUMENT_ROUTES,

@@ -26,6 +26,45 @@ function mount(transport: MockControlTransport, body = <LabAppDelivery projectId
 const read = (current: LabApp, item = version()) => ({ ok: true, items: [current], app: current, version: item, versions: [item], calls: [] });
 
 describe('Lab application delivery', () => {
+  it('persists local App state across versions, isolates App owners and rejects oversized state', () => {
+    const transport = new MockControlTransport();
+    const one = mount(transport, <LabAppPreview app={app()} version={version()} calls={[]} onActivity={() => undefined} />);
+    const frame = screen.getByTitle('售后助手 · 应用预览') as HTMLIFrameElement;
+    const reply = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const send = (kind: string, fields: Record<string, unknown> = {}) => fireEvent(window, new MessageEvent('message', { source: frame.contentWindow, data: { kind, requestId: '11111111-1111-1111-1111-111111111111', key: 'places', ...fields } }));
+    send('paw.lab-app.state.set', { value: [{ name: '地点', lon: 116, lat: 40 }] });
+    send('paw.lab-app.state.get');
+    expect(reply).toHaveBeenLastCalledWith(expect.objectContaining({ ok: true, result: [{ name: '地点', lon: 116, lat: 40 }] }), '*');
+    send('paw.lab-app.state.set', { value: 'x'.repeat(128_001) });
+    expect(reply).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }), '*');
+    one.unmount();
+    const next = mount(transport, <LabAppPreview app={app()} version={{ ...version(), version: 2 }} calls={[]} onActivity={() => undefined} />);
+    const secondFrame = screen.getByTitle('售后助手 · 应用预览') as HTMLIFrameElement;
+    const secondReply = vi.spyOn(secondFrame.contentWindow!, 'postMessage');
+    fireEvent(window, new MessageEvent('message', { source: secondFrame.contentWindow, data: { kind: 'paw.lab-app.state.get', requestId: '22222222-2222-2222-2222-222222222222', key: 'places' } }));
+    expect(secondReply).toHaveBeenLastCalledWith(expect.objectContaining({ result: [{ name: '地点', lon: 116, lat: 40 }] }), '*');
+    next.unmount();
+    mount(transport, <LabAppPreview app={app(secondId)} version={version(secondId)} calls={[]} onActivity={() => undefined} />);
+    const otherFrame = screen.getByTitle('售后助手 · 应用预览') as HTMLIFrameElement;
+    const otherReply = vi.spyOn(otherFrame.contentWindow!, 'postMessage');
+    fireEvent(window, new MessageEvent('message', { source: otherFrame.contentWindow, data: { kind: 'paw.lab-app.state.get', requestId: '33333333-3333-3333-3333-333333333333', key: 'places' } }));
+    expect(otherReply).toHaveBeenLastCalledWith(expect.objectContaining({ result: null }), '*');
+    localStorage.clear();
+  });
+  it('shows a recoverable read error instead of an endless loading message', async () => {
+    let unavailable = true;
+    const transport = new MockControlTransport({ routes: { 'agent.eval-lab.apps.get': () => {
+      if (unavailable) throw new Error('应用读取失败');
+      return { ok: true, items: [], app: null, version: null, versions: [], calls: [] };
+    } } });
+    const guide = vi.fn(); mount(transport, <LabAppDelivery projectId="project-1" onGuide={guide} />);
+    await screen.findByRole('button', { name: '重新读取应用' });
+    expect(screen.queryByText('正在读取应用版本…')).not.toBeInTheDocument();
+    unavailable = false;
+    fireEvent.click(screen.getByRole('button', { name: '重新读取应用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '让 Agent 准备应用' }));
+    expect(guide).toHaveBeenCalledOnce();
+  });
   it('preserves the conversation while opening a declared workspace and denies its messages the App bridge', async () => {
     const current = app(); const item = version();
     item.spec.externalWorkspace = { title: '空间工作台', url: 'http://127.0.0.1:5173/' };
@@ -92,6 +131,8 @@ describe('Lab application delivery', () => {
     } });
     mount(transport);
     fireEvent.click(await screen.findByRole('button', { name: '添加至 PAW' }));
+    await screen.findByRole('button', { name: '核对原操作' });
+    expect(screen.getByRole('button', { name: '添加至 PAW' })).toBeDisabled();
     fireEvent.click(await screen.findByRole('button', { name: '核对原操作' }));
     expect(await screen.findByRole('button', { name: '已添加至 PAW' })).toBeDisabled();
     expect(received).toHaveLength(2); expect(received[1]).toEqual(received[0]);
@@ -103,7 +144,7 @@ describe('Lab application delivery', () => {
     const transport = new MockControlTransport({ routes: { 'agent.eval-lab.apps.command': ({ body }: ControlRequest) => { const command = body as Record<string, unknown>; received.push(command); return { ok: true, app: app(), call: { callId: 'call-1' }, clientRequestId: command.clientRequestId, replayed: false }; } } });
     mount(transport, <LabAppPreview app={app()} version={version()} calls={[]} onActivity={() => undefined} />);
     const frame = screen.getByTitle('售后助手 · 应用预览') as HTMLIFrameElement;
-    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-popups allow-popups-to-escape-sandbox'); expect(frame.getAttribute('srcdoc')).toBeNull();
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox'); expect(frame.getAttribute('srcdoc')).toBeNull();
     expect(frame.getAttribute('src')).toMatch(/^\/__paw_html_preview#/u);
     expect(atob(frame.getAttribute('src')!.split('#')[1]!.replaceAll('-', '+').replaceAll('_', '/'))).toContain("connect-src 'none'");
     const data = { kind: 'paw.lab-app.invoke', actionId: 'answer', requestId: '11111111-1111-1111-1111-111111111111', input: { question: '第七天可以退吗？' } };

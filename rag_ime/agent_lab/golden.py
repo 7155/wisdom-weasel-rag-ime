@@ -28,7 +28,13 @@ __all__ = [
     "AgentLabGoldenStore", "AgentLabGoldenValidationError", "GOLDEN_JUDGE_PROTOCOL_VERSION",
 ]
 
-GOLDEN_JUDGE_PROTOCOL_VERSION = "paw.golden.context-qa-judge.v2"
+GOLDEN_JUDGE_PROTOCOL_VERSION = "paw.golden.context-qa-judge.v3"
+
+
+def optimization_scope(baseline: Mapping, candidate: Mapping, optimize_prompt: bool) -> str:
+    model_changed = any(baseline.get(key) != candidate.get(key) for key in ("provider", "model", "thinkingLevel"))
+    prompt_changed = optimize_prompt or baseline.get("prompt", "") != candidate.get("prompt", "")
+    return "model_and_prompt" if model_changed and prompt_changed else "model" if model_changed else "prompt" if prompt_changed else "repeat"
 
 _ACTIVE = {"queued", "running"}
 _TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
@@ -739,10 +745,10 @@ class AgentLabGoldenStore:
                 snapshot = bound["snapshot"]
                 expected_mode = "knowledge_qa" if snapshot.get("knowledge") else "context_qa"
                 if (result.get("snapshotId") != snapshot["snapshotId"] or result.get("suiteId") != suite["suiteId"]
-                        or result.get("executionMode") != expected_mode or result.get("optimizationScope") != "prompt"
+                        or result.get("executionMode") != expected_mode or result.get("optimizationScope") != optimization_scope(result.get("baseline", {}), result.get("candidate", {}), bool(bound["input"].get("optimizePrompt", True)))
                         or (snapshot.get("knowledge") and result.get("knowledge") != snapshot["knowledge"])
                         or result.get("judgeProtocolVersion", GOLDEN_JUDGE_PROTOCOL_VERSION) != snapshot["judgeProtocolVersion"]):
-                    raise AgentLabGoldenValidationError("实验结果必须绑定本次冻结版本和文档问答 Prompt 范围。")
+                    raise AgentLabGoldenValidationError("实验结果必须绑定本次冻结版本和实际优化范围。")
                 if isinstance(job.get('validationUse'), dict): result['validationUse'] = copy.deepcopy(job['validationUse'])
             job.update(state="completed", progress="已完成", error="", result=result)
             self._save_job(conn, job)

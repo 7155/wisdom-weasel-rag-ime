@@ -338,7 +338,7 @@ class GoldenStoreTests(unittest.TestCase):
     def test_calibration_and_freeze_pin_judge_protocol_and_reject_other_versions(self) -> None:
         self.reviewed()
         calibration = self.calibration()
-        self.assertEqual(calibration["judgeProtocolVersion"], "paw.golden.context-qa-judge.v2")
+        self.assertEqual(calibration["judgeProtocolVersion"], "paw.golden.context-qa-judge.v3")
         snapshot = self.command("freeze")["suite"]["snapshot"]
         self.assertEqual(snapshot["judgeProtocolVersion"], calibration["judgeProtocolVersion"])
         job = self.command("calibrate")["job"]

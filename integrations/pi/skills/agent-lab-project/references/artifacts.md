@@ -14,7 +14,7 @@ Choose the content shape for the view:
 | `form` | Project-defined `fields`, current `values`, optional description |
 | `code` | Source string, language and optional filename |
 | `html` | Self-contained HTML string, displayed in an isolated iframe |
-| `json` | Any valid JSON value when a specialized view would not help |
+| `json` | Structured object tree; recognized experiment or progress schemas have visual views, with raw data in a disclosure |
 
 Form fields define their own key and label. Types are `text`, `long_text`,
 `number`, `boolean`, `select` and `multiselect`; selection fields supply options.
@@ -40,3 +40,20 @@ newer artifact. Reuse the exact request identity after an uncertain response.
 Project navigation references real artifact IDs. Publishing a background result
 does not need to change the user's current focus. A comparison or preview does
 not implicitly select a candidate for delivery.
+
+For a multi-step project, an optional `json` artifact with
+`schemaVersion: "paw.lab-project-progress.v1"` renders as a step timeline. Supply
+`observedAt` (an actual observation timestamp) and `steps`, each containing `id`,
+`title`, `state` (`pending`, `active`, `completed`, or `blocked`), `summary`,
+optional `dependsOn` step IDs, `evidenceRefs`, and a plain-language `nextAction`.
+Choose steps that fit this project; these are display fields, not tool commands.
+Only mark completed when its result exists. Keep execution identifiers and real
+receipts in the evidence references. The view identifies itself as a saved
+snapshot and does not override the current execution state.
+
+Imported experiment snapshots and step records already render their experiment
+structure, explicit parent links, before/after changes and paired metrics.
+Tables using `experiment`, `metric`, `baseline`, `candidate` columns also receive
+paired metric charts. Preserve numeric values and missing values exactly. Do not
+turn narrative estimates into measured results or re-publish large JSON blocks
+inside Markdown. Unknown structures remain readable as an expandable object tree.

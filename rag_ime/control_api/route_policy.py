@@ -86,6 +86,8 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_WORKSPACE_LIST = "agent.session.workspace.list"
     AGENT_SESSION_WORKSPACE_READ = "agent.session.workspace.read"
     AGENT_SESSION_WORKSPACE_SAVE = "agent.session.workspace.save"
+    FILES_LIST = "files.list"
+    FILES_READ = "files.read"
     AGENT_SESSION_RENAME = "agent.session.rename"
     AGENT_SESSION_ARCHIVE = "agent.session.archive"
     AGENT_SESSION_MODE_UPDATE = "agent.session.mode.update"
@@ -852,6 +854,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_WORKSPACE_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/workspace", None, params=_SESSION, query={"path", "depth", "limit"}),
         _route(ControlPathId.AGENT_SESSION_WORKSPACE_READ, ControlMethod.GET, "/api/agent/sessions/{sessionId}/workspace-file", None, params=_SESSION, query={"path", "offset", "limit"}, required_query={"path"}),
         _route(ControlPathId.AGENT_SESSION_WORKSPACE_SAVE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/workspace-file", None, params=_SESSION, body={"path", "content", "resourceRevision"}, required_body={"path", "content", "resourceRevision"}),
+        _route(ControlPathId.FILES_LIST, ControlMethod.GET, "/api/files/list", None, query={"path", "offset", "limit"}),
+        _route(ControlPathId.FILES_READ, ControlMethod.GET, "/api/files/read", None, query={"path", "offset", "limit", "sessionId"}, required_query={"path"}),
         _route(ControlPathId.AGENT_SESSION_RENAME, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"title"}, required_body={"title"}, remote_body={"title"}),
         _route(ControlPathId.AGENT_SESSION_ARCHIVE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"archived"}, required_body={"archived"}, remote_body={"archived"}),
         _route(ControlPathId.AGENT_SESSION_MODE_UPDATE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION, body={"mode", "executionMode", "workspaceRoots", "workspaceScopeConfirmation", "toolProfileVersion", "toolAllowlistMode", "allowedTools", "dangerousModeConfirmation", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled"}, required_body={"mode"}),

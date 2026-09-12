@@ -41,6 +41,72 @@ function mount(transport: MockControlTransport, props: { initialProjectId?: stri
 }
 
 describe('Agent-led Lab project container', () => {
+  it('opens the exact latest artifact selected on the home page even when a different artifact is primary', async () => {
+    const primary = artifact({ artifactId: 'primary', title: '原主成果' });
+    const latest = artifact({ artifactId: 'latest', title: '最新实验', content: '这是首页所指的最新实验。' });
+    const current = withArtifact(primary, { artifactCount: 2, artifacts: [primary, latest],
+      workspace: { artifactOrder: ['primary', 'latest'], primaryArtifactId: 'primary', layout: 'focus' },
+      latestRecord: { kind: 'artifact', status: 'available', title: latest.title, artifactId: latest.artifactId, updatedAtMs: 2 } });
+    const transport = new MockControlTransport({ routes: { 'agent.eval-lab.projects.get': (request: ControlRequest) => read(request.query?.projectId ? current : null, [current], request.query?.artifactId === 'latest' ? latest : request.query?.artifactId === 'primary' ? primary : undefined) } });
+    mount(transport);
+    fireEvent.click(await screen.findByRole('button', { name: /最新实验 查看成果/ }));
+    expect(await screen.findByText('这是首页所指的最新实验。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '最新实验' })).toHaveAttribute('aria-current', 'page');
+  });
+  it('keeps an ordinary comparison table visible when it is not an experiment table', () => {
+    const item = artifact({ view: 'table', content: { columns: ['metric', 'baseline', 'candidate'].map((key) => ({ key, label: key })), rows: [{ metric: '业务设置', baseline: '以前', candidate: '现在' }] } });
+    render(<ArtifactSurface artifact={item} busy={false} onDraft={vi.fn()} onSave={async () => true} onAction={vi.fn()} />);
+    expect(screen.getByRole('table')).toBeVisible();
+    expect(screen.queryByText('查看数据表')).not.toBeInTheDocument();
+  });
+  it('continues through the owning Agent only on user action and suppresses duplicate sends', async () => {
+    const current = project({ guideSessionId: 'guide-1' });
+    let settle!: (value: unknown) => void;
+    const messages: ControlRequest[] = [];
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.projects.get': read(current, [current]),
+      'agent.session.prompt': (request: ControlRequest) => { messages.push(request); return new Promise((resolve) => { settle = resolve; }); },
+    } });
+    mount(transport, { initialProjectId: current.projectId });
+    await screen.findByRole('button', { name: '实验闭环' });
+    expect(messages).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '实验闭环' }));
+    fireEvent.click(screen.getByRole('button', { name: '自动推进优化' }));
+    fireEvent.click(screen.getByRole('button', { name: '自动推进优化' }));
+    await waitFor(() => expect(messages).toHaveLength(1));
+    expect(messages[0]?.params).toEqual({ sessionId: 'guide-1' });
+    expect(messages[0]?.body).toMatchObject({ message: expect.stringContaining('在已有授权和预算内连续完成') });
+    expect(screen.getByRole('button', { name: '带我逐步完成' })).toBeDisabled();
+    await act(async () => settle({ accepted: true }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '带我逐步完成' })).toBeEnabled());
+  });
+  it('saves materials before resuming the same project, and lets the user opt out', async () => {
+    let current = project({ guideSessionId: 'guide-1' });
+    const order: string[] = [];
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.projects.get': () => read(current, [current]),
+      'agent.eval-lab.projects.command': (request: ControlRequest) => {
+        const command = request.body as ProjectCommand; order.push(command.action);
+        current = { ...current, revision: current.revision + 1 };
+        return { ok: true, project: current, clientRequestId: command.clientRequestId, replayed: false };
+      },
+      'agent.session.prompt': () => { order.push('continue'); return { accepted: true }; },
+    } });
+    mount(transport, { initialProjectId: current.projectId });
+    fireEvent.click(await screen.findByRole('button', { name: '添加材料' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '粘贴材料标题' }), { target: { value: '规则' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '材料正文' }), { target: { value: '已确认的规则' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存文本材料' }));
+    await waitFor(() => expect(order).toEqual(['import_materials', 'continue']));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    fireEvent.click(screen.getAllByRole('button', { name: '添加材料' })[0]!);
+    fireEvent.click(screen.getByRole('checkbox', { name: '材料接入后，让 Agent 继续推进' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '粘贴材料标题' }), { target: { value: '补充规则' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '材料正文' }), { target: { value: '只保存这一份' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存文本材料' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(order).toEqual(['import_materials', 'continue', 'import_materials']);
+  });
   it('imports an existing scene as a project without starting its Agent or any trial', async () => {
     let current: LabProject | null = null; const commands: ProjectCommand[] = [];
     const historyCollections = [{ sceneId: 'cloudops', title: '云上事故诊断', sourceHash: 'frozen-source', experimentCount: 9,
@@ -88,6 +154,8 @@ describe('Agent-led Lab project container', () => {
   it('starts with a description and real projects, without a universal business form or fixed Golden journey', async () => {
     const transport = new MockControlTransport({ routes: { 'agent.eval-lab.projects.get': read(null, []) } });
     mount(transport, { root: true });
+    expect(await screen.findByRole('heading', { name: '让第一个项目开始工作' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
     expect(await screen.findByRole('textbox', { name: '描述你的项目' })).toBeVisible();
     expect(screen.queryByRole('spinbutton', { name: '计划题数' })).not.toBeInTheDocument();
     expect(screen.queryByText('退货期限')).not.toBeInTheDocument();
@@ -116,6 +184,7 @@ describe('Agent-led Lab project container', () => {
       'agent.session.prompt': { ok: true, accepted: true },
     } });
     mount(transport);
+    fireEvent.click(await screen.findByRole('button', { name: '新建项目' }));
     fireEvent.change(await screen.findByRole('textbox', { name: '描述你的项目' }), { target: { value: '诊断支付服务故障，不是资料问答' } });
     fireEvent.click(screen.getByRole('button', { name: '创建并开始' }));
     await screen.findByText('project-guide-1');
@@ -130,9 +199,11 @@ describe('Agent-led Lab project container', () => {
   it('preserves the new-project description and source path when the page is reopened', async () => {
     const transport = new MockControlTransport({ routes: { 'agent.eval-lab.projects.get': read(null, []) } });
     const first = mount(transport);
+    fireEvent.click(await screen.findByRole('button', { name: '新建项目' }));
     fireEvent.change(await screen.findByRole('textbox', { name: '描述你的项目' }), { target: { value: '还在整理的故障排查项目' } });
     fireEvent.change(screen.getByRole('textbox', { name: '连接执行器上的材料路径' }), { target: { value: '/workspace/incident' } });
     first.unmount(); mount(transport);
+    fireEvent.click(await screen.findByRole('button', { name: '新建项目' }));
     expect(await screen.findByRole('textbox', { name: '描述你的项目' })).toHaveValue('还在整理的故障排查项目');
     expect(screen.getByRole('textbox', { name: '连接执行器上的材料路径' })).toHaveValue('/workspace/incident');
     expect(transport.requests.every(({ request }) => request.pathId === 'agent.eval-lab.projects.get')).toBe(true);
@@ -177,7 +248,7 @@ describe('Agent-led Lab project container', () => {
     fireEvent.click(screen.getByRole('button',{name:'关闭'}));
     expect(screen.getByLabelText('当前项目路由')).toHaveTextContent(/^\/eval-lab$/u);
     expect(window.location.hash).toBe('#/eval-lab');
-    fireEvent.click(screen.getAllByRole('button',{name:/服务拓扑/u})[1]!);
+    fireEvent.click(screen.getByRole('button',{name:/服务拓扑，/u}));
     expect(await screen.findByRole('heading',{name:'服务拓扑'})).toBeVisible();
     const route = screen.getByLabelText('当前项目路由').textContent!;
     expect(route).toBe('/eval-lab?project=project-2');
@@ -194,6 +265,7 @@ describe('Agent-led Lab project container', () => {
       'agent.session.prompt': ({ body }: ControlRequest) => { prompts.push(body); if (prompts.length === 1) throw new TypeError('Response lost'); return { ok: true, accepted: true }; },
     } });
     const first = mount(transport);
+    fireEvent.click(await screen.findByRole('button', { name: '新建项目' }));
     fireEvent.change(await screen.findByRole('textbox', { name: '描述你的项目' }), { target: { value: '第一次消息待核对的项目' } });
     fireEvent.click(screen.getByRole('button', { name: '创建并开始' }));
     await screen.findByRole('button', { name: '核对原消息' }); first.unmount(); mount(transport);
@@ -216,6 +288,7 @@ describe('Agent-led Lab project container', () => {
     fireEvent.change(await screen.findByRole('spinbutton', { name: '退货期限' }), { target: { value: '14' } });
     fireEvent.click(screen.getByRole('button', { name: '材料 0' }));
     await screen.findByText('尚未读取材料。可以上传文件、粘贴正文或连接执行器路径。');
+    fireEvent.click(screen.getByRole('button', { name: '成果 1' }));
     fireEvent.click(screen.getByRole('button', { name: '售后条件' }));
     expect(await screen.findByRole('spinbutton', { name: '退货期限' })).toHaveValue(14);
     fireEvent.click(screen.getByRole('button', { name: '保存新版本' }));
@@ -235,7 +308,7 @@ describe('Agent-led Lab project container', () => {
     expect(await screen.findByRole('columnheader', { name: '事件时间' })).toBeVisible();
     expect(screen.getByRole('cell', { name: '连接超时' })).toBeVisible();
     expect(screen.queryByRole('spinbutton', { name: '退货期限' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '运行' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '运行' })).toBeEnabled();
   });
 
   it('restores an unsaved artifact draft after remounting the project', async () => {
@@ -258,6 +331,7 @@ describe('Agent-led Lab project container', () => {
       'agent.eval-lab.projects.command': (request: ControlRequest) => { const command = request.body as ProjectCommand; commands.push(command); if (commands.length === 1) { current = project(); accepted = { ok: true, project: current, replayed: false, clientRequestId: command.clientRequestId }; throw new Error('连接中断'); } return { ...accepted, replayed: true }; },
     } });
     mount(transport);
+    fireEvent.click(await screen.findByRole('button', { name: '新建项目' }));
     fireEvent.change(await screen.findByRole('textbox', { name: '描述你的项目' }), { target: { value: '业务任务' } });
     fireEvent.click(screen.getByRole('button', { name: '创建并开始' }));
     fireEvent.click(await screen.findByRole('button', { name: '核对原操作' }));

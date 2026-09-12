@@ -13,17 +13,82 @@ import filesCss from './paw-os-files-app.css?raw';
 afterEach(() => { cleanup(); window.localStorage.clear(); });
 
 describe('PawOsFilesApp', () => {
+  it('opens an absolute file outside workspaces when the linked Session is missing', async () => {
+    const path = '/Volumes/Field notes/observations.md';
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+      'files.list': (request: ControlRequest) => ({ ok: true, scope: 'local', path: request.query?.path ? '/Volumes/Field notes' : '/home/qa', homePath: '/home/qa', selectedPath: request.query?.path === path ? path : '', items: [{ path, name: 'observations.md', kind: 'file' }] }),
+      'files.read': { ok: true, scope: 'local', requestedPath: path, path, content: '# Field observations', byteSize: 20, nextOffset: 20, editability: { editable: false, reason: '本机预览' } },
+    } });
+    renderApp(transport, <PawOsFilesApp initialRoute={`/files?session=deleted-session&path=${encodeURIComponent(path)}`} />);
+    expect(await screen.findByRole('heading', { name: 'Field observations' })).toBeInTheDocument();
+    expect(screen.queryByText('工作区暂时不可用')).not.toBeInTheDocument();
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.workspace.read')).toBe(false);
+    expect(screen.getByRole('textbox', { name: '文件或文件夹路径' })).toHaveValue('/Volumes/Field notes');
+  });
+
+  it('navigates home, arbitrary folders and the filesystem root without a Session', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+      'files.list': (request: ControlRequest) => ({ ok: true, scope: 'local', path: request.query?.path || '/home/qa', homePath: '/home/qa', items: [] }),
+    } });
+    renderApp(transport, <PawOsFilesApp />);
+    const address = screen.getByRole('textbox', { name: '文件或文件夹路径' });
+    await waitFor(() => expect(address).toHaveValue('/home/qa'));
+    await user.clear(address); await user.type(address, '/Volumes'); await user.click(screen.getByRole('button', { name: '打开路径' }));
+    await waitFor(() => expect(screen.getByText('/Volumes')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '上一级文件夹' }));
+    await waitFor(() => expect(address).toHaveValue('/'));
+    expect(screen.getByRole('button', { name: '上一级文件夹' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '打开主目录' }));
+    await waitFor(() => expect(address).toHaveValue('/home/qa'));
+    expect(transport.requests.filter(({ request }) => request.pathId === 'files.list').every(({ request }) => !request.query?.sessionId)).toBe(true);
+  });
+
+  it('ignores a slow folder result after the user returns home', async () => {
+    const user = userEvent.setup(); let settle!: (response: unknown) => void;
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+      'files.list': (request: ControlRequest) => request.query?.path === '/slow' ? new Promise((resolve) => { settle = resolve; }) : { ok: true, scope: 'local', path: '/home/qa', homePath: '/home/qa', items: [] },
+    } });
+    renderApp(transport, <PawOsFilesApp />);
+    const address = screen.getByRole('textbox', { name: '文件或文件夹路径' });
+    await waitFor(() => expect(address).toHaveValue('/home/qa'));
+    await user.clear(address); await user.type(address, '/slow'); await user.click(screen.getByRole('button', { name: '打开路径' }));
+    await user.click(screen.getByRole('button', { name: '打开主目录' }));
+    await waitFor(() => expect(address).toHaveValue('/home/qa'));
+    await act(async () => settle({ ok: true, scope: 'local', path: '/slow', items: [] }));
+    expect(address).toHaveValue('/home/qa');
+    expect(screen.queryByText('/slow')).not.toBeInTheDocument();
+  });
+
+  it('loads further directory pages and retains existing entries without duplicates', async () => {
+    const user = userEvent.setup();
+    const first = { path: '/home/qa/first.txt', name: 'first.txt', kind: 'file' };
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+      'files.list': (request: ControlRequest) => ({ ok: true, scope: 'local', path: '/home/qa', homePath: '/home/qa', items: request.query?.offset ? [first, { path: '/home/qa/last.txt', name: 'last.txt', kind: 'file' }] : [first], truncated: !request.query?.offset, nextOffset: request.query?.offset ? null : 240 }),
+    } });
+    renderApp(transport, <PawOsFilesApp />);
+    await user.click(await screen.findByRole('button', { name: '继续加载目录' }));
+    expect(await screen.findByRole('treeitem', { name: '打开文件 last.txt' })).toBeInTheDocument();
+    expect(screen.getAllByRole('treeitem', { name: '打开文件 first.txt' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '继续加载目录' })).not.toBeInTheDocument();
+    expect(transport.requests.some(({ request }) => request.query?.offset === 240)).toBe(true);
+  });
+
   it.each([false, true])('keeps the selected file and directory state through manual collapse (narrow: %s)', async (narrowWindow) => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({ routes: {
       'agent.sessions.list': { ok: true, activeSessionId: 'session-work', items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }] },
-      'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [{ path: '/workspace/paw/guide.md', name: 'guide.md', kind: 'file' }] },
-      'agent.session.workspace.read': { ok: true, path: '/workspace/paw/guide.md', content: '# Saved preview', byteSize: 15, truncated: false },
+      'files.list': { ok: true, path: '/workspace/paw', items: [{ path: '/workspace/paw/guide.md', name: 'guide.md', kind: 'file' }] },
+      'files.read': { ok: true, path: '/workspace/paw/guide.md', content: '# Saved preview', byteSize: 15, truncated: false },
     } });
     renderApp(transport, <PawOsFilesApp />);
     await user.click(await screen.findByRole('treeitem', { name: '打开文件 guide.md' }));
     expect(await screen.findByRole('heading', { name: 'Saved preview' })).toBeInTheDocument();
-    const reads = transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read').length;
+    const reads = transport.requests.filter(({ request }) => request.pathId === 'files.read').length;
     const narrow = narrowWindow ? applyNarrowLayout() : null;
     try {
       if (narrow) {
@@ -39,42 +104,33 @@ describe('PawOsFilesApp', () => {
       expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toHaveAttribute('hidden');
       await user.click(toggle);
       expect(screen.getByRole('treeitem', { name: '打开文件 guide.md' })).toHaveAttribute('data-selected', 'true');
-      expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read')).toHaveLength(reads);
+      expect(transport.requests.filter(({ request }) => request.pathId === 'files.read')).toHaveLength(reads);
       if (narrow) {
         await user.click(screen.getByRole('treeitem', { name: '打开文件 guide.md' }));
         expect(screen.getByRole('heading', { name: 'Saved preview' })).toBeVisible();
       }
     } finally { narrow?.remove(); }
   });
-  it('distinguishes a failed workspace read from an empty directory and recovers in place', async () => {
-    const user = userEvent.setup();
-    let offline = true;
+  it('keeps independent browsing available when the Session catalog fails', async () => {
+    const user = userEvent.setup(); let offline = true;
     const transport = new MockControlTransport({ routes: {
-      'agent.sessions.list': () => {
-        if (offline) throw new Error('workspace unavailable');
-        return { ok: true, items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }] };
-      },
-      'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [] },
+      'agent.sessions.list': () => { if (offline) throw new Error('offline'); return { ok: true, items: [] }; },
+      'files.list': { ok: true, scope: 'local', path: '/home', items: [{ path: '/home/readme.md', name: 'readme.md', kind: 'file' }] },
+      'files.read': { ok: true, scope: 'local', requestedPath: '/home/readme.md', path: '/home/readme.md', content: '# Local file', byteSize: 12, nextOffset: 12 },
     } });
     renderApp(transport, <PawOsFilesApp />);
-
-    const alert = await screen.findByRole('alert');
-    const preview = screen.getByRole('region', { name: '文件预览' });
-    expect(preview).toHaveTextContent('工作区暂时不可用');
-    expect(preview).not.toHaveTextContent('选择要检查的文件');
-    expect(screen.getByText('工作区状态未知')).toBeInTheDocument();
-    offline = false;
-    await user.click(within(alert).getByRole('button', { name: '重试' }));
-    await screen.findByRole('tree', { name: '项目文件' });
-    expect(preview).toHaveTextContent('选择要检查的文件');
-    expect(screen.queryByText('工作区状态未知')).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('treeitem', { name: '打开文件 readme.md' }));
+    expect(await screen.findByRole('heading', { name: 'Local file' })).toBeInTheDocument();
+    expect(screen.getByText('Session 快捷入口暂时无法读取，本机文件仍可浏览。')).toBeInTheDocument();
+    offline = false; await user.click(screen.getByRole('button', { name: '重试 Session 列表' }));
+    await waitFor(() => expect(screen.queryByText('Session 快捷入口暂时无法读取，本机文件仍可浏览。')).not.toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: 'Local file' })).toBeInTheDocument();
   });
-
   it('keeps its accessible title out of the workspace grid at every window width', () => {
     const transport = new MockControlTransport({ routes: { 'agent.sessions.list': { ok: true, items: [] } } });
     renderApp(transport, <PawOsFilesApp />);
 
-    expect(screen.getByRole('heading', { name: 'Session 文件', level: 1 })).toHaveClass('paw-files-app__title');
+    expect(screen.getByRole('heading', { name: '文件', level: 1 })).toHaveClass('paw-files-app__title');
     expect(filesCss).toMatch(/\.paw-files-app__title\s*\{[^}]*position:\s*absolute;/s);
     expect(filesCss).not.toMatch(/transition:\s*width/);
   });
@@ -87,7 +143,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [] },
+        'files.list': { ok: true, path: '/workspace/paw', items: [] },
       },
     });
 
@@ -100,6 +156,7 @@ describe('PawOsFilesApp', () => {
     expect([...app.children].map((child) => child.className)).toEqual([
       'paw-files-app__title',
       'paw-files-app__toolbar',
+      'paw-files-location',
       'paw-files-app__workspace',
       'paw-files-statusbar',
     ]);
@@ -122,7 +179,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [] },
+        'files.list': { ok: true, path: '/workspace/paw', items: [] },
       },
     });
 
@@ -159,7 +216,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => {
+        'files.list': (request: ControlRequest) => {
           const path = String(request.query?.path ?? '');
           if (path === '/workspace/paw/docs') return {
             ok: true,
@@ -168,7 +225,7 @@ describe('PawOsFilesApp', () => {
           };
           return { ok: true, path, items: [{ path: '/workspace/paw/docs', name: 'docs', kind: 'directory' }] };
         },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
+        'files.read': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           content: '# Guide',
@@ -211,7 +268,7 @@ describe('PawOsFilesApp', () => {
     expect(screen.getByRole('button', { name: '复制文件路径' })).toBeInTheDocument();
   });
 
-  it('browses only the selected Session authorized roots and previews a file', async () => {
+  it('uses a Session workspace as a shortcut and previews through independent file reading', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
@@ -235,7 +292,7 @@ describe('PawOsFilesApp', () => {
             },
           ],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [
@@ -243,7 +300,7 @@ describe('PawOsFilesApp', () => {
             { path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 },
           ],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/AGENTS.md',
           content: '# Project guide\nRead docs before work.',
@@ -255,18 +312,18 @@ describe('PawOsFilesApp', () => {
 
     renderApp(transport, <PawOsFilesApp />);
 
-    expect(await screen.findByRole('heading', { name: 'Session 文件', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '文件', level: 1 })).toBeInTheDocument();
     expect(screen.getByText('/workspace/paw')).toBeInTheDocument();
     expect(screen.queryByText('/Users')).not.toBeInTheDocument();
     await user.click(await screen.findByRole('treeitem', { name: '打开文件 AGENTS.md' }));
     expect(await screen.findByRole('heading', { name: 'AGENTS.md', level: 2 })).toBeInTheDocument();
     expect(screen.getByText('Project guide')).toBeInTheDocument();
-    expect(screen.getByText(/已选 AGENTS\.md · 128 B/)).toBeInTheDocument();
-    expect(screen.getByText('1 个授权工作区')).toBeInTheDocument();
+    expect(screen.getByText(/已选 AGENTS\.md · 38 B/)).toBeInTheDocument();
+    expect(screen.getByText('Session 工作区快捷入口 · 本机读取')).toBeInTheDocument();
 
     await waitFor(() => expect(transport.requests.some((call) => (
-      call.request.pathId === 'agent.session.workspace.read'
-      && call.request.params?.sessionId === 'session-work'
+      call.request.pathId === 'files.read'
+      && call.request.query?.sessionId === 'session-work'
       && call.request.query?.path === '/workspace/paw/AGENTS.md'
     ))).toBe(true));
   });
@@ -281,14 +338,14 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => {
+        'files.list': (request: ControlRequest) => {
           const path = String(request.query?.path ?? '');
           if (path === '/workspace/paw/docs') {
             return { ok: true, path, items: [{ path: absolutePath, name: 'room-runtime-handoff.md', kind: 'file', byteSize: 32 }] };
           }
           return { ok: true, path, items: [{ path: '/workspace/paw/docs', name: 'docs', kind: 'directory' }] };
         },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
+        'files.read': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           content: '# Room handoff',
@@ -303,8 +360,8 @@ describe('PawOsFilesApp', () => {
     expect(await screen.findByRole('heading', { name: 'room-runtime-handoff.md', level: 2 })).toBeInTheDocument();
     expect(await screen.findByText('Room handoff')).toBeInTheDocument();
     expect(transport.requests.some((call) => (
-      call.request.pathId === 'agent.session.workspace.read'
-      && call.request.params?.sessionId === 'session-work'
+      call.request.pathId === 'files.read'
+      && call.request.query?.sessionId === 'session-work'
       && call.request.query?.path === absolutePath
     ))).toBe(true);
   });
@@ -318,15 +375,15 @@ describe('PawOsFilesApp', () => {
     view.rerender(<PawOsFilesApp initialRoute={filesRoute('reader', 'docs/plan.md')} />);
     await waitFor(() => expect(lists).toBe(2));
     expect(screen.queryByRole('button', { name: '编辑文本' })).not.toBeInTheDocument();
-    expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.workspace.read'
-      && request.query?.path === '/workspace/paw/docs/plan.md' && request.params?.sessionId !== 'reader')).toBe(false);
+    expect(transport.requests.some(({ request }) => request.pathId === 'files.read'
+      && request.query?.path === '/workspace/paw/docs/plan.md' && request.query?.sessionId !== 'reader')).toBe(false);
     await act(async () => completeList(scopedSessions()));
     expect(await screen.findByRole('heading', { name: 'reader plan.md', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: '选择文件所属 Session' })).toHaveValue('reader');
     expect(screen.queryByRole('button', { name: '编辑文本' })).not.toBeInTheDocument();
     expect(screen.getByText('此 Session 只读')).toBeInTheDocument();
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read' && request.query?.path === '/workspace/paw/docs/plan.md')
-      .every(({ request }) => request.params?.sessionId === 'reader')).toBe(true);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'files.read' && request.query?.path === '/workspace/paw/docs/plan.md')
+      .every(({ request }) => request.query?.sessionId === 'reader')).toBe(true);
   });
 
   it.each(['missing', 'unbound'])('never borrows the previous Session for an unavailable %s deep link', async (sessionId) => {
@@ -337,19 +394,15 @@ describe('PawOsFilesApp', () => {
     view.rerender(<PawOsFilesApp initialRoute={filesRoute(sessionId, 'docs/plan.md')} />);
     await waitFor(() => expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.list')).toHaveLength(2));
     await waitFor(() => expect(screen.getByRole('combobox', { name: '选择文件所属 Session' })).toBeEnabled());
-    expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.workspace.read' && request.query?.path === '/workspace/paw/docs/plan.md')).toBe(false);
+    expect(transport.requests.some(({ request }) => request.pathId === 'files.read' && request.query?.path === '/workspace/paw/docs/plan.md')).toBe(false);
     expect(screen.getByRole('combobox', { name: '选择文件所属 Session' })).toHaveValue(sessionId === 'missing' ? '' : 'unbound');
     expect(screen.queryByRole('button', { name: '编辑文本' })).not.toBeInTheDocument();
-    if (sessionId === 'missing') {
-      expect(screen.getByRole('alert')).toHaveTextContent('链接指定的 Session 未在当前列表中找到');
-      expect(within(screen.getByRole('alert')).getByRole('button', { name: '重试' })).toBeEnabled();
-    } else {
-      expect(screen.getByText('这个 Session 尚未选择工作目录')).toBeInTheDocument();
-    }
+    expect(screen.getByRole('textbox', { name: '文件或文件夹路径' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '打开主目录' })).toBeEnabled();
     await user.selectOptions(screen.getByRole('combobox', { name: '选择文件所属 Session' }), 'writer');
     await user.click(await screen.findByRole('treeitem', { name: '打开文件 notes.md' }));
     expect(await screen.findByRole('heading', { name: 'writer notes.md', level: 1 })).toBeInTheDocument();
-    expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.workspace.read' && request.query?.path === '/workspace/paw/docs/plan.md')).toBe(false);
+    expect(transport.requests.some(({ request }) => request.pathId === 'files.read' && request.query?.path === '/workspace/paw/docs/plan.md')).toBe(false);
   });
 
   it('preserves a manual Session through refresh and applies the next explicit file intent even when its Session id is unchanged', async () => {
@@ -367,8 +420,8 @@ describe('PawOsFilesApp', () => {
     view.rerender(<PawOsFilesApp initialRoute={filesRoute('writer', 'docs/next.md')} />);
     expect(await screen.findByRole('heading', { name: 'writer next.md', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: '选择文件所属 Session' })).toHaveValue('writer');
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read' && request.query?.path === '/workspace/paw/docs/next.md')
-      .every(({ request }) => request.params?.sessionId === 'writer')).toBe(true);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'files.read' && request.query?.path === '/workspace/paw/docs/next.md')
+      .every(({ request }) => request.query?.sessionId === 'writer')).toBe(true);
   });
 
   it('ignores an older Session catalog response after a newer deep link has resolved', async () => {
@@ -408,8 +461,8 @@ describe('PawOsFilesApp', () => {
     expect(within(screen.getByRole('region', { name: '文件预览' })).getByText(`${byteSize} B`)).toBeInTheDocument();
     expect(screen.getByText(`已选 ${name} · ${byteSize} B`)).toBeInTheDocument();
     expect(editor).toHaveValue('a newer unsaved draft');
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read')).toHaveLength(1);
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.list')).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'files.read')).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'files.list' && request.query?.path)).toHaveLength(1);
   });
 
   it('applies a late save only to its loaded file while another file is selected', async () => {
@@ -428,8 +481,8 @@ describe('PawOsFilesApp', () => {
     expect(screen.getByText('已选 other.txt · 10 B')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: '文件预览' })).getByText('10 B')).toBeInTheDocument();
     expect(screen.getByText('other text')).toBeInTheDocument();
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read')).toHaveLength(2);
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.list')).toHaveLength(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'files.read')).toHaveLength(2);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'files.list' && request.query?.path)).toHaveLength(1);
   });
 
   it('ignores a late save from the previous Session when the new Session has the same file path', async () => {
@@ -449,7 +502,7 @@ describe('PawOsFilesApp', () => {
     expect(screen.getByText('已选 notes.md · 11 B')).toBeInTheDocument();
     expect(screen.getByText('reader disk')).toBeInTheDocument();
     expect(screen.queryByText('已保存到文件。')).not.toBeInTheDocument();
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read')).toHaveLength(2);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'files.read')).toHaveLength(2);
   });
 
   it('reveals a workspace root in the tree when the deep link names a directory', async () => {
@@ -460,12 +513,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => ({
+        'files.list': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           items: [{ path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 }],
         }),
-        'agent.session.workspace.read': (request: ControlRequest) => ({
+        'files.read': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           content: '# Project guide',
@@ -483,7 +536,7 @@ describe('PawOsFilesApp', () => {
     await waitFor(() => expect(rootItem).toHaveFocus());
     expect(await screen.findByRole('treeitem', { name: '打开文件 AGENTS.md' })).toBeInTheDocument();
     expect(screen.getByText('选择要检查的文件')).toBeInTheDocument();
-    expect(transport.requests.some((call) => call.request.pathId === 'agent.session.workspace.read')).toBe(false);
+    expect(transport.requests.some((call) => call.request.pathId === 'files.read')).toBe(false);
   });
 
   it('projects its live Session selector and refresh action into window chrome', async () => {
@@ -498,7 +551,7 @@ describe('PawOsFilesApp', () => {
             { id: 'session-two', title: 'Project Two', updatedAtMs: 1, workspaceRoots: ['/workspace/two'], status: 'idle' },
           ],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => ({ ok: true, path: request.query?.path, items: [] }),
+        'files.list': (request: ControlRequest) => ({ ok: true, path: request.query?.path, items: [] }),
       },
     });
 
@@ -526,19 +579,19 @@ describe('PawOsFilesApp', () => {
     expect(document.querySelector('.paw-window-body .paw-files-app__toolbar')).toBeNull();
     await user.selectOptions(selector, 'session-two');
     await waitFor(() => expect(transport.requests.some((call) => (
-      call.request.pathId === 'agent.session.workspace.list'
-      && call.request.params?.sessionId === 'session-two'
+      call.request.pathId === 'files.list'
       && call.request.query?.path === '/workspace/two'
     ))).toBe(true));
-    const requestsBeforeRefresh = transport.requests.filter((call) => call.request.pathId === 'agent.session.workspace.list').length;
+    const requestsBeforeRefresh = transport.requests.filter((call) => call.request.pathId === 'files.list').length;
     await user.click(within(titlebar).getByRole('button', { name: '刷新文件' }));
-    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.workspace.list')).toHaveLength(requestsBeforeRefresh + 1));
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'files.list')).toHaveLength(requestsBeforeRefresh + 1));
   });
 
-  it('does not let a late directory response cross a Session authority change', async () => {
+  it('does not let a late directory response cross a Session shortcut change', async () => {
     const user = userEvent.setup();
     let resolveFirst: ((value: unknown) => void) | undefined;
     const firstListing = new Promise<unknown>((resolve) => { resolveFirst = resolve; });
+    let directoryLoads = 0;
     const transport = new MockControlTransport({
       routes: {
         'agent.sessions.list': {
@@ -549,8 +602,9 @@ describe('PawOsFilesApp', () => {
             { id: 'session-two', title: 'Project Two', updatedAtMs: 1, workspaceRoots: ['/workspace/shared'], status: 'idle' },
           ],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => {
-          if (request.params?.sessionId === 'session-one') return firstListing;
+        'files.list': (request: ControlRequest) => {
+          if (!request.query?.path) return { ok: true, path: '/home/qa', homePath: '/home/qa', items: [] };
+          if (++directoryLoads === 1) return firstListing;
           return {
             ok: true,
             path: '/workspace/shared',
@@ -563,8 +617,8 @@ describe('PawOsFilesApp', () => {
     renderApp(transport, <PawOsFilesApp />);
     const selector = await screen.findByRole('combobox', { name: '选择文件所属 Session' });
     await waitFor(() => expect(transport.requests.some((call) => (
-      call.request.pathId === 'agent.session.workspace.list'
-      && call.request.params?.sessionId === 'session-one'
+      call.request.pathId === 'files.list'
+      && call.request.query?.path === '/workspace/shared'
     ))).toBe(true));
 
     await user.selectOptions(selector, 'session-two');
@@ -579,10 +633,7 @@ describe('PawOsFilesApp', () => {
 
     expect(await screen.findByRole('treeitem', { name: '打开文件 two.txt' })).toBeInTheDocument();
     expect(screen.queryByRole('treeitem', { name: '打开文件 one.txt' })).not.toBeInTheDocument();
-    expect(transport.requests.some((call) => (
-      call.request.pathId === 'agent.session.workspace.list'
-      && call.request.params?.sessionId === 'session-two'
-    ))).toBe(true);
+    expect(directoryLoads).toBe(2);
   });
 
   it('uses one roving keyboard tree and refreshes every expanded directory', async () => {
@@ -595,7 +646,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => {
+        'files.list': (request: ControlRequest) => {
           const path = String(request.query?.path ?? '');
           directoryReads.push(path);
           if (path === '/workspace/paw/docs') return {
@@ -612,7 +663,7 @@ describe('PawOsFilesApp', () => {
             ],
           };
         },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
+        'files.read': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           content: '# Guide',
@@ -664,7 +715,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 }],
@@ -687,7 +738,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 }],
@@ -719,12 +770,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: binaryPath, name: 'a-very-long-preview-file-name.png', kind: 'file', byteSize: 82_304 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: binaryPath,
           content: '\u0000PNG\r\n\u001a\n',
@@ -765,12 +816,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/notes.txt', name: 'notes.txt', kind: 'file', byteSize: 27 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/notes.txt',
           content: 'plain text stays readable\n',
@@ -796,12 +847,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/todo.md', name: 'todo.md', kind: 'file', byteSize: 0 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/todo.md',
           content: '',
@@ -828,12 +879,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/big.log', name: 'big.log', kind: 'file', byteSize: 131_072 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/big.log',
           content: 'line 1\nline 2\n',
@@ -867,12 +918,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/big.log', name: 'big.log', kind: 'file', byteSize: 131_072 }],
         },
-        'agent.session.workspace.read': (request: ControlRequest) => {
+        'files.read': (request: ControlRequest) => {
           const offset = Number(request.query?.offset ?? 0);
           readOffsets.push(offset);
           if (offset === 0) return {
@@ -926,10 +977,10 @@ describe('PawOsFilesApp', () => {
           { id: 'session-two', title: 'Project Two', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' },
         ],
       },
-      'agent.session.workspace.list': {
+      'files.list': {
         ok: true, path: '/workspace/paw', items: ['a.log', 'b.log'].map((name) => ({ path: `/workspace/paw/${name}`, name, kind: 'file', byteSize: 131_072 })),
       },
-      'agent.session.workspace.read': (request: ControlRequest) => {
+      'files.read': (request: ControlRequest) => {
         const path = String(request.query?.path);
         if (!Number(request.query?.offset)) return chunk(path, path.endsWith('a.log') ? '原文件首段\n' : '新文件首段\n', true);
         return path.endsWith('a.log') ? oldRead : newRead;
@@ -949,9 +1000,9 @@ describe('PawOsFilesApp', () => {
     await act(async () => resolveNew(chunk('/workspace/paw/b.log', '新文件后段\n', false)));
     expect(await screen.findByText(/新文件后段/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /继续读取/ })).not.toBeInTheDocument();
-    const reads = transport.requests.filter(({ request }) => request.pathId === 'agent.session.workspace.read').map(({ request }) => request);
+    const reads = transport.requests.filter(({ request }) => request.pathId === 'files.read').map(({ request }) => request);
     expect(reads.map((request) => Number(request.query?.offset))).toEqual([0, 65_536, 0, 65_536]);
-    expect(reads[3].params).toEqual({ sessionId: switchKind === 'session' ? 'session-two' : 'session-one' });
+    expect(reads[3].query?.sessionId).toBe(switchKind === 'session' ? 'session-two' : 'session-one');
   });
 
   it('marks the 512 KB reading cap on the gauge scale of an oversized file', async () => {
@@ -963,12 +1014,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/trace.log', name: 'trace.log', kind: 'file', byteSize: 2_097_152 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/trace.log',
           content: 'first window\n',
@@ -1003,7 +1054,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [
@@ -1011,7 +1062,7 @@ describe('PawOsFilesApp', () => {
             { path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 38 },
           ],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/AGENTS.md',
           content: '# Project guide\nRead docs before work.',
@@ -1042,7 +1093,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': { ok: true, path: '/workspace/paw', items: [] },
+        'files.list': { ok: true, path: '/workspace/paw', items: [] },
       },
     });
 
@@ -1062,7 +1113,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           truncated: true,
@@ -1075,7 +1126,7 @@ describe('PawOsFilesApp', () => {
     });
 
     renderApp(transport, <PawOsFilesApp />);
-    expect(await screen.findByText('目录条目已达显示上限，仅列出前 2 项。')).toBeInTheDocument();
+    expect(await screen.findByText('目录条目已达显示上限。')).toBeInTheDocument();
   });
 
   it('renders a complete SVG as a safe image with a source toggle', async () => {
@@ -1088,12 +1139,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/logo.svg', name: 'logo.svg', kind: 'file', byteSize: 104 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/logo.svg',
           content: svgContent,
@@ -1125,12 +1176,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/notes.txt', name: 'notes.txt', kind: 'file', byteSize: 20 }],
         },
-        'agent.session.workspace.read': (request: ControlRequest) => {
+        'files.read': (request: ControlRequest) => {
           readAttempts += 1;
           if (readAttempts === 1) throw new Error('读取超时。');
           return { ok: true, path: request.query?.path, content: 'recovered content\n', byteSize: 20, truncated: false };
@@ -1159,7 +1210,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => {
+        'files.list': (request: ControlRequest) => {
           const path = String(request.query?.path ?? '');
           if (path === '/workspace/paw/docs') return {
             ok: true,
@@ -1172,7 +1223,7 @@ describe('PawOsFilesApp', () => {
             items: [{ path: '/workspace/paw/docs', name: 'docs', kind: 'directory' }],
           };
         },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
+        'files.read': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           content: '# Guide',
@@ -1211,7 +1262,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [
@@ -1242,7 +1293,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => {
+        'files.list': (request: ControlRequest) => {
           const path = String(request.query?.path ?? '');
           if (path === '/workspace/paw/docs') return {
             ok: true,
@@ -1258,7 +1309,7 @@ describe('PawOsFilesApp', () => {
             ],
           };
         },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
+        'files.read': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           content: '# Guide',
@@ -1302,12 +1353,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/guide.md', name: 'guide.md', kind: 'file', byteSize: 42 }],
         },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
+        'files.read': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           content: '# Guide',
@@ -1345,7 +1396,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => {
+        'files.list': (request: ControlRequest) => {
           const path = String(request.query?.path ?? '');
           if (path === '/workspace/paw/docs') return {
             ok: true,
@@ -1358,7 +1409,7 @@ describe('PawOsFilesApp', () => {
             items: [{ path: '/workspace/paw/docs', name: 'docs', kind: 'directory' }],
           };
         },
-        'agent.session.workspace.read': (request: ControlRequest) => ({
+        'files.read': (request: ControlRequest) => ({
           ok: true,
           path: request.query?.path,
           content: '# Guide',
@@ -1395,7 +1446,7 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': (request: ControlRequest) => {
+        'files.list': (request: ControlRequest) => {
           const path = String(request.query?.path ?? '');
           if (path === '/workspace/paw/docs') return {
             ok: true,
@@ -1411,7 +1462,7 @@ describe('PawOsFilesApp', () => {
             ],
           };
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/big.log',
           content: 'line 1\nline 2\n',
@@ -1459,12 +1510,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/big.log', name: 'big.log', kind: 'file', byteSize: 131_072 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/big.log',
           content: 'line 1\nline 2\n',
@@ -1502,12 +1553,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/notes.md', name: 'notes.md', kind: 'file', byteSize: 8 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/notes.md',
           content: '# notes',
@@ -1541,12 +1592,12 @@ describe('PawOsFilesApp', () => {
           activeSessionId: 'session-work',
           items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
         },
-        'agent.session.workspace.list': {
+        'files.list': {
           ok: true,
           path: '/workspace/paw',
           items: [{ path: '/workspace/paw/image.png', name: 'image.png', kind: 'file', byteSize: 900 }],
         },
-        'agent.session.workspace.read': {
+        'files.read': {
           ok: true,
           path: '/workspace/paw/image.png',
           content: '\u0000PNG\r\n\u001a\n',
@@ -1565,28 +1616,17 @@ describe('PawOsFilesApp', () => {
     expect(copyContent).toHaveAttribute('title', '二进制内容不能复制为文本');
   });
 
-  it('distinguishes a missing Session from an unbound workspace', async () => {
-    const noSessions = new MockControlTransport({
-      routes: { 'agent.sessions.list': { ok: true, items: [] } },
-    });
-    renderApp(noSessions, <PawOsFilesApp />);
-    expect(await screen.findByText('还没有可浏览的 Session。')).toBeInTheDocument();
-    expect(screen.queryByText('这个 Session 还没有绑定工作区。')).not.toBeInTheDocument();
-    cleanup();
-
-    const unbound = new MockControlTransport({
-      routes: {
-        'agent.sessions.list': {
-          ok: true,
-          activeSessionId: 'session-empty',
-          items: [{ id: 'session-empty', title: '无项目对话', updatedAtMs: 0, workspaceRoots: [], status: 'idle' }],
-        },
-      },
-    });
-    renderApp(unbound, <PawOsFilesApp />);
-    expect(await screen.findByText('这个 Session 还没有绑定工作区。')).toBeInTheDocument();
-    expect(screen.queryByText('还没有可浏览的 Session。')).not.toBeInTheDocument();
+  it.each([{ items: [] }, { items: [{ id: 'empty', title: '无项目对话', workspaceRoots: [], updatedAtMs: 0 }] }])('opens local folders regardless of available Session roots: %j', async ({ items }) => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items },
+      'files.list': { ok: true, scope: 'local', path: '/home', items: [{ name: 'Documents', path: '/home/Documents', kind: 'directory' }] },
+    } });
+    renderApp(transport, <PawOsFilesApp />);
+    expect(await screen.findByRole('treeitem', { name: '展开目录 Documents' })).toBeInTheDocument();
+    expect(screen.queryByText('这个 Session 尚未选择工作目录')).not.toBeInTheDocument();
+    expect(screen.getByText('本机文件 · 无需 Session')).toBeInTheDocument();
   });
+
 });
 
 /** jsdom cannot evaluate @container queries, so the single-pane layout is
@@ -1632,14 +1672,14 @@ function savedMetadataReceipt() {
 function savedMetadataTransport(save: MockRouteHandler) {
   return new MockControlTransport({ routes: {
     'agent.sessions.list': scopedSessions(),
-    'agent.session.workspace.list': (request: ControlRequest) => ({ ok: true, path: request.query?.path, items: ['notes.md', 'alias.md', 'other.txt'].map((name) => ({
+    'files.list': (request: ControlRequest) => ({ ok: true, path: request.query?.path, items: ['notes.md', 'alias.md', 'other.txt'].map((name) => ({
       path: `/workspace/paw/${name}`, name, kind: name === 'alias.md' ? 'symlink' : 'file',
-      byteSize: name === 'other.txt' ? 10 : request.params?.sessionId === 'reader' ? 11 : 4,
+      byteSize: name === 'other.txt' ? 10 : request.query?.sessionId === 'reader' ? 11 : 4,
     })) }),
-    'agent.session.workspace.read': (request: ControlRequest) => {
+    'files.read': (request: ControlRequest) => {
       const requestedPath = String(request.query?.path);
-      const content = requestedPath.endsWith('other.txt') ? 'other text' : request.params?.sessionId === 'reader' ? 'reader disk' : 'disk';
-      return { ok: true, sessionId: request.params?.sessionId, requestedPath, path: requestedPath.endsWith('alias.md') ? '/workspace/paw/notes.md' : requestedPath,
+      const content = requestedPath.endsWith('other.txt') ? 'other text' : request.query?.sessionId === 'reader' ? 'reader disk' : 'disk';
+      return { ok: true, sessionId: request.query?.sessionId, requestedPath, path: requestedPath.endsWith('alias.md') ? '/workspace/paw/notes.md' : requestedPath,
         content, byteSize: content.length, nextOffset: content.length, truncated: false,
         resourceRevision: `sha256:${'a'.repeat(64)}`, editability: { editable: true } };
     },
@@ -1649,15 +1689,15 @@ function savedMetadataTransport(save: MockRouteHandler) {
 function scopedFilesTransport(sessionList: MockRouteHandler = scopedSessions()) {
   return new MockControlTransport({ routes: {
     'agent.sessions.list': sessionList,
-    'agent.session.workspace.list': (request: ControlRequest) => ({ ok: true, path: request.query?.path, items: request.query?.path === '/workspace/paw' ? [
+    'files.list': (request: ControlRequest) => ({ ok: true, path: request.query?.path, items: request.query?.path === '/workspace/paw' ? [
       { path: '/workspace/paw/notes.md', name: 'notes.md', kind: 'file' },
       { path: '/workspace/paw/docs', name: 'docs', kind: 'directory' },
     ] : [] }),
-    'agent.session.workspace.read': (request: ControlRequest) => {
-      const content = `# ${request.params?.sessionId} ${String(request.query?.path).split('/').at(-1)}`;
-      return { ok: true, sessionId: request.params?.sessionId, path: request.query?.path, content,
+    'files.read': (request: ControlRequest) => {
+      const content = `# ${request.query?.sessionId} ${String(request.query?.path).split('/').at(-1)}`;
+      return { ok: true, sessionId: request.query?.sessionId, path: request.query?.path, content,
         byteSize: content.length, nextOffset: content.length, truncated: false, resourceRevision: `sha256:${'a'.repeat(64)}`,
-        editability: { editable: request.params?.sessionId === 'writer', reason: request.params?.sessionId === 'writer' ? '' : '此 Session 只读' } };
+        editability: { editable: request.query?.sessionId === 'writer', reason: request.query?.sessionId === 'writer' ? '' : '此 Session 只读' } };
     },
   } });
 }

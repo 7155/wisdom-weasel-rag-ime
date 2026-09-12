@@ -11,6 +11,23 @@
 @media(hover:hover) and (pointer:fine){.icon-button:hover,.quiet:hover,.history-list>button:hover,.source-chip:hover{background:var(--soft)}.suggestions button:hover{color:var(--accent)}.send:not(:disabled):hover{background:var(--accent-hover)}}
 @media(max-width:760px){.topbar{padding:12px 16px}.identity p{max-width:180px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}.conversation{padding:25px 22px 28px}.workspace.evidence-open{grid-template-columns:minmax(0,1fr)}.workspace.evidence-open .scroll-area{display:none}.evidence{border-left:0;padding:22px}.composer-wrap{padding:10px 14px}.welcome{padding-top:36px}.toolbar .button-label{display:none}.user-message p{max-width:94%}.answer{font-size:14px}.answer .lead{font-size:16px}.source-chip{max-width:210px}.footer-note{font-size:9px}.keyboard-hint{display:none}}
 @media(prefers-reduced-motion:reduce){.activity[data-running="true"] .activity-icon{animation:none}.send:active{transform:none}.source-chip{transition:opacity 120ms ease,background-color 120ms ease;transform:none}.activity .chevron{transition:none}}
+
+/* Keep exported results readable and operable on narrow screens. */
+.composer-meta,.composer .quiet,.footer-note,.source-detail,.history-list small,.answer-actions .receipt,.source-chip,.code-toolbar{font-size:12px}
+.source .address{font-size:11px}.history-list>button,.source p{font-size:13px}
+.process-map{display:flex;align-items:center;flex-wrap:wrap;gap:8px 0;list-style:none;margin:0 0 18px;padding:0;color:var(--muted);font-size:12px}
+.process-map li{display:flex;align-items:center;gap:7px;line-height:1.6}
+.process-map li+li:before{content:'→';margin:0 8px;color:var(--muted)}
+.process-map li[data-state="current"]{color:var(--accent);font-weight:600}
+.process-map li[data-state="failed"]{color:var(--error)}
+.result-steps{list-style:none!important;padding:0!important;counter-reset:result-step}
+.result-steps>li{counter-increment:result-step;display:grid;grid-template-columns:24px minmax(0,1fr);gap:12px;border-bottom:1px solid var(--line);padding:14px 0}
+.result-steps>li:before{content:counter(result-step);display:grid;place-items:center;width:24px;height:24px;border:1px solid var(--line);border-radius:50%;font-size:12px;color:var(--muted)}
+.result-steps strong{font-size:14px}.result-steps p{font-size:13px;margin:5px 0 0}.result-steps small{color:var(--muted);font-size:12px}
+.result-metrics{display:grid;gap:16px;margin:16px 0}.result-metric strong{display:block;font-size:13px;margin-bottom:6px}
+.result-metric-row{display:grid;grid-template-columns:34px minmax(0,1fr) minmax(68px,auto);align-items:center;gap:8px;font-size:12px;font-variant-numeric:tabular-nums;margin-top:5px}
+.result-metric-track{height:7px;background:var(--soft)}.result-metric-track span{display:block;height:100%;background:var(--muted)}.result-metric-row[data-series="after"] .result-metric-track span{background:var(--accent)}
+@media(max-width:760px){.icon-button,.composer .quiet,.source-chip,.send,.history-list>button,.code-toolbar button{min-height:44px}.send{min-width:44px}.composer textarea{font-size:16px}.footer-note{font-size:11px}.citation{min-width:28px;min-height:28px}.answer-note summary,.source summary{min-height:44px;padding:9px 0}}
 </style></head>
 <body data-knowledge="false" data-action="answer" data-context-key="" data-visible="true">
 <div class="app">
@@ -35,8 +52,10 @@
  function atBottom(){return scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<110}
  function keepBottom(follow){if(follow)scroller.scrollTop=scroller.scrollHeight}
  function safeURL(raw){try{const url=new URL(raw);return ['https:','http:'].includes(url.protocol)?url.href:null}catch{return null}}
+ let sourceFocus=null;
  function openSources(turn,sourceId){
-   $('workspace').classList.add('evidence-open');$('evidence').classList.remove('hidden');renderSourcePanel(turn);
+   sourceFocus=document.activeElement;
+   $('workspace').classList.add('evidence-open');$('evidence').classList.remove('hidden');renderSourcePanel(turn);$('close-sources').focus();
    if(sourceId){const detail=[...$('sources').querySelectorAll('details')].find(el=>el.dataset.sourceId===sourceId);if(detail){detail.open=true;detail.scrollIntoView?.({block:'nearest'})}}
  }
  function inline(el,value,turn){
@@ -68,7 +87,7 @@
        const block=element('div','code-block'),bar=element('div','code-toolbar'),copy=element('button','', '复制');copy.type='button';copy.onclick=()=>copyText(buffer.join('\n'),copy);bar.append(element('span','',language||'代码'),copy);const pre=element('pre'),code=element('code','',buffer.join('\n'));pre.append(code);block.append(bar,pre);target.append(block);continue;
      }
      if(line.includes('|')&&i+1<lines.length&&/^\s*\|?\s*:?-{3,}/.test(lines[i+1])){
-       const table=element('table'),cells=row=>row.trim().replace(/^\||\|$/g,'').split('|').map(v=>v.trim());const header=element('tr');for(const v of cells(line)){const th=element('th');inline(th,v,turn);header.append(th)}table.append(header);i+=2;while(i<lines.length&&lines[i].includes('|')){const tr=element('tr');for(const v of cells(lines[i++])){const td=element('td');inline(td,v,turn);tr.append(td)}table.append(tr)}target.append(table);continue;
+       const table=element('table'),cells=row=>row.trim().replace(/^\||\|$/g,'').split('|').map(v=>v.trim());const header=element('tr');for(const v of cells(line)){const th=element('th');inline(th,v,turn);header.append(th)}table.append(header);for(const th of header.children)th.setAttribute('scope','col');table.setAttribute('aria-label','回答中的数据表');i+=2;while(i<lines.length&&lines[i].includes('|')){const tr=element('tr');for(const v of cells(lines[i++])){const td=element('td');inline(td,v,turn);tr.append(td)}table.append(tr)}target.append(table);continue;
      }
      if(/^\s*(?:[-*]|\d+\.)\s+/.test(line)){
        const ordered=/^\s*\d+\./.test(line),list=element(ordered?'ol':'ul');while(i<lines.length&&/^\s*(?:[-*]|\d+\.)\s+/.test(lines[i])){const li=element('li');inline(li,lines[i++].replace(/^\s*(?:[-*]|\d+\.)\s+/,''),turn);list.append(li)}target.append(list);continue;
@@ -83,10 +102,26 @@
      if(char==='\\'){const next=raw[++i];if(next===undefined)break;if(next==='u'){const hex=raw.slice(i+1,i+5);if(!/^[0-9a-f]{4}$/i.test(hex))break;result+=String.fromCharCode(parseInt(hex,16));i+=4}else result+=({n:'\n',r:'\r',t:'\t',b:'\b',f:'\f'}[next]??next)}else result+=char;
    }return result;
  }
+ function renderStructuredResult(turn,data){
+   turn.answer.replaceChildren();
+   if(typeof data.summary==='string'){const p=element('p','lead');inline(p,data.summary,turn);turn.answer.append(p)}
+   if(Array.isArray(data.steps)&&data.steps.length){
+     turn.answer.append(element('h3','','回答中的步骤'));const steps=element('ol','result-steps');
+     for(const item of data.steps.slice(0,40)){if(!item||typeof item.title!=='string')continue;const li=element('li'),body=element('div');body.append(element('strong','',item.title));if(typeof item.detail==='string'){const p=element('p');inline(p,item.detail,turn);body.append(p)}if(typeof item.status==='string')body.append(element('small','',item.status));li.append(body);steps.append(li)}turn.answer.append(steps);
+   }
+   if(Array.isArray(data.metrics)&&data.metrics.length){
+     turn.answer.append(element('h3','','回答中的指标对照'));const metrics=element('div','result-metrics');
+     for(const item of data.metrics.slice(0,30)){if(!item||typeof item.label!=='string')continue;const row=element('div','result-metric'),max=Math.max(Math.abs(Number.isFinite(item.before)?item.before:0),Math.abs(Number.isFinite(item.after)?item.after:0),Number.EPSILON);row.append(element('strong','',item.label));
+       for(const [key,label] of [['before','基线'],['after','候选']]){const value=item[key],series=element('div','result-metric-row');series.dataset.series=key;series.append(element('span','',label));const track=element('span','result-metric-track'),bar=element('span');track.setAttribute('aria-hidden','true');bar.style.width=(Number.isFinite(value)?Math.abs(value)/max*100:0)+'%';track.append(bar);series.append(track,element('span','',Number.isFinite(value)?value.toLocaleString()+ (typeof item.unit==='string'?' '+item.unit:''):'未记录'));row.append(series)}
+       if(typeof item.source==='string')row.append(element('small','output-note',item.source));metrics.append(row);
+     }turn.answer.append(metrics,element('p','output-note','指标按回答提供的数据绘制，每项独立标尺；请结合来源核对。'));
+   }
+   if(!turn.answer.childNodes.length)turn.answer.append(element('p','empty','这份结构化结果尚无可展示内容。'));
+ }
  function renderAnswer(turn,value,settled){
    turn.output=String(value||'');const cleaned=turn.output.replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'');let data=null;
    if(cleaned.trim().startsWith('{')){try{data=JSON.parse(cleaned)}catch{data={decision:partialField(cleaned,'decision'),next_step:partialField(cleaned,'next_step')}}}
-   if(data&&('decision' in data||'next_step' in data)){
+   if(data?.schemaVersion==='paw.app-result.v1'){renderStructuredResult(turn,data)}else if(data&&('decision' in data||'next_step' in data)){
      turn.answer.replaceChildren();if(data.decision){const p=element('p','lead');inline(p,String(data.decision),turn);turn.answer.append(p)}
      if(data.next_step){turn.answer.append(element('h3','', '接下来可以这样做'));const p=element('p');inline(p,String(data.next_step),turn);turn.answer.append(p)}
      const evidence=Array.isArray(data.evidence)?data.evidence:typeof data.evidence==='string'?[data.evidence]:[];
@@ -129,8 +164,8 @@
    if(active)for(const el of active.root.querySelectorAll('[id]'))el.removeAttribute('id');
    $('welcome').hidden=true;const root=element('article','turn'),user=element('div','user-message');user.append(element('p','',q));root.append(user);const assistant=element('section','assistant');assistant.setAttribute('aria-label','助手回答');
    const activity=element('details','activity');activity.id='process';activity.dataset.running='true';const summary=element('summary');summary.innerHTML=icon;const status=element('span');status.id='status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');const elapsed=element('span','elapsed');elapsed.id='elapsed';elapsed.setAttribute('aria-hidden','true');summary.append(status,elapsed);const chevron=document.createElementNS('http://www.w3.org/2000/svg','svg');chevron.setAttribute('viewBox','0 0 24 24');chevron.setAttribute('class','chevron');chevron.innerHTML='<path d="m9 5 7 7-7 7"/>';summary.append(chevron);const timeline=element('ol','timeline');timeline.setAttribute('aria-label','实际处理过程');activity.append(summary,timeline);
-   const chips=element('div','source-chips'),answer=element('div','answer'),answerTitle=element('span','sr-only',action==='sources'?'正在检索 · 尚未完成':'回答生成中 · 尚未完成');answerTitle.id='answer-title';answer.id='answer';const recovery=element('p','recovery hidden');recovery.id='recovery';const actions=element('div','answer-actions hidden');const copy=element('button','icon-button','复制'),follow=element('button','icon-button','继续追问'),receipt=element('span','receipt');copy.type=follow.type='button';copy.onclick=()=>copyText(turn.output,copy);follow.onclick=()=>question.focus();actions.append(copy,follow,receipt);assistant.append(activity,chips,answerTitle,answer,recovery,actions);root.append(assistant);$('thread').append(root);
-   const turn={id:++turnNumber,root,activity,status,elapsed,timeline,chips,answer,answerTitle,recovery,actions,receipt,sources:[],knowledge:{},sourcesKey:'',events:[],output:'',question:q,action,started:Date.now(),state:'running',lastProgress:{}};active=turn;return turn;
+   const chips=element('div','source-chips'),answer=element('div','answer'),answerTitle=element('span','sr-only',action==='sources'?'正在检索 · 尚未完成':'回答生成中 · 尚未完成');answerTitle.id='answer-title';answer.id='answer';const recovery=element('p','recovery hidden');recovery.id='recovery';const actions=element('div','answer-actions hidden');const copy=element('button','icon-button','复制'),follow=element('button','icon-button','继续追问'),receipt=element('span','receipt');copy.type=follow.type='button';copy.onclick=()=>copyText(turn.output,copy);follow.onclick=()=>question.focus();actions.append(copy,follow,receipt);const processMap=element('ol','process-map');processMap.setAttribute('aria-label','处理流程');assistant.append(activity,processMap,chips,answerTitle,answer,recovery,actions);root.append(assistant);$('thread').append(root);
+   const turn={id:++turnNumber,root,activity,status,elapsed,timeline,processMap,chips,answer,answerTitle,recovery,actions,receipt,sources:[],knowledge:{},sourcesKey:'',events:[],output:'',question:q,action,started:Date.now(),state:'running',lastProgress:{}};active=turn;return turn;
  }
  function stage(turn,progress){
    const follow=atBottom();turn.lastProgress=progress||{};const current=progress.stage||'queued';turn.state=current;
@@ -138,6 +173,9 @@
    const sourceEvents=Array.isArray(progress.events)&&progress.events.length?progress.events:[{stage:current,atMs:Date.now()}];
    for(const event of sourceEvents){if(!labels[event.stage])continue;const key=`${event.stage}:${event.atMs}`;if(!turn.events.some(item=>item.key===key)&&(!turn.events.length||turn.events.at(-1).stage!==event.stage))turn.events.push({...event,key})}
    turn.timeline.replaceChildren();for(const event of turn.events){const li=element('li','',event.stage==='completed'&&turn.action==='sources'?'检索已完成':labels[event.stage]);const time=element('time','',`${Math.max(0,Math.round((event.atMs-turn.started)/1000))} 秒`);li.append(time);if(['sources_ready','context_ready'].includes(event.stage)&&turn.sources.length)li.append(element('small','',`${turn.sources.length} 份资料已接入`));turn.timeline.append(li)}
+   const observed=[];const groups={queued:'接收',context_ready:'资料',retrieving:'资料',sources_ready:'资料',model_starting:'模型',model_wait:'模型',thinking:'模型',answering:'模型',completed:'结果',failed:'结果',cancelled:'结果',interrupted:'结果',unconfirmed:'结果'};
+   for(const event of turn.events){const group=groups[event.stage];if(!group)continue;const found=observed.find(item=>item.group===group);if(found)found.stage=event.stage;else observed.push({group,stage:event.stage})}
+   turn.processMap.replaceChildren();for(const [index,event] of observed.entries()){const li=element('li','',event.group==='结果'?(event.stage==='completed'?(turn.action==='sources'?'检索完成':'回答完成'):labels[event.stage]):event.group);li.dataset.state=index===observed.length-1?(['failed','interrupted','unconfirmed'].includes(event.stage)?'failed':'current'):'observed';turn.processMap.append(li)}
    if(Array.isArray(progress.sources))renderSources(turn,progress.sources,progress.knowledge||{});
    if(progress.streamPartial){renderAnswer(turn,'实时输出暂时不完整，正在等待完整结果。',false)}
    else if(typeof progress.text==='string'&&progress.text){text(turn.answerTitle,'回答生成中 · 尚未完成');renderAnswer(turn,progress.text,false)}
@@ -185,23 +223,23 @@
  question.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing&&event.keyCode!==229){event.preventDefault();if(!busy)run()}});
  question.addEventListener('input',()=>{question.style.height='auto';question.style.height=Math.min(question.scrollHeight,165)+'px'});
  $('stop-button').onclick=()=>{if(controller){controller.abort();$('stop-button').disabled=true;if(active)text(active.status,active.action==='sources'?'正在停止本次检索…':'正在停止本次回答…')}};
- $('close-sources').onclick=()=>{$('workspace').classList.remove('evidence-open');$('evidence').classList.add('hidden')};
- function hideHistory(){$('history-panel').classList.add('hidden');$('history-toggle').setAttribute('aria-expanded','false')}
+ $('close-sources').onclick=()=>{const wasOpen=!$('evidence').classList.contains('hidden');$('workspace').classList.remove('evidence-open');$('evidence').classList.add('hidden');if(wasOpen&&sourceFocus?.isConnected)sourceFocus.focus()};
+ function hideHistory(){const wasOpen=!$('history-panel').classList.contains('hidden');$('history-panel').classList.add('hidden');$('history-toggle').setAttribute('aria-expanded','false');if(wasOpen)$('history-toggle').focus()}
  $('close-history').onclick=hideHistory;
  $('new-chat').onclick=()=>{if(busy)return;agentUI.failure();$('thread').replaceChildren();$('welcome').hidden=false;active=null;conversation=[];question.value='';$('close-sources').click();hideHistory();question.focus()};
  for(const button of document.querySelectorAll('[data-prompt]'))button.onclick=()=>{if(busy)return;question.value=button.dataset.prompt;question.focus()};
  $('history-toggle').onclick=async()=>{
-   if(busy)return;const opening=$('history-panel').classList.contains('hidden');hideHistory();if(!opening)return;$('history-panel').classList.remove('hidden');$('history-toggle').setAttribute('aria-expanded','true');text($('history-list'),'正在读取记录…');
+   if(busy)return;const opening=$('history-panel').classList.contains('hidden');hideHistory();if(!opening)return;$('history-panel').classList.remove('hidden');$('history-toggle').setAttribute('aria-expanded','true');text($('history-list'),'正在读取记录…');$('close-history').focus();
    try{const records=await window.pawApp.history();$('history-list').replaceChildren();if(!records?.length)$('history-list').append(element('p','empty','还没有调用记录。'));
      for(const row of (records||[]).slice(0,20)){const button=element('button','',row.input?.question||'应用调用');button.type='button';button.append(element('small','',`${row.state==='completed'&&row.actionId==='sources'?'检索已完成':labels[row.state]||'尚未完成'}${row.version?' · 应用 v'+row.version:''}`));button.onclick=()=>{
        if(busy)return;$('thread').replaceChildren();conversation=restoredContext(row.input);const q=row.input?.question||'';const turn=createTurn(q,row.actionId);turn.started=row.createdAtMs||Date.now();stage(turn,row.progress||{stage:row.state});
        agentUI.failure();if(row.state==='completed'){finalResult(turn,row.result||{},row.actionId);text(turn.status,'已恢复保存的结果，本次没有调用模型。');text(turn.receipt,'历史结果');if(row.actionId!=='sources')conversation.push({question:q,answer:row.result?.text||''})}
        else{renderAnswer(turn,row.progress?.text||'原调用尚未完成，请先核对记录。',true);stage(turn,{...row.progress,stage:row.state,text:undefined});turn.activity.dataset.running='false';turn.values=row.input;turn.requestId=row.requestId;agentUI.failure({state:row.state,message:row.message})}
-       question.value=q;turn.elapsed.classList.add('hidden');hideHistory();keepBottom(true);
+       question.value=q;turn.elapsed.classList.add('hidden');hideHistory();question.focus();keepBottom(true);
      };$('history-list').append(button)}
    }catch(error){text($('history-list'),error.message||'记录暂时不可读，请稍后重试。')}
  };
- document.addEventListener('keydown',event=>{if(event.key==='Escape'){hideHistory();$('close-sources').click()}});
+ document.addEventListener('keydown',event=>{if(event.key==='Escape'){if(!$('history-panel').classList.contains('hidden'))hideHistory();else if(!$('evidence').classList.contains('hidden'))$('close-sources').click()}});
  document.addEventListener('visibilitychange',()=>document.body.dataset.visible=String(!document.hidden));
  window.pawApp?.ready?.();
 })();

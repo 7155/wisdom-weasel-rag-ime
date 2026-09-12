@@ -71,11 +71,6 @@
   background: #dce9f8;
 }
 
-.paw-desktop-root[data-paw-visual='stellar'] .paw-field-media > .paw-composition-field,
-.paw-desktop-root[data-paw-visual='stellar'] .paw-field-live {
-  display: none;
-}
-
 .paw-desktop-root[data-paw-visual='stellar'] .paw-field-media::after {
   background: linear-gradient(180deg, rgb(243 248 255 / .2), transparent 22%, transparent 80%, rgb(32 54 98 / .15));
 }
@@ -126,11 +121,6 @@
   opacity: 1;
   animation: paw-stellar-planet-drift 32s linear infinite alternate;
 }
-.paw-stellar-scene__planet-image,
-.paw-stellar-scene__planet-material { position: absolute; inset: 0; width: 100%; height: 100%; }
-.paw-stellar-scene__planet-material { visibility: hidden; }
-.paw-stellar-scene__planet[data-material-ready] .paw-stellar-scene__planet-material { visibility: visible; }
-.paw-stellar-scene__planet[data-material-ready] .paw-stellar-scene__planet-image { visibility: hidden; }
 .paw-stellar-scene:not([data-agent-count='0']) .paw-stellar-scene__planet { opacity: .18; }
 .paw-stellar-scene__dust { position: absolute; inset: 0; }
 .paw-stellar-scene__dust i { position: absolute; width: 1px; height: 1px; background: #e2efff; border-radius: 50%; }

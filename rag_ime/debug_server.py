@@ -46,6 +46,7 @@ from .agent_runtime_driver import AgentRuntimeError
 from .agent_surface_runtime import AgentSurfaceRuntime, PiSurfaceCompletionProvider
 from .agent_role_book_control import AgentRoleBookControlService
 from .agent_service import AgentService, agent_service_from_settings
+from .desktop_files import DesktopFiles
 from .agent_routes import (
     agent_collaboration_profile_route,
     agent_approval_route,
@@ -729,6 +730,8 @@ class DebugImeService:
                 or Path.cwd()
             ),
         )
+        self.desktop_files = DesktopFiles(editability=lambda session_id, path:
+            self.agent_tools.workspace_harness.file_editability(self.agent.sessions.get(session_id), path))
         self.agent_tools = ControlToolGateway(
             sessions=self.agent.sessions,
             management=self.management,

@@ -18,14 +18,14 @@ describe('LabExperimentLifecycle', () => {
         } }],
     } as never;
     render(<LabExperimentLifecycle project={draft} onOpenArtifact={vi.fn()} onOpenRuns={vi.fn()} onDirection={vi.fn()} />);
-    expect(screen.getByText('当前记录：等待评测集')).toBeInTheDocument();
+    expect(screen.getByText('等待评测集')).toBeInTheDocument();
     expect(screen.queryByText(/真实运行回执 ·/)).not.toBeInTheDocument();
     expect(screen.queryByText('本轮判定已记录')).not.toBeInTheDocument();
   });
   it('connects evidence, run records, round directions and the selected result', () => {
     const onOpenArtifact = vi.fn(); const onOpenRuns = vi.fn(); const onDirection = vi.fn();
     render(<LabExperimentLifecycle project={project} onOpenArtifact={onOpenArtifact} onOpenRuns={onOpenRuns} onDirection={onDirection} />);
-    expect(screen.getByRole('heading', { name: '材料 → 评测 → 运行 → 多轮指标 → 最优方案' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '实验进展' })).toBeInTheDocument();
     expect(screen.getByText(/Case-02 引用缺失/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /查看原始运行记录/ }));
     expect(onOpenRuns).toHaveBeenCalled();
@@ -36,13 +36,16 @@ describe('LabExperimentLifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: '打开总结' }));
     expect(onOpenArtifact).toHaveBeenCalledWith('best');
   });
-  it('keeps round navigation bounded at the first round', () => {
-    render(<LabExperimentLifecycle project={project} onOpenArtifact={vi.fn()} onOpenRuns={vi.fn()} onDirection={vi.fn()} />);
-    expect(screen.getAllByText('Round 1 · 与上一轮直接对照').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getAllByRole('button', { name: '上一轮' })[0]!);
-    expect(screen.getAllByText('Round 1 · 与上一轮直接对照').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getAllByRole('button', { name: '下一轮' })[0]!);
-    expect(screen.getAllByText('Round 2 · 与上一轮直接对照').length).toBeGreaterThan(0);
+  it('offers real continuation actions without inventing another round', () => {
+    const onContinue = vi.fn(); const onAddMaterials = vi.fn();
+    render(<LabExperimentLifecycle project={{ ...(project as Record<string, unknown>), materialCount: 0 } as never} onOpenArtifact={vi.fn()} onOpenRuns={vi.fn()} onDirection={vi.fn()} onContinue={onContinue} onAddMaterials={onAddMaterials} />);
+    expect(screen.queryByRole('button', { name: '下一轮' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '自动推进优化' }));
+    fireEvent.click(screen.getByRole('button', { name: '带我逐步完成' }));
+    fireEvent.click(screen.getByRole('button', { name: '用示例走通流程' }));
+    expect(onContinue.mock.calls).toEqual([['auto'], ['guided'], ['sample']]);
+    fireEvent.click(screen.getByRole('button', { name: '添加材料' }));
+    expect(onAddMaterials).toHaveBeenCalledOnce();
   });
   it('exposes the real model execution state before asking for the next optimization round', () => {
     const running = { ...(project as Record<string, unknown>), bindings: [{ bindingId: 'golden', ownerRef: { kind: 'golden_suite', id: 'suite-1' }, execution: {
@@ -52,6 +55,7 @@ describe('LabExperimentLifecycle', () => {
     const onOpenRuns = vi.fn();
     render(<LabExperimentLifecycle project={running} onOpenArtifact={vi.fn()} onOpenRuns={onOpenRuns} onDirection={vi.fn()} />);
     expect(screen.getByText('模型运行中')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Prompt 优化' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '查看模型运行' }));
     expect(onOpenRuns).toHaveBeenCalled();
   });
@@ -64,10 +68,10 @@ describe('LabExperimentLifecycle', () => {
       latestJob: { jobId: 'job-1', kind: 'experiment', state: 'completed', progress: '已完成', decision: 'no_improvement' },
     } }] } as never;
     render(<LabExperimentLifecycle project={completed} onOpenArtifact={vi.fn()} onOpenRuns={vi.fn()} onDirection={vi.fn()} />);
-    expect(screen.getByText('真实运行回执 · 已完成')).toBeInTheDocument();
-    expect(screen.getByText('已完成 · no_improvement')).toBeInTheDocument();
-    expect(screen.getByText('本轮无提升 · 保留基线并可继续')).toBeInTheDocument();
-    expect(screen.getByText('本轮无提升 · 保留基线')).toBeInTheDocument();
+    expect(screen.getByText('本轮无提升，沿用基线')).toBeInTheDocument();
+    expect(screen.getByText('运行已完成')).toBeInTheDocument();
+    expect(screen.getByText('判定已记录')).toBeInTheDocument();
+    expect(screen.getByText('沿用基线')).toBeInTheDocument();
     expect(screen.queryByText('等待评测集')).not.toBeInTheDocument();
   });
 });

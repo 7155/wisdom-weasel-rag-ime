@@ -144,7 +144,7 @@ PAWOS 提供窗口、Dock、应用启动器、项目导航和独立结果窗口�
 | 工具 | 用途 | 界面 |
 | --- | --- | --- |
 | 项目工作台 | 查看项目概览、任务和工作文档，从最近项目继续工作 | [项目概览](assets/showcase/current/pawos-project.webp) |
-| Files | 浏览 Session 授权的工作区，预览代码、Markdown、diff、SVG 和网页 | [文件与预览](assets/showcase/current/pawos-files.webp) |
+| Files | 无需 Session 即可浏览本机文件夹和外部磁盘；通过路径预览代码、Markdown、diff、SVG 和网页，Session 工作区可作为快捷入口 | [文件与预览](assets/showcase/current/pawos-files.webp) |
 | Browser | 组织网页标签与 Agent 浏览器操作；完整历史、书签和下载由桌面宿主提供 | [网页控制视图](assets/showcase/current/pawos-browser.webp) |
 | Terminal | 使用与工作目录关联的终端，查看输出、搜索记录和管理终端会话 | [内置终端](assets/showcase/current/pawos-terminal.webp) |
 | Input Studio | 配置可选的 Squirrel/Rime 输入、词库、语音和输入记录 | [输入设置](assets/showcase/current/pawos-input.webp) |
