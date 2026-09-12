@@ -42,7 +42,7 @@ export async function startPawHostServer({
       void handleBrowserBridgeRequest(request, response, requestUrl.pathname, browserBridge);
       return;
     }
-    if (requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/control/')) {
+    if (requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/control/') || requestUrl.pathname === '/__paw_html_preview') {
       if (!isAllowedControlRequest(request, hostOrigin)) {
         response.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
         response.end('{"ok":false,"error":"PAW host origin rejected"}\n');

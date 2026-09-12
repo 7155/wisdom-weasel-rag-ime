@@ -182,6 +182,9 @@ export default defineConfig({
     ...(controlProxyTarget
       ? {
           proxy: {
+            '/__paw_html_preview': {
+              target: controlProxyTarget,
+            },
             '/api': {
               target: controlProxyTarget,
             },

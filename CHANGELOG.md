@@ -10,6 +10,8 @@ source checkpoint is not a signed and notarized macOS binary release.
   references; retain historical limitations and the original records.
 - Guide projects through material intake, execution, optimization and App
   delivery, with responsive previews, local App state and file downloads.
+- Route isolated HTML previews through the desktop and development hosts so
+  embedded Apps load their own interface and retain the preview policy.
 - Browse local files independently of Agent Sessions; keep existing Session
   authority for editing and saving.
 - Include the actual retrieved evidence when judging Knowledge answers, under

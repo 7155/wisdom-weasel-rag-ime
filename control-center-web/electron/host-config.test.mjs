@@ -277,6 +277,11 @@ test('host serves PAWOS and proxies GET, POST, and event streams through one ori
         response.end('event: ready\ndata: {"ok":true}\n\n');
         return;
       }
+      if (request.url === '/__paw_html_preview') {
+        response.writeHead(200, { 'Content-Type': 'text/html', 'Content-Security-Policy': "sandbox allow-scripts allow-downloads" });
+        response.end('<!doctype html><title>PAW HTML Preview</title>');
+        return;
+      }
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ body, method: request.method, ok: true }));
     });
@@ -321,6 +326,12 @@ test('host serves PAWOS and proxies GET, POST, and event streams through one ori
     assert.match(await (await fetch(`${host.origin}/api/events`)).text(), /event: ready/);
     assert.equal(requests[1].headers.origin, `http://127.0.0.1:${upstreamAddress.port}`);
     assert.equal(requests[1].headers.host, `127.0.0.1:${upstreamAddress.port}`);
+    for (const method of ['GET', 'HEAD']) {
+      const preview = await fetch(`${host.origin}/__paw_html_preview#private-html`, { method });
+      assert.equal(preview.headers.get('content-security-policy'), 'sandbox allow-scripts allow-downloads');
+      assert.equal(requests.at(-1).url, '/__paw_html_preview');
+      if (method === 'GET') assert.match(await preview.text(), /PAW HTML Preview/);
+    }
   } finally {
     await host.close();
     await new Promise((resolve) => upstream.close(resolve));
