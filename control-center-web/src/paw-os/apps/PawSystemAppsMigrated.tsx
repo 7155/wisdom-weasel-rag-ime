@@ -318,8 +318,8 @@ const agentExecutionModes: readonly {
 }[] = [
   {
     value: 'read_only',
-    title: '只读',
-    detail: '源文件只读、网络关闭；允许前台验证命令，阻止写入、后台任务与应用动作。',
+    title: '只读（沙箱）',
+    detail: 'macOS 沙箱内源文件只读、网络关闭；允许前台验证命令，阻止写入、后台任务与应用动作。',
     icon: Eye,
   },
   {
@@ -331,8 +331,8 @@ const agentExecutionModes: readonly {
   },
   {
     value: 'workspace_managed',
-    title: '工作区托管',
-    detail: '新对话需选择并确认项目范围；范围内动作自动批准。',
+    title: '工作区托管（沙箱）',
+    detail: 'macOS 沙箱内新对话需选择并确认项目范围；范围内动作自动批准。',
     icon: FolderOpen,
   },
   {
@@ -459,7 +459,7 @@ function PawAgentSettings() {
           {modelRouting.saveError ? <InlineNotice title="模型分工没有保存" tone="danger">{modelRouting.saveError}</InlineNotice> : null}
 
           <ManagementSection
-            description="新对话可以默认使用只读、全权限、工作区托管或全自动；每种选择都会原样保存。"
+            description="新对话可以默认使用只读沙箱、全权限、工作区托管沙箱或全自动；每种选择都会原样保存。"
             title="Agent 执行权限"
           >
             <div aria-label="Agent 执行权限" className="paw-agent-modes" role="radiogroup">

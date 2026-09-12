@@ -1080,6 +1080,16 @@ export const AgentTurn = memo(function AgentTurn({
     });
   });
   const retryUnsafe = nonRetryableAdmission || hasUndurableAttachments;
+  const hasUnacceptedUserMessage = useAgentLiveStore((state) => {
+    const projection = state.projections[sessionId];
+    return (projection?.turnsById[turnId]?.messageIds ?? []).some((messageId) => {
+      const message = projection?.messagesById[messageId];
+      return message?.role === 'user' && (
+        message.admissionState === 'ambiguous'
+        || (message.id.startsWith('local:') && message.status === 'failed')
+      );
+    });
+  });
   const latestTurnId = useAgentLiveStore((state) => (
     state.projections[sessionId]?.turnOrder.at(-1) ?? ''
   ));
@@ -1126,7 +1136,10 @@ export const AgentTurn = memo(function AgentTurn({
   // continuation prompt is a new user turn; it does not replay the failed
   // request. Restricting this to a few classified failure kinds left generic
   // Trace/Provider failures with a misleading “重试本轮” action.
-  const safeContinuation = turn.status === 'failed' && latestTurnId === turnId && Boolean(onContinueTurn);
+  // A rejected or ambiguous admission must replay its original payload/ID;
+  // the Runtime has not yet retained the request that a continuation needs.
+  const safeContinuation = turn.status === 'failed' && latestTurnId === turnId
+    && !hasUnacceptedUserMessage && Boolean(onContinueTurn);
   const failureTitle = runtimeInterrupted
     ? '运行时中断'
     : networkInterrupted

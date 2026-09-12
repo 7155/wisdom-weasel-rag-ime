@@ -22,7 +22,7 @@ describe('NewSessionDialog', () => {
     expect(within(dialog).getByRole('radio', { name: /不预选项目/ })).toBeChecked();
     expect(within(dialog).getAllByRole('radio', { name: /只读|完全访问|工作区托管|全自动/ })).toHaveLength(4);
     expect(within(dialog).getByRole('radio', { name: /全自动/ })).toBeEnabled();
-    expect(within(dialog).getByText('只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止')).toBeVisible();
+    expect(within(dialog).getByText('macOS 沙箱内只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止')).toBeVisible();
     await user.click(within(dialog).getByRole('radio', { name: /^完全访问/ }));
     expect(within(dialog).getByText('路径不限，所有工具动作直接执行，无需人工或模型逐项批准')).toBeVisible();
     await user.click(within(dialog).getByRole('button', { name: '开始对话' }));

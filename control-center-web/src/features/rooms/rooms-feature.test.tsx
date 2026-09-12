@@ -3437,7 +3437,7 @@ describe('Rooms experience', () => {
     expect(screen.getByText('行星 / Partner')).toBeInTheDocument();
     expect(screen.getByText('卫星 / Tool Agent')).toBeInTheDocument();
     expect(screen.getAllByText('配置：继承（Inherit）')).toHaveLength(2);
-    expect(screen.getAllByText('生效：工作区托管')).toHaveLength(3);
+    expect(screen.getAllByText('生效：工作区托管（沙箱）')).toHaveLength(3);
     expect(screen.getAllByText('/Volumes/work/learnA').length).toBeGreaterThan(0);
     expect(screen.queryByRole('radio', { name: '只读' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '保存权限' })).not.toBeInTheDocument();

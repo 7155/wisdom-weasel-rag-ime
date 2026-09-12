@@ -7,6 +7,7 @@ afterEach(cleanup);
 
 const approvedAssets: ReadonlyArray<{ appId: PawIdentityIconId; symbol: string; color: string }> = [
   { appId: 'agent', symbol: 'app-agent', color: '#0A84FF' },
+  { appId: 'agent-capsule', symbol: 'app-agent-capsule', color: '#7A5AF8' },
   { appId: 'room', symbol: 'app-room', color: '#7A5AF8' },
   { appId: 'browser', symbol: 'app-browser', color: '#14B8C8' },
   { appId: 'terminal', symbol: 'app-terminal', color: '#1D1D1F' },
@@ -22,13 +23,13 @@ const approvedAssets: ReadonlyArray<{ appId: PawIdentityIconId; symbol: string; 
 ];
 
 describe('PAWOS approved App identity icons', () => {
-  it('keeps the twelve built-in Apps and the Room collaboration identity on the approved wall', () => {
+  it('keeps the built-in Apps and the Room collaboration identity on the approved wall', () => {
     const { container } = render(<>{approvedAssets.map(({ appId }) => <PawAppIcon appId={appId} key={appId} />)}</>);
     const icons = [...container.querySelectorAll<SVGElement>('[data-paw-app-icon]')];
 
-    expect(pawApps).toHaveLength(14);
+    expect(pawApps).toHaveLength(15);
     expect(pawApps.map((app) => app.id)).not.toContain('room');
-    expect(icons).toHaveLength(13);
+    expect(icons).toHaveLength(14);
     for (const asset of approvedAssets) {
       const icon = container.querySelector(`[data-paw-app-icon="${asset.appId}"]`);
       expect(icon).toHaveAttribute('data-paw-approved-symbol', asset.symbol);

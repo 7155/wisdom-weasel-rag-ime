@@ -35,6 +35,7 @@ from .agent_workspace_roots import (
     is_trace_project_bound_surface,
     system_wide_workspace_roots,
 )
+from .agent_memory_context_support import compaction_summary
 
 
 class AgentSessionApplicationService:
@@ -54,6 +55,13 @@ class AgentSessionApplicationService:
         runtime_status: Callable[[], Mapping[str, object]],
         pending_memory_bootstrap: Callable[[Mapping[str, object]], Mapping[str, object]],
         probe_memory_maintenance: Callable[..., Mapping[str, object]],
+        cancel_pending_approvals: Callable[..., Mapping[str, object]],
+        recent_recall_messages: Callable[[str], list[dict[str, object]]],
+        checkpoint_runtime_compaction: Callable[
+            [str, Mapping[str, object], str], Mapping[str, object]
+        ],
+        refresh_session_context: Callable[[Mapping[str, object]], Mapping[str, object]],
+        public_error: Callable[[BaseException], str],
     ) -> None:
         self.sessions = sessions
         self._runtime_provider = runtime_provider
@@ -66,6 +74,11 @@ class AgentSessionApplicationService:
         self.runtime_status = runtime_status
         self.pending_memory_bootstrap = pending_memory_bootstrap
         self.probe_memory_maintenance = probe_memory_maintenance
+        self.cancel_pending_approvals = cancel_pending_approvals
+        self.recent_recall_messages = recent_recall_messages
+        self.checkpoint_runtime_compaction = checkpoint_runtime_compaction
+        self.refresh_session_context = refresh_session_context
+        self.public_error = public_error
 
     @property
     def runtime(self) -> RuntimeSessionLifecycle:
@@ -151,6 +164,81 @@ class AgentSessionApplicationService:
                 "revisionId": "",
             },
             "memoryBootstrap": self.pending_memory_bootstrap(session),
+        }
+
+    def abort(self, session_id: str) -> dict[str, object]:
+        """Stop one Session and settle its pending approval state."""
+
+        runtime_receipt: Mapping[str, object] = {}
+        try:
+            raw_runtime_receipt = self.runtime.abort(session_id)
+            if isinstance(raw_runtime_receipt, Mapping):
+                runtime_receipt = raw_runtime_receipt
+        finally:
+            approval_cancellation = self.cancel_pending_approvals(
+                session_id,
+                reason="user_abort",
+                turn_id=str(runtime_receipt.get("turnId") or ""),
+            )
+        return {
+            "schemaVersion": "rag-ime.agent-abort.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "runtimeReceipt": dict(runtime_receipt),
+            "approvalCancellation": approval_cancellation,
+        }
+
+    def compact(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Compact a Session and reconcile its bounded context afterwards."""
+
+        self.recent_recall_messages(session_id)
+        result = dict(
+            self.runtime.compact(session_id, str(payload.get("instructions") or ""))
+        )
+        if not isinstance(result.get("memoryCheckpoint"), Mapping):
+            result["memoryCheckpoint"] = dict(
+                self.checkpoint_runtime_compaction(session_id, result, "manual")
+            )
+        maintenance = self.probe_memory_maintenance(session_id, trigger="compaction")
+        if result.get("contextRefreshApplied") is True:
+            context_refresh: Mapping[str, object] = {
+                "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
+                "ok": True,
+                "result": {
+                    "sessionId": session_id,
+                    "trigger": "compaction",
+                    "status": "runtime_applied",
+                },
+            }
+        else:
+            try:
+                context_refresh = self.refresh_session_context(
+                    {
+                        "sessionId": session_id,
+                        "trigger": "compaction",
+                        "summary": compaction_summary(result),
+                        "compactionEntryId": result.get("compactionEntryId"),
+                        "expectedContextEpoch": result.get("contextEpochBefore"),
+                        "recentMessages": self.recent_recall_messages(session_id),
+                    }
+                )
+            except Exception as exc:
+                context_refresh = {
+                    "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
+                    "ok": False,
+                    "error": self.public_error(exc),
+                }
+        return {
+            "schemaVersion": "rag-ime.agent-compact.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "result": result,
+            "memoryMaintenance": maintenance,
+            "contextRefresh": dict(context_refresh),
         }
 
     def ensure_surface_session(

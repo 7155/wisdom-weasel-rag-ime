@@ -57,3 +57,8 @@ def contains_sensitive_content(value: object) -> bool:
 def redact_sensitive_text(value: object) -> str:
     text = str(value or "")
     return "[REDACTED]" if contains_sensitive_content(text) else text
+
+
+def is_redacted_or_sensitive(value: object) -> bool:
+    """Keep already-redacted input out of derived activity/Memory content."""
+    return "[REDACTED]" in str(value or "") or contains_sensitive_content(value)

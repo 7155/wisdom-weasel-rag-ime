@@ -333,7 +333,7 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
             self.assertEqual(recovered["traceId"], terminal["traceId"])
             self.assertEqual(recovered["sourceCursor"], terminal["sourceCursor"])
 
-    def test_restart_expiry_publishes_terminal_trace_event(self) -> None:
+    def test_restart_resumes_persisted_job_with_terminal_trace_event(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "paw.sqlite"
             job_id = "memory-maintenance:running-before-restart"
@@ -371,14 +371,69 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
                 event_publisher=events.append,
             )
             status = restarted.status(job_id)
-
-            self.assertEqual(status["state"], "expired")
-            self.assertEqual(status["errorCode"], "memory_maintenance_job_expired")
-            self.assertEqual(len(events), 1)
-            self.assertEqual(events[0]["phase"], "expired")
-            self.assertEqual(events[0]["status"], "expired")
+            self.assertIn(status["state"], {"queued", "running", "completed"})
+            terminal = self._wait_for_terminal(restarted, job_id)
+            self.assertEqual(terminal["state"], "completed")
+            self.assertTrue(terminal["ok"])
+            self.assertEqual(
+                [event["phase"] for event in events],
+                ["started", "completed"],
+            )
             self.assertEqual(events[0]["traceId"], f"trace:memory:{job_id}")
-            self.assertEqual(events[0]["runId"], job_id)
+            self.assertEqual(events[1]["runId"], job_id)
+
+    def test_restart_does_not_take_over_projection_refresh_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "paw.sqlite"
+            jobs = GatewayMemoryMaintenanceJobs(lambda _payload: {"ok": True}, db_path=db_path)
+            job_id = "memory-refresh:leased-projection"
+            jobs._persist_job({
+                "jobId": job_id, "state": "running", "request": {},
+                "result": {}, "progress": {}, "createdAtMs": 1, "updatedAtMs": 2,
+            })
+            with patch("rag_ime.owner_memory_maintenance.threading.Thread.start") as start:
+                jobs.resume_persisted_jobs()
+                self.assertEqual(jobs.status(job_id)["state"], "running")
+                start.assert_not_called()
+            with closing(sqlite3.connect(db_path)) as conn:
+                self.assertEqual(conn.execute(
+                    "SELECT state,updated_at_ms FROM memory_maintenance_jobs WHERE job_id=?", (job_id,),
+                ).fetchone(), ("running", 2))
+
+    def test_closed_owner_does_not_resume_jobs_on_status_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            jobs = GatewayMemoryMaintenanceJobs(
+                lambda _payload: {"ok": True}, db_path=Path(directory) / "paw.sqlite",
+            )
+            jobs._persist_job({
+                "jobId": "memory-maintenance:queued", "state": "queued",
+                "request": {}, "result": {}, "progress": {},
+                "createdAtMs": 1, "updatedAtMs": 2,
+            })
+            jobs.close()
+            with patch("rag_ime.owner_memory_maintenance.threading.Thread.start") as start:
+                self.assertEqual(jobs.status("memory-maintenance:queued")["state"], "queued")
+                start.assert_not_called()
+
+    def test_observer_refreshes_durable_status_without_resuming_the_owner_job(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "paw.sqlite"
+            owner = GatewayMemoryMaintenanceJobs(lambda _payload: {"ok": True}, db_path=db_path)
+            job = {"jobId": "memory-maintenance:external", "state": "running",
+                   "request": {}, "result": {}, "progress": {}, "createdAtMs": 1, "updatedAtMs": 2}
+            owner._persist_job(job)
+            observer = GatewayMemoryMaintenanceJobs(
+                lambda _payload: self.fail("observer must not execute"),
+                db_path=db_path, execution_owner=False,
+            )
+            with patch("rag_ime.owner_memory_maintenance.threading.Thread.start") as start:
+                observer.resume_persisted_jobs()
+                self.assertEqual(observer.status(job["jobId"])["state"], "running")
+                self.assertEqual(observer.latest_status()["state"], "running")
+                owner._persist_job({**job, "state": "completed", "updatedAtMs": 3, "completedAtMs": 3})
+                self.assertEqual(observer.status(job["jobId"])["state"], "completed")
+                self.assertEqual(observer.latest_status()["state"], "completed")
+                start.assert_not_called()
 
     @staticmethod
     def _wait_for_terminal(

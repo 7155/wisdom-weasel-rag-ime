@@ -58,9 +58,9 @@ describe('Knowledge resource frontend', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '连接已有知识库' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: '评测' }));
     expect(await screen.findByText(/^200 道原题 ·/)).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: '使用原题，进入回答评测' }));
+    fireEvent.click(screen.getByRole('button', { name: '使用已导入题集，进入回答评测' }));
     expect(onBind).toHaveBeenCalledWith(expect.objectContaining({ adapterId: 'golden.knowledge_qa', input: expect.objectContaining({ indexId: 'index-1', datasetId: 'dataset-1', targetCount: 4 }) }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /本次另起草合成标准/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /Agent 起草评测集/ }));
     fireEvent.click(screen.getByRole('button', { name: '建立待审核标准' }));
     expect(onBind.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ input: expect.not.objectContaining({ datasetId: expect.anything() }) }));
   });

@@ -130,6 +130,7 @@ describe('ToolPicker conversation capability presentation', () => {
     value.items.push({ ...value.items[0]!, id: 'session-review', canonicalId: 'extension:session-review', kind: 'extension', displayName: '对话复盘', description: '复盘插件' });
     const changed = renderPicker({ capabilityCatalog: value });
     const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /对话功能：/ }));
     await user.click(screen.getByRole('button', { name: '当前对话插件与技能' }));
     await user.click(screen.getByRole('combobox', { name: '对话复盘的当前对话使用' }));
     await user.click(screen.getByRole('option', { name: '当前对话关闭' }));
@@ -140,7 +141,7 @@ describe('ToolPicker conversation capability presentation', () => {
     const stale = catalog();
     stale.sessionPolicy!.sessionId = 'previous-session';
     renderPicker({ capabilityCatalog: stale });
-    expect(screen.getByRole('button', { name: '能力列表正在读取' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '对话功能：记忆、工具、插件与技能；能力列表正在读取' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /当前对话记忆/ })).not.toBeInTheDocument();
   });
 
@@ -159,6 +160,7 @@ describe('ToolPicker conversation capability presentation', () => {
   it('shows the current memory state before opening the menu and jumps directly to its control', async () => {
     const change = renderPicker();
     const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /对话功能：.*1 个；已登记工具：2 个/ }));
     await user.click(screen.getByRole('button', { name: '当前对话记忆已开启，打开记忆开关' }));
     expect(screen.getByRole('textbox', { name: '搜索工具' })).toHaveValue('记忆');
     expect(screen.getByRole('combobox', { name: '记忆召回的当前对话使用' })).toBeVisible();
@@ -169,13 +171,13 @@ describe('ToolPicker conversation capability presentation', () => {
   it('counts only capabilities that the current session can actually disclose', async () => {
     renderPicker();
 
-    expect(screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：2 个' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '对话功能：记忆、工具、插件与技能；这段对话可执行工具：1 个；已登记工具：2 个' })).toBeInTheDocument();
   });
 
   it('names Memory and Knowledge by their user-facing role while preserving canonical preferences', async () => {
     const onPreferenceChange = renderPicker();
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：2 个' }));
+    await user.click(screen.getByRole('button', { name: /对话功能：.*1 个；已登记工具：2 个/ }));
     const dialog = screen.getByRole('dialog', { name: '当前对话工具' });
 
     const memoryRow = within(dialog).getByRole('button', { name: /^记忆召回/ }).closest('article')!;
@@ -196,7 +198,7 @@ describe('ToolPicker conversation capability presentation', () => {
   it('keeps capability use read-only while a turn is running', async () => {
     const onPreferenceChange = renderPicker({ adjustmentDisabled: true });
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：2 个' }));
+    await user.click(screen.getByRole('button', { name: /对话功能：.*1 个；已登记工具：2 个/ }));
     const dialog = screen.getByRole('dialog', { name: '当前对话工具' });
 
     expect(within(dialog).getByText('当前任务正在运行；可以查看工具，但要等本轮结束后再调整。'))
@@ -211,7 +213,7 @@ describe('ToolPicker conversation capability presentation', () => {
   it('finds a tool by its role or original name, and recovers from an empty search', async () => {
     renderPicker();
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：2 个' }));
+    await user.click(screen.getByRole('button', { name: /对话功能：.*1 个；已登记工具：2 个/ }));
     const search = screen.getByRole('textbox', { name: '搜索工具' });
     expect(search).toHaveFocus();
     await user.type(search, '自举');
@@ -232,7 +234,7 @@ describe('ToolPicker conversation capability presentation', () => {
     const onSelect = vi.fn();
     const onPreferenceChange = renderPicker({ onSelect });
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：2 个' }));
+    await user.click(screen.getByRole('button', { name: /对话功能：.*1 个；已登记工具：2 个/ }));
     await user.click(screen.getByRole('button', { name: '记忆召回' }));
     expect(onSelect).toHaveBeenCalledWith(tools[0]);
     expect(onPreferenceChange).not.toHaveBeenCalled();

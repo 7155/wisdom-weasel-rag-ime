@@ -12,10 +12,10 @@ import './lab-knowledge.css';
 type Page = 'sources' | 'index' | 'evaluation';
 type Draft = { page: Page; corpusId: string; datasetId: string; indexId: string; sourcePath: string; datasetPath: string;
   query: string; strategy: string; size: number; overlap: number; embedding: string; count: number; profile: RetrievalProfile;
-  corpusFields: Record<string, string>; datasetFields: Record<string, string>; noDataset: boolean };
+  corpusFields: Record<string, string>; datasetFields: Record<string, string>; noDataset: boolean; datasetMode: 'import' | 'agent' };
 const initial: Draft = { page: 'sources', corpusId: '', datasetId: '', indexId: '', sourcePath: '', datasetPath: '', query: '',
   strategy: 'markdown', size: 1200, overlap: 160, embedding: 'none', count: 4, profile: defaultRetrieval,
-  corpusFields: {}, datasetFields: {}, noDataset: false };
+  corpusFields: {}, datasetFields: {}, noDataset: false, datasetMode: 'import' };
 const labels: Record<string, string> = { download_wix: '下载 WixQA', import_corpus: '整理资料', connect_base: '连接知识库',
   import_dataset: '导入评测集', index: '建立索引', search: '试检索', evaluate: '检索评测' };
 const stateLabels: Record<string, string> = { queued: '排队中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', interrupted: '已中断', cancelled: '已停止' };
@@ -151,19 +151,18 @@ export function LabKnowledge({ project, busy, onCommand, onBind, onOpenBinding }
       </>}
     </div> : <div className="lab-knowledge-section">
       {!corpus ? <Empty onSources={() => patch({ page: 'sources' })} /> : <>
-        <h3>问题与参考答案单独保存</h3><p>有评测集就导入原题；没有评测集，可以从知识库起草标准，再逐题核对。</p>
-        <div className="lab-knowledge-inline"><label className="lab-project-file-picker"><Upload size={15} />{datasetFile?.name ?? '选择评测集文件'}<input type="file" accept=".jsonl,.ndjson,.csv" disabled={disabled} onChange={(event) => setDatasetFile(event.target.files?.[0])} /></label>{datasetFile ? <Button disabled={disabled} size="small" onClick={() => setDatasetFile(undefined)}>移除文件</Button> : null}</div>
-        {!datasetFile ? <label>执行器上的评测集路径<input value={draft.datasetPath} placeholder="JSONL 或 CSV 文件的绝对路径" disabled={disabled} onChange={(event) => patch({ datasetPath: event.target.value })} /></label> : null}
-        <FieldMapping kind="dataset" value={draft.datasetFields} onChange={(datasetFields) => patch({ datasetFields })} disabled={disabled} />
-        <Button disabled={disabled || (!datasetFile && !draft.datasetPath.trim())} onClick={() => void importFile('dataset')}>导入评测集</Button>
+        <h3>先确定评测数据从哪里来</h3><p>没有评测就没有可比较的指标。请明确使用自己的题集，或让 Agent 根据当前资料起草待审核题集。</p>
+        <div className="lab-knowledge-mode-choice" role="radiogroup" aria-label="评测集来源"><label className={draft.datasetMode === 'import' ? 'is-selected' : ''}><input type="radio" name="dataset-mode" checked={draft.datasetMode === 'import'} disabled={disabled} onChange={() => patch({ datasetMode: 'import', noDataset: false })} /><strong>我提供评测集</strong><span>上传或读取 JSONL/CSV，题目、参考答案和来源由我控制。</span></label><label className={draft.datasetMode === 'agent' ? 'is-selected' : ''}><input type="radio" name="dataset-mode" checked={draft.datasetMode === 'agent'} disabled={disabled} onChange={() => patch({ datasetMode: 'agent', noDataset: true })} /><strong>Agent 起草评测集</strong><span>根据已接入资料生成候选题，先审核标准，再允许运行指标。</span></label></div>
+        {draft.datasetMode === 'import' ? <><div className="lab-knowledge-inline"><label className="lab-project-file-picker"><Upload size={15} />{datasetFile?.name ?? '选择评测集文件'}<input type="file" accept=".jsonl,.ndjson,.csv" disabled={disabled} onChange={(event) => setDatasetFile(event.target.files?.[0])} /></label>{datasetFile ? <Button disabled={disabled} size="small" onClick={() => setDatasetFile(undefined)}>移除文件</Button> : null}</div>
+        {!datasetFile ? <label>执行器上的评测集路径<input value={draft.datasetPath} placeholder="JSONL 或 CSV 文件的绝对路径" disabled={disabled} onChange={(event) => patch({ datasetPath: event.target.value })} /></label> : null}<FieldMapping kind="dataset" value={draft.datasetFields} onChange={(datasetFields) => patch({ datasetFields })} disabled={disabled} /><Button disabled={disabled || (!datasetFile && !draft.datasetPath.trim())} onClick={() => void importFile('dataset')}>导入评测集</Button></> : <div className="lab-knowledge-agent-dataset"><p>Agent 只会生成候选题和参考标准，不会把它们直接当作真实指标。</p><Button variant="primary" disabled={disabled || !index} onClick={() => void bind()}>生成待审核评测集</Button></div>}
         {dataset ? <><label>评测集版本<select value={dataset.datasetId} onChange={(event) => patch({ datasetId: event.target.value, noDataset: false })}>{datasets.map((row) => <option key={row.datasetId} value={row.datasetId}>{row.title} · {row.caseCount} 题</option>)}</select></label><p>{dataset.caseCount} 道原题 · {dataset.splits.development} 道开发题 / {dataset.splits.holdout} 道保留题 · {dataset.retrievalEvaluableCount} 道有来源标注</p><p className="lab-knowledge-note">按共享来源和重复问题分组，避免分组间重复使用；这是本项目派生分组，不是数据集官方划分。</p></> : <p className="lab-knowledge-note">尚无评测集。下方可以建立待审核标准；合成题会明确标记，不计作真实客户问题。</p>}
         {index && dataset ? <><h3>先检查资料是否找对</h3><label>本次评测的索引<select value={index.jobId} disabled={disabled} onChange={(event) => patch({ indexId: event.target.value })}>{indexes.map((row, number) => <option key={row.jobId} value={row.jobId}>{indexes.length - number} · {row.chunking.strategy} {row.chunking.size}/{row.chunking.overlap} · {amount(row.chunkCount)} 片</option>)}</select></label><RetrievalFields value={profile} onChange={updateProfile} disabled={disabled} semantic={index.dense.provider.semantic} reranker={index.reranker.configured === true} />
           <div className="lab-knowledge-inline"><Button variant="primary" disabled={disabled || !dataset.splits.development || !dataset.retrievalEvaluableCount} onClick={() => void evaluate('development')}>运行开发集检索评测</Button><Button disabled={disabled || !dataset.splits.holdout || !dataset.retrievalEvaluableCount} onClick={() => void evaluate('holdout')}>固定配置，检查保留集</Button></div>
           <p className="lab-knowledge-note">仅评测检索，不调用回答模型。语义检索和重排仍会使用所配置的服务。保留集用于配置选定后的检查；重复使用会记录次数。</p>
           {evaluations.length ? <EvaluationTable evaluations={evaluations} disabled={disabled} onUse={(row) => { const selected = state?.indexes.find((index) => index.jobId === row.indexId); if (selected) patch({ indexId: selected.jobId, corpusId: selected.corpusId, profile: row.profile }); }} /> : null}</> : !index ? <p>资料尚未建立索引。<Button size="small" onClick={() => patch({ page: 'index' })}>前往建索引</Button></p> : null}
-        {index ? <><h3>再评测回答与提示词</h3>{dataset ? <label className="lab-knowledge-check"><input type="checkbox" checked={draft.noDataset} onChange={(event) => patch({ noDataset: event.target.checked })} />本次另起草合成标准，不使用已导入原题</label> : null}
+        {index ? <><h3>进入回答评测</h3>
           <label>本轮回答评测题数<input type="number" min={2} max={100} value={draft.count} onChange={(event) => patch({ count: Number(event.target.value) })} /></label><p className="lab-knowledge-note">首次建议 4 题。{dataset && !draft.noDataset ? `从 ${dataset.caseCount} 道原题中稳定选取，并保留开发与验证分组。` : '从知识库的文档样本起草，所有标准先进入待审核状态。'}完整知识库仍参与每次检索。后续起草、评审和回答会调用所选模型。</p>
-          <Button variant="primary" disabled={disabled || !validCount} onClick={() => void bind()}>{dataset && !draft.noDataset ? '使用原题，进入回答评测' : '建立待审核标准'}<ArrowRight size={15} /></Button>
+          <Button variant="primary" disabled={disabled || !validCount || (draft.datasetMode === 'import' && !dataset)} onClick={() => void bind()}>{draft.datasetMode === 'import' ? '使用已导入题集，进入回答评测' : '建立待审核标准'}<ArrowRight size={15} /></Button>
           <p className="lab-knowledge-note">此步只绑定索引、检索配置和题目预算。下一页可以核对标准、校准评审，再运行基线与候选提示词。</p></> : null}
       </>}
     </div>}

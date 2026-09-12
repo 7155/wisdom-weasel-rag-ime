@@ -1070,15 +1070,16 @@ describe('PluginsFeature', () => {
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
     await screen.findByText('时间线检查');
     expect(screen.getByText('可恢复到 v0.9.0')).toBeInTheDocument();
-    expect(screen.getByText('1 项资源')).toBeInTheDocument();
+    const installedPackage = screen.getByRole('article', { name: '时间线检查 Package' });
+    expect(within(installedPackage).getByText('1 项资源')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '停用' }));
+    await user.click(within(installedPackage).getByRole('button', { name: '停用' }));
     expect(await screen.findByText('等待你的批准')).toBeVisible();
     expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: '确认更改' }));
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(1));
 
-    const rollback = screen.getByRole('button', { name: '恢复上一版本' });
+    const rollback = within(screen.getByRole('article', { name: '时间线检查 Package' })).getByRole('button', { name: '恢复上一版本' });
     expect(rollback).toBeEnabled();
     await user.click(rollback);
     expect(await screen.findByText('等待你的批准')).toBeVisible();
@@ -1087,8 +1088,9 @@ describe('PluginsFeature', () => {
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(2));
 
     expect(await screen.findByText('v0.9.0')).toBeVisible();
-    expect(screen.getByRole('button', { name: '恢复上一版本' })).toBeDisabled();
-    expect(screen.getByText('没有可恢复的历史版本')).toBeInTheDocument();
+    const restoredPackage = within(screen.getByRole('article', { name: '时间线检查 Package' }));
+    expect(restoredPackage.getByRole('button', { name: '恢复上一版本' })).toBeDisabled();
+    expect(restoredPackage.getByText('没有可恢复的历史版本')).toBeInTheDocument();
   });
 
   it('previews uninstall in App Center, states retained data, and removes only after confirmation', async () => {
@@ -1099,7 +1101,7 @@ describe('PluginsFeature', () => {
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
     await screen.findByText('时间线检查');
 
-    await user.click(screen.getByRole('button', { name: '卸载' }));
+    await user.click(within(screen.getByRole('article', { name: '时间线检查 Package' })).getByRole('button', { name: '卸载' }));
 
     expect(await screen.findByText('等待你的批准')).toBeVisible();
     expect(screen.getByText(/不会删除项目文件、对话、WorkDocument 或个人数据/)).toBeVisible();
@@ -1113,7 +1115,8 @@ describe('PluginsFeature', () => {
     expect(screen.queryByRole('article', { name: '时间线检查 Package' })).not.toBeInTheDocument();
     expect(screen.getByText('卸载插件：时间线检查')).toBeVisible();
     expect(screen.getByText(/回执 plugin:uninstall:preview/)).toBeVisible();
-    expect(screen.getByRole('heading', { name: '还没有额外扩展' })).toBeVisible();
+    // Other installed Packages are independent of this uninstall.
+    expect(screen.getAllByRole('article').some((item) => item.getAttribute('aria-label')?.endsWith(' Package'))).toBe(true);
   });
 
   it('uses the same skill purposes as scene loading while preserving original identity and body', async () => {

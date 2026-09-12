@@ -947,3 +947,54 @@
 .eval-lab__start-guide { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px 28px; padding: 18px 20px; background: var(--lab-surface-subtle); border-radius: 12px; font-size: 15px; }
 .eval-lab__start-guide p { margin: 5px 0 0; color: var(--lab-muted); font-size: 14px; }
 .eval-lab__start-guide > span { max-width: 34ch; color: var(--lab-muted); font-size: 13px; }
+
+.eval-lab__story { display: grid; gap: 1.25rem; padding: 1.5rem; border: 1px solid var(--border-subtle, #d9e0ea); border-radius: 1rem; background: var(--surface-raised, #fff); }
+.eval-lab__story-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.eval-lab__story-header select { max-width: 28rem; min-height: 2.5rem; }
+.eval-lab__story-card { min-height: 20rem; display: grid; align-content: center; gap: .8rem; padding: clamp(2rem, 7vw, 5rem); border-radius: .9rem; background: linear-gradient(135deg, #f3f6fb, #fff); white-space: pre-wrap; }
+.eval-lab__story-card > span { color: var(--text-muted, #667085); font-size: .85rem; font-weight: 650; }
+.eval-lab__story-card h3 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.5rem); }
+.eval-lab__story-card p { max-width: 72ch; margin: 0; color: var(--text-secondary, #475467); line-height: 1.75; }
+.eval-lab__story-nav { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.eval-lab__story-nav > div { display: flex; gap: .35rem; }
+.eval-lab__story-nav > div button { width: 2rem; height: 2rem; border: 1px solid var(--border-subtle, #d9e0ea); border-radius: 999px; background: transparent; cursor: pointer; }
+.eval-lab__story-nav > div button[aria-pressed="true"] { color: #fff; border-color: #315efb; background: #315efb; }
+@media (max-width: 720px) { .eval-lab__story-header { flex-direction: column; } .eval-lab__story-header select { width: 100%; max-width: none; } .eval-lab__story-nav { flex-wrap: wrap; } }
+.eval-lab__story-card ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .55rem; }
+.eval-lab__story-card li { line-height: 1.55; }
+.eval-lab__story-card small { color: var(--text-muted, #667085); }
+.eval-lab__story-card table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.eval-lab__story-card th, .eval-lab__story-card td { padding: .65rem .75rem; border-bottom: 1px solid var(--border-subtle, #d9e0ea); text-align: right; }
+.eval-lab__story-card th:first-child, .eval-lab__story-card td:first-child { text-align: left; }
+.eval-lab__story-card td:last-child { color: var(--accent, #315efb); font-variant-numeric: tabular-nums; }
+.eval-lab__story-evidence { color: var(--text-muted, #667085); font-size: .8rem; overflow-wrap: anywhere; }
+.eval-lab__story-table-wrap { overflow-x: auto; max-width: 100%; }
+.eval-lab__story-card td.is-positive { color: #087443; font-weight: 700; }
+.eval-lab__story-card td.is-negative { color: #b42318; font-weight: 700; }
+.eval-lab__story-nav button:focus-visible, .eval-lab__story-header select:focus-visible { outline: 3px solid color-mix(in srgb, #315efb 35%, transparent); outline-offset: 2px; }
+.eval-lab__story-experiments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
+.eval-lab__story-experiments button { display: grid; gap: .25rem; min-height: 4.2rem; padding: .75rem .9rem; border: 1px solid var(--border-subtle, #d9e0ea); border-radius: .7rem; background: var(--surface, #fff); color: inherit; text-align: left; cursor: pointer; }
+.eval-lab__story-experiments button:hover, .eval-lab__story-experiments button.is-selected { border-color: #315efb; background: color-mix(in srgb, #315efb 7%, #fff); }
+.eval-lab__story-experiments strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eval-lab__story-experiments span { color: var(--text-muted, #667085); font-size: .78rem; }
+@media (max-width: 900px) { .eval-lab__story-experiments { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .eval-lab__story-experiments { grid-template-columns: 1fr; } }
+.eval-lab__story-progress { height: .3rem; overflow: hidden; border-radius: 99px; background: var(--border-subtle, #d9e0ea); }
+.eval-lab__story-progress span { display: block; height: 100%; border-radius: inherit; background: #315efb; transition: width .2s ease; }
+.eval-lab__story-card:focus-visible { outline: 3px solid color-mix(in srgb, #315efb 35%, transparent); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .eval-lab__story-progress span { transition: none; } }
+.eval-lab__story-card { min-height: 16rem; align-content: start; padding: 1.5rem 1.75rem; border: 1px solid var(--border-subtle, #d9e0ea); background: var(--surface-raised, #fff); }
+.eval-lab__story-card-meta { display: flex; justify-content: space-between; gap: 1rem; padding-bottom: .8rem; border-bottom: 1px solid var(--border-subtle, #d9e0ea); color: var(--text-muted, #667085); font-size: .78rem; overflow-wrap: anywhere; }
+.eval-lab__story-card-meta strong { color: var(--text-secondary, #475467); white-space: nowrap; }
+.eval-lab__story-card h3 { font-size: 1.35rem; }
+.eval-lab__change-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.eval-lab__change-group { padding: .8rem; border: 1px solid var(--border-subtle, #d9e0ea); border-radius: .6rem; }
+.eval-lab__change-group h4 { margin: 0 0 .45rem; font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted, #667085); }
+.eval-lab__change-group ul { margin: 0; padding-left: 1rem; }
+.eval-lab__change-group > span { color: var(--text-muted, #667085); font-size: .82rem; }
+@media (max-width: 640px) { .eval-lab__change-groups { grid-template-columns: 1fr; } }
+.eval-lab__metric-key { display: block; color: var(--text-muted, #667085); font-size: .68rem; font-weight: 400; }
+.eval-lab__decision { display: inline-flex; padding: .2rem .5rem; border-radius: 99px; font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; }
+.eval-lab__decision--keep { color: #087443; background: #e8f7ef; }
+.eval-lab__decision--reject { color: #b42318; background: #fef0ef; }
+.eval-lab__decision--unknown { color: #8a5a00; background: #fff7e0; }

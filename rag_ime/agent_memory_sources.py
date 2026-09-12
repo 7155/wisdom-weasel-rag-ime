@@ -1113,9 +1113,32 @@ class AgentMemorySourceStore:
         normalized_owner_kind = compact_whitespace(owner_kind)
         if normalized_owner_kind not in _OWNER_KINDS:
             raise ValueError("unsupported Agent memory owner kind")
+        from .memory_lifecycle.privacy import assess_capture
+
+        decision = assess_capture(
+            source=source, text=canonical, metadata=metadata, tags=tags,
+        )
+        if not decision.allowed:
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": True, "stored": False, "status": "skipped_privacy",
+                "reason": decision.reason,
+            }
+        canonical = decision.text
+        metadata = decision.metadata
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         with self._connect() as conn:
+            from .memory_lifecycle.common import excluded
+
+            if excluded(
+                conn, project=self.project, session_id=session_id, source_id=pi_entry_id,
+            ):
+                return {
+                    "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                    "ok": True, "stored": False, "status": "skipped_privacy",
+                    "reason": "capture_scope_excluded",
+                }
             session = conn.execute(
                 """
                 SELECT role_id, role_version, session_kind

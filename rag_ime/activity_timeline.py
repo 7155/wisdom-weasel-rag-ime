@@ -23,7 +23,7 @@ from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .memory_ingest import normalize_text
 from .memory_projection import RETRIEVAL_DOCS_PROJECTION, enqueue_memory_projection
-from .sensitive_content import contains_sensitive_content
+from .sensitive_content import is_redacted_or_sensitive
 from .text_utils import compact_whitespace, now_ms, truncate_text
 
 if TYPE_CHECKING:
@@ -1117,7 +1117,7 @@ def _segments(
             )
             event_source = _safe_label(event.source, fallback="unknown-source")
             raw_text = compact_whitespace(event.text)
-            redacted = contains_sensitive_content(raw_text)
+            redacted = is_redacted_or_sensitive(raw_text)
             text = "[敏感内容已脱敏]" if redacted else truncate_text(raw_text, 180)
             if redacted:
                 redacted_count += 1
@@ -1290,7 +1290,7 @@ def _organized_segments(
                 ),
                 "sourceKind": _safe_label(event.source, fallback="unknown-source"),
                 "occurredAtMs": event.created_at_ms,
-                "redacted": contains_sensitive_content(event.text),
+                "redacted": is_redacted_or_sensitive(event.text),
             }
             for event in group
         )
@@ -1315,7 +1315,7 @@ def _organized_segments(
                 source_event_hash=source_hash,
                 summary=truncate_text(summary, 760),
                 redacted_event_count=sum(
-                    contains_sensitive_content(event.text) for event in group
+                    is_redacted_or_sensitive(event.text) for event in group
                 ),
                 title=truncate_text(title, 160),
                 apps=apps,
@@ -1545,7 +1545,7 @@ def _timeline_evidence_refs(raw: object) -> list[dict[str, object]]:
                 ),
                 "occurredAtMs": _safe_timestamp(value.get("occurredAtMs")),
                 "redacted": bool(value.get("redacted"))
-                or contains_sensitive_content(preview),
+                or is_redacted_or_sensitive(preview),
             }
         )
     return refs
@@ -1723,7 +1723,7 @@ def _is_low_information_group(group: Sequence[_ActivityEvent]) -> bool:
 
 def _is_low_information_text(value: str) -> bool:
     text = compact_whitespace(value)
-    if not text or contains_sensitive_content(text):
+    if not text or is_redacted_or_sensitive(text):
         return True
     latin = re.sub(r"[^a-z0-9]+", "", text.casefold())
     cjk_count = len(re.findall(r"[\u3400-\u9fff]", text))
@@ -1946,7 +1946,7 @@ def _event_semantic_terms(event: _ActivityEvent) -> set[str]:
     text = compact_whitespace(
         " ".join((event.text, event.recent_context, event.preedit))
     ).casefold()
-    if not text or contains_sensitive_content(text):
+    if not text or is_redacted_or_sensitive(text):
         return set()
     terms = {
         token
@@ -2077,7 +2077,7 @@ def _coarse_task_title(group: Sequence[_ActivityEvent]) -> str:
 
 def _event_task_facets(event: _ActivityEvent) -> set[str]:
     text = compact_whitespace(event.text).casefold()
-    if not text or contains_sensitive_content(text):
+    if not text or is_redacted_or_sensitive(text):
         return set()
     latin_terms = set(re.findall(r"[a-z0-9][a-z0-9._-]{1,48}", text))
     facets: set[str] = set()
@@ -2200,14 +2200,14 @@ def _timezone_name(value: tzinfo) -> str:
 
 def _safe_label(value: object, *, fallback: str) -> str:
     text = compact_whitespace(str(value or ""))
-    if not text or contains_sensitive_content(text):
+    if not text or is_redacted_or_sensitive(text):
         return fallback
     return truncate_text(text, 160)
 
 
 def _safe_optional_label(value: object) -> str:
     text = compact_whitespace(str(value or ""))
-    if not text or contains_sensitive_content(text):
+    if not text or is_redacted_or_sensitive(text):
         return ""
     return truncate_text(text, 240)
 

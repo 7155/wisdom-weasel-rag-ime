@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .paw_browser_runtime import PawBrowserRuntime, PawBrowserRuntimeError
+from .paw_browser_runtime import (
+    BROWSER_LOAD_RECOVERY_HINT,
+    CHROMIUM_ERROR_PAGE_URL,
+    PawBrowserRuntime,
+    PawBrowserRuntimeError,
+)
 
 
 SCHEMA_VERSION = "rag-ime.browser-control.v1"
@@ -406,11 +411,20 @@ class BrowserControlService:
                     )
         if row is None:
             raise BrowserControlError("browser snapshot is unavailable")
+        page_failed = row["url"] == CHROMIUM_ERROR_PAGE_URL
         return {
             "schemaVersion": SCHEMA_VERSION,
-            "ok": True,
+            "ok": not page_failed,
             **self._public_snapshot(row, include_markdown=include_markdown),
-            "summary": f"已读取《{str(row['title']) or '未命名页面'}》的页面快照",
+            "summary": (
+                "页面加载失败，当前显示 Chromium 错误页"
+                if page_failed
+                else f"已读取《{str(row['title']) or '未命名页面'}》的页面快照"
+            ),
+            **({
+                "failureReason": "browser_page_load_failed",
+                "recoveryHint": BROWSER_LOAD_RECOVERY_HINT,
+            } if page_failed else {}),
         }
 
     def snapshot_image(self, snapshot_id: str) -> tuple[str, bytes]:
@@ -507,7 +521,7 @@ class BrowserControlService:
                 result = {
                     "ok": result.get("ok", True) is not False,
                     "summary": self._text(result.get("summary"), maximum=1_200),
-                    "url": self._url(result.get("url"), allow_blank=True),
+                    "url": self._page_url(result.get("url"), allow_blank=True),
                     "title": self._text(result.get("title"), maximum=500),
                     "truncated": True,
                 }
@@ -1856,6 +1870,11 @@ class BrowserControlService:
 
     @staticmethod
     def _page_url(value: object, *, allow_blank: bool = False) -> str:
+        # Chromium's observed error page is evidence, not a navigation request.
+        # Preserve it so failed commands settle and snapshots remain readable;
+        # _url still rejects internal error schemes as navigation input.
+        if str(value or "").strip() == CHROMIUM_ERROR_PAGE_URL:
+            return CHROMIUM_ERROR_PAGE_URL
         text = BrowserControlService._url(value, allow_blank=allow_blank)
         if not text:
             return ""
@@ -1913,7 +1932,7 @@ class BrowserControlService:
 
     @staticmethod
     def _command_summary(action: str, status: object, result: Mapping[str, object]) -> str:
+        provided = " ".join(str(result.get("summary") or result.get("error") or "").split())
         if status != "completed":
-            return f"浏览器操作 {action} 未完成"
-        provided = " ".join(str(result.get("summary") or "").split())
+            return (f"浏览器操作 {action} 未完成：{provided}" if provided else f"浏览器操作 {action} 未完成")[:1_200]
         return provided[:1_200] or f"浏览器操作 {action} 已完成"

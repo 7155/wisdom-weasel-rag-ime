@@ -633,6 +633,58 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertTrue(any(item["code"] == "source_event_not_in_bundle" for item in report["errors"]))
 
+    def test_memory_book_compile_allows_historical_owner_book_lineage(self) -> None:
+        historical_event_id = self.event_id + 100
+        output = {
+            "topicBooks": [
+                {
+                    "bookId": "book:owner:default:topic:memory",
+                    "title": "记忆整理",
+                    "summary": "记忆整理的长期主题与约束。",
+                    "sourceEventIds": [self.event_id],
+                }
+            ],
+            "memoryAtoms": [],
+        }
+        bundle = {
+            "schemaVersion": "rag-ime.owner-memory-source-bundle.v1",
+            "recentEvents": [{"eventId": self.event_id, "text": "继续整理记忆"}],
+            "existingMemoryBookIndex": [
+                {
+                    "bookId": "book:owner:default:topic:memory",
+                    "bookKey": "owner-default-topic-memory",
+                    "title": "记忆整理",
+                    "summary": "记忆整理的长期主题与约束。",
+                    "sourceEventIds": [historical_event_id],
+                    "memoryAtomIds": [],
+                    "status": "active",
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "project": "wisdom-weasel-rag-ime",
+                }
+            ],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="test",
+            model="test",
+            source_bundle=bundle,
+        )
+
+        report = inspect_memory_book_plan(plan)
+        self.assertTrue(report["ok"], report)
+        book = next(
+            item["payload"]
+            for item in plan["diffs"]
+            if item["op"] == "upsert_memory_book"
+        )
+        self.assertEqual(
+            set(book["sourceEventIds"]),
+            {self.event_id, historical_event_id},
+        )
+
     def test_memory_book_compile_backfills_source_ids_from_bundle(self) -> None:
         output = sample_compile_output(self.event_id)
         output["dailyBooks"][0]["sourceEventIds"] = []

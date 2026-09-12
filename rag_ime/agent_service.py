@@ -499,6 +499,11 @@ class AgentService:
             pending_memory_bootstrap=self._pending_memory_bootstrap,
             probe_memory_maintenance=lambda session_id, **kwargs: self._probe_memory_maintenance(session_id, **kwargs),
             prompt_with_checkpoint=lambda **kwargs: self.prompt_application.prompt_rewritten_session(**kwargs),
+            cancel_pending_approvals=lambda session_id, **kwargs: self.approval_application.cancel_pending_for_session(session_id, **kwargs),
+            recent_recall_messages=self._recent_recall_messages,
+            checkpoint_runtime_compaction=self._checkpoint_runtime_compaction,
+            refresh_session_context=self.refresh_session_context,
+            public_error=_public_error,
         )
         self.session_application = session_applications.application
         self.session_policy = session_applications.policy
@@ -4207,74 +4212,11 @@ class AgentService:
 
     def abort(self, session_id: str) -> dict[str, object]:
         self._require_mutable_session(session_id)
-        runtime_receipt: Mapping[str, object] = {}
-        try:
-            raw_runtime_receipt = self.runtime.abort(session_id)
-            if isinstance(raw_runtime_receipt, Mapping):
-                runtime_receipt = raw_runtime_receipt
-        finally:
-            approval_cancellation = (
-                self.approval_application.cancel_pending_for_session(
-                    session_id,
-                    reason="user_abort",
-                    turn_id=str(runtime_receipt.get("turnId") or ""),
-                )
-            )
-        return {
-            "schemaVersion": "rag-ime.agent-abort.v1",
-            "ok": True,
-            "sessionId": session_id,
-            "runtimeReceipt": dict(runtime_receipt),
-            "approvalCancellation": approval_cancellation,
-        }
+        return self.session_application.abort(session_id)
 
     def compact(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         self._require_mutable_session(session_id)
-        self._recent_recall_messages(session_id)
-        result = dict(
-            self.runtime.compact(session_id, str(payload.get("instructions") or ""))
-        )
-        if not isinstance(result.get("memoryCheckpoint"), Mapping):
-            result["memoryCheckpoint"] = dict(
-                self._checkpoint_runtime_compaction(session_id, result, "manual")
-            )
-        maintenance = self._probe_memory_maintenance(session_id, trigger="compaction")
-        if result.get("contextRefreshApplied") is True:
-            context_refresh = {
-                "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
-                "ok": True,
-                "result": {
-                    "sessionId": session_id,
-                    "trigger": "compaction",
-                    "status": "runtime_applied",
-                }
-            }
-        else:
-            try:
-                context_refresh = self.refresh_session_context(
-                    {
-                        "sessionId": session_id,
-                        "trigger": "compaction",
-                        "summary": _compaction_summary(result),
-                        "compactionEntryId": result.get("compactionEntryId"),
-                        "expectedContextEpoch": result.get("contextEpochBefore"),
-                        "recentMessages": self._recent_recall_messages(session_id),
-                    }
-                )
-            except Exception as exc:
-                context_refresh = {
-                    "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
-                    "ok": False,
-                    "error": _public_error(exc),
-                }
-        return {
-            "schemaVersion": "rag-ime.agent-compact.v1",
-            "ok": True,
-            "sessionId": session_id,
-            "result": result,
-            "memoryMaintenance": maintenance,
-            "contextRefresh": context_refresh,
-        }
+        return self.session_application.compact(session_id, payload)
 
     def _checkpoint_runtime_compaction(
         self,

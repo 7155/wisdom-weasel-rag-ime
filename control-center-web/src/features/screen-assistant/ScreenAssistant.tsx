@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ExternalLink, Scan, Save } from 'lucide-react';
+import { ExternalLink, Languages, Lightbulb, MousePointer2, Notebook, Scan, Save } from 'lucide-react';
 import { useControlTransport } from '@/app/control-transport';
 import { publicAgentErrorText } from '@/features/agent/public-error';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
@@ -24,6 +24,7 @@ export function ScreenAssistant() {
   const [saved, setSaved] = useState('');
   const [saving, setSaving] = useState(false);
   const answer = useAgentLiveStore((store) => latestCompletedScreenAnswer(ready ? store.projections[ready.session.id] : undefined));
+  const actionIcons = { translate: Languages, explain: Lightbulb, note: Notebook, act: MousePointer2 } as const;
   useEffect(() => {
     let current = true;
     const host = window.pawScreenAssistant;
@@ -46,22 +47,25 @@ export function ScreenAssistant() {
     finally { setSaving(false); }
   }
 
-  return <main className="screen-assistant paw-desktop-root" data-app="agent">
+  return <main className="screen-assistant paw-desktop-root" data-app="agent-capsule" data-capsule-surface="capture">
     <header className="screen-assistant__header">
-      <div><strong>选区对话</strong><span>围绕眼前的内容继续</span></div>
+      <div><strong>Agent Capsule · 选区对话</strong><span>已把当前选区交给同一个 Session，可继续翻译、解释、做笔记或操作。</span></div>
       <div className="screen-assistant__tools">
-        <button aria-label="重新框选" title="重新框选，打开另一段对话" onClick={() => { void window.pawScreenAssistant?.capture().catch((reason) => setError(publicAgentErrorText(reason))); }}><Scan size={17} /></button>
-        {ready && <button aria-label="在 PAW 中打开此会话" title="在 PAW 中打开此会话" onClick={() => { void window.pawScreenAssistant?.openSession(ready.session.id).catch((reason) => setError(publicAgentErrorText(reason))); }}><ExternalLink size={17} /></button>}
+        <button aria-label="重新框选" title="重新框选，打开另一段对话" onClick={() => { void window.pawScreenAssistant?.capture().catch((reason) => setError(publicAgentErrorText(reason))); }} type="button"><Scan aria-hidden="true" size={17} /></button>
+        {ready && <button aria-label="在 PAW 中打开此会话" title="在 PAW 中打开此会话" onClick={() => { void window.pawScreenAssistant?.openSession(ready.session.id).catch((reason) => setError(publicAgentErrorText(reason))); }} type="button"><ExternalLink aria-hidden="true" size={17} /></button>}
       </div>
     </header>
     {ready ? <>
       <details className="screen-assistant__source" open>
-        <summary>本次选区 <span>{ready.capture.pixelWidth} × {ready.capture.pixelHeight}</span></summary>
+        <summary>已识别的选区 <span>{ready.capture.pixelWidth} × {ready.capture.pixelHeight}</span><small>图片附件已绑定此 Session</small></summary>
         <img src={ready.capture.dataUrl} alt="本次框选的屏幕内容" />
       </details>
       <nav className="screen-assistant__actions" aria-label="选区任务">
-        {screenActions.map((action) => <button key={action.id} onClick={() => { setDraftRequest({ id: Date.now(), text: action.draft }); setSaved(''); }}>{action.label}</button>)}
-        <button disabled={!answer || saving} onClick={() => { void saveNote(); }}><Save size={14} />{saving ? '正在保存…' : '保存笔记'}</button>
+        {screenActions.map((action) => {
+          const Icon = actionIcons[action.id];
+          return <button aria-pressed={draftRequest?.text === action.draft} data-active={draftRequest?.text === action.draft || undefined} key={action.id} onClick={() => { setDraftRequest({ id: Date.now(), text: action.draft }); setSaved(''); }} type="button"><Icon aria-hidden="true" size={14} />{action.label}</button>;
+        })}
+        <button disabled={!answer || saving} onClick={() => { void saveNote(); }} type="button"><Save aria-hidden="true" size={14} />{saving ? '正在保存…' : '保存笔记'}</button>
       </nav>
       {saved && <p className="screen-assistant__notice" role="status">{saved}</p>}
       <section className="screen-assistant__conversation" aria-label="围绕选区对话">
@@ -69,8 +73,8 @@ export function ScreenAssistant() {
           initialAttachments={ready.initialAttachments} draftRequest={draftRequest}
           screenContext={{ mediaId: ready.attachments[0].id, sourceAppBundleId: ready.capture.sourceAppBundleId, capturedAtMs: ready.capture.capturedAtMs }}
           appearance="embedded" showComposerControls composerPlaceholder="想了解这片选区的什么？也可以描述要完成的操作。"
-          onNewWork={() => { void window.pawScreenAssistant?.capture(); }}
-          onSessionCreated={(session) => { void window.pawScreenAssistant?.openSession(session.id); }}
+          onNewWork={() => { void window.pawScreenAssistant?.capture().catch((reason) => setError(publicAgentErrorText(reason))); }}
+          onSessionCreated={(session) => { void window.pawScreenAssistant?.openSession(session.id).catch((reason) => setError(publicAgentErrorText(reason))); }}
           onSessionUpdated={(session) => {
             state.current.session = session;
             setReady((current) => current ? { ...current, session } : current);
@@ -78,6 +82,6 @@ export function ScreenAssistant() {
           }} />
       </section>
     </> : !error && <p className="screen-assistant__loading" role="status">正在把选区加入对话…</p>}
-    {error && <div className="screen-assistant__error" role="alert"><p>{error}</p>{!ready && window.pawScreenAssistant && <button onClick={() => setAttempt((value) => value + 1)}>重试连接</button>}</div>}
+    {error && <div className="screen-assistant__error" role="alert"><p>{error}</p>{!ready && window.pawScreenAssistant && <button onClick={() => setAttempt((value) => value + 1)} type="button">重试连接</button>}</div>}
   </main>;
 }

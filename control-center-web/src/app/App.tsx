@@ -41,8 +41,10 @@ const StandaloneEvolutionReportPage = lazy(async () => ({
 }));
 
 export function App({ frontendProduct }: { frontendProduct?: FrontendProduct } = {}) {
+  const location = typeof window === 'undefined' ? { pathname: '/', search: '' } : window.location;
   const standaloneSurface = standaloneSurfaceForPath(
-    typeof window === 'undefined' ? '/' : window.location.pathname,
+    location.pathname,
+    location.search,
   );
   if (standaloneSurface === 'evolution-report') {
     return (
@@ -76,7 +78,7 @@ export function App({ frontendProduct }: { frontendProduct?: FrontendProduct } =
                 <QueryClientProvider client={queryClient}>
                   <ProductIdentityProvider>
                     <Suspense fallback={<ProductLoading />}>
-                      {standaloneSurface === 'screen-assistant' ? <ScreenAssistant /> : product === 'paw-os' ? (
+                      {standaloneSurface === 'screen-assistant' || standaloneSurface === 'agent-capsule' ? <ScreenAssistant /> : product === 'paw-os' ? (
                         <PawOsApp />
                       ) : (
                         <LegacyProductApp />

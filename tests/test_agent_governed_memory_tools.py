@@ -33,6 +33,9 @@ class GovernedMemoryToolTests(unittest.TestCase):
             role_version="1",
             created_at_ms=1,
         )
+        self.session = self.sessions.set_disclosure_preferences(
+            str(self.session["id"]), {"tool:memory": "enabled"}, updated_at_ms=1,
+        )
         self.role_books = AgentRoleBookStore(self.db_path)
         self.role_books.initialize()
         self.seed = self.role_books.ensure_seeded(
@@ -955,6 +958,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             role_version="1",
             created_at_ms=2_000,
         )
+        self.sessions.set_disclosure_preferences(str(other_role["id"]), {"tool:memory": "enabled"})
         with self.assertRaisesRegex(ValueError, "does not exist"):
             self.gateway.execute(
                 {

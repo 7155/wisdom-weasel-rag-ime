@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItem, session, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, MenuItem, session, shell, systemPreferences } from 'electron';
 import { browserPartition, defaultPawHostPort, isBrowserGuestUrl, resolveHostPaths } from './host-config.mjs';
 import { startPawHostServer } from './local-server.mjs';
 import {
@@ -426,6 +426,15 @@ async function startPrimaryInstance() {
     origin: hostServer.origin, preload: paths.preloadEntry,
     getMainWindow: () => mainWindow, openSession: openAssistantSession,
   });
+  // This is the system-wide entry point: the picker owns the foreground
+  // selection, then hands the managed image to the same PAW Session popup.
+  // Keep registration in the Electron host so it works while another app is
+  // frontmost; the App UI also mirrors the shortcut when PAW has focus.
+  const capsuleShortcut = 'CommandOrControl+Shift+Space';
+  if (!globalShortcut.register(capsuleShortcut, () => { void screenAssistant.startCapture(); })) {
+    console.warn(`Could not register Agent Capsule shortcut: ${capsuleShortcut}`);
+  }
+  app.once('will-quit', () => globalShortcut.unregister(capsuleShortcut));
   const initialIntent = pendingAssistantIntent;
   pendingAssistantIntent = null;
   mainWindow = createWindow(initialIntent?.kind === 'session' ? assistantSessionRoute(initialIntent.sessionId) : undefined, initialIntent?.kind !== 'capture');
@@ -433,9 +442,14 @@ async function startPrimaryInstance() {
   const menu = Menu.getApplicationMenu();
   if (menu) {
     const item = new MenuItem({ label: '框选屏幕与 PAW 对话…', click: () => { void screenAssistant.startCapture(); } });
-    const fileMenu = menu.items.find((entry) => entry.role === 'fileMenu')?.submenu;
-    (fileMenu || menu.items[0]?.submenu)?.append(item);
-    Menu.setApplicationMenu(menu);
+    // Electron's macOS default menu may expose the File item by label rather
+    // than role. Resolve that submenu explicitly so the managed App remains
+    // reachable even when the host did not install a custom menu template.
+    const fileMenu = menu.items.find((entry) => entry.role === 'fileMenu' || entry.label === 'File')?.submenu;
+    if (fileMenu && !fileMenu.items.some((entry) => entry.label === item.label)) {
+      fileMenu.append(item);
+      Menu.setApplicationMenu(menu);
+    }
   }
 }
 

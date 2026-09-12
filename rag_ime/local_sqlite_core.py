@@ -380,6 +380,12 @@ class LocalSqliteCoreClient:
         *,
         capture_receipts: list[dict[str, object]] | None,
     ) -> str:
+        from .memory_lifecycle.ingress import gate_input_event
+
+        filtered_event, no_store_ref = gate_input_event(self, event, capture_receipts)
+        if filtered_event is None:
+            return no_store_ref
+        event = filtered_event
         privacy_disposition = compact_whitespace(event.privacy_disposition).lower()
         if privacy_disposition not in {"allowed", "sensitive", "unknown"}:
             raise ValueError("privacy_disposition must be allowed, sensitive, or unknown")

@@ -95,6 +95,19 @@ describe('Agent-led Lab project container', () => {
     expect(transport.requests.every(({ request }) => request.pathId === 'agent.eval-lab.projects.get')).toBe(true);
   });
 
+  it('turns the returning home into a continuation workbench with truthful next actions', async () => {
+    const item = project({ projectId: 'history-1', title: '南极论文资料库', materialCount: 0, artifactCount: 1,
+      historyOrigin: { sceneId: 'antarctic', sourceHash: 'source-1', experimentCount: 4, importedAtMs: 4, snapshotArtifactId: 'snapshot', snapshotArtifactRevision: 1 } });
+    const transport = new MockControlTransport({ routes: { 'agent.eval-lab.projects.get': read(null, [item]) } });
+    mount(transport);
+    expect(await screen.findByRole('heading', { name: '需要处理' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /南极论文资料库，历史结果/u })).toBeVisible();
+    expect(screen.getAllByText('准备复跑').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('textbox', { name: '描述你的项目' })).not.toBeInTheDocument();
+    fireEvent.click((await screen.findAllByRole('button', { name: '新建项目' }))[0]!);
+    expect(await screen.findByRole('dialog', { name: '新建项目' })).toBeVisible();
+  });
+
   it('creates a description-only project and starts the exact App-owned Session', async () => {
     let current: LabProject | null = null; const commands: ProjectCommand[] = [];
     const transport = new MockControlTransport({ routes: {
@@ -159,10 +172,12 @@ describe('Agent-led Lab project container', () => {
     const first = mount(transport,{root:true,route:'/eval-lab?project=project-1',activeSurface:true});
     expect(await screen.findByRole('heading',{name:'售后助手'})).toBeVisible();
     fireEvent.click(screen.getByRole('button',{name:'返回 Lab 项目'}));
+    fireEvent.click((await screen.findAllByRole('button',{name:'新建项目'}))[0]!);
     await screen.findByRole('textbox',{name:'描述你的项目'});
+    fireEvent.click(screen.getByRole('button',{name:'关闭'}));
     expect(screen.getByLabelText('当前项目路由')).toHaveTextContent(/^\/eval-lab$/u);
     expect(window.location.hash).toBe('#/eval-lab');
-    fireEvent.click(screen.getByRole('button',{name:/服务拓扑/u}));
+    fireEvent.click(screen.getAllByRole('button',{name:/服务拓扑/u})[1]!);
     expect(await screen.findByRole('heading',{name:'服务拓扑'})).toBeVisible();
     const route = screen.getByLabelText('当前项目路由').textContent!;
     expect(route).toBe('/eval-lab?project=project-2');

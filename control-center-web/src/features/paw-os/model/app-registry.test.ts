@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { routeRegistry } from '@/app/route-registry';
 import {
+  coreAppIds,
+  pawOsApp,
   pawOsAppForRoute,
   pawOsAppRegistry,
   primaryDockAppIds,
@@ -17,6 +19,7 @@ describe('pawOsAppRegistry', () => {
     expect(pawOsAppRegistry.map((app) => app.id)).toEqual([
       'project-workbench',
       'agent',
+      'agent-capsule',
       'memory',
       'knowledge',
       'input-studio',
@@ -32,6 +35,7 @@ describe('pawOsAppRegistry', () => {
     expect(pawOsAppForRoute('planning')?.id).toBe('project-workbench');
     expect(pawOsAppForRoute('work-documents')?.id).toBe('project-workbench');
     expect(pawOsAppForRoute('rooms')?.id).toBe('agent');
+    expect(pawOsAppForRoute('agent-capsule')?.id).toBe('agent-capsule');
     expect(pawOsAppForRoute('voice')?.id).toBe('input-studio');
     expect(pawOsAppForRoute('history')?.id).toBe('input-studio');
     expect(pawOsAppForRoute('diagnostics')?.id).toBe('system-monitor');
@@ -63,5 +67,22 @@ describe('pawOsAppRegistry', () => {
       'terminal',
     ]);
     expect(primaryDockAppIds.length).toBeLessThan(pawOsAppRegistry.length);
+  });
+
+  it('exposes the six core PAWOS product entry points separately from utilities', () => {
+    expect(coreAppIds).toEqual([
+      'agent',
+      'eval-lab',
+      'project-workbench',
+      'memory',
+      'knowledge',
+      'input-studio',
+    ]);
+    expect(new Set(coreAppIds).size).toBe(6);
+    for (const appId of coreAppIds) expect(pawOsApp(appId).id).toBe(appId);
+    expect(coreAppIds).not.toContain('system-monitor');
+    expect(coreAppIds).not.toContain('files');
+    expect(coreAppIds).not.toContain('browser');
+    expect(coreAppIds).not.toContain('terminal');
   });
 });

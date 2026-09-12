@@ -33,7 +33,7 @@ import {
 } from '@/features/overview/management-ui';
 import { isModelQuotaError } from '@/features/agent/public-error';
 import type { JsonValue } from '@/platform/transport';
-import { useMemoryCurationQueries } from './api';
+import { useMemoryCurationQueries, useMemoryLifecycleQueries } from './api';
 import { knowledgeMutationPathIds, useKnowledgeMutationBoundary } from './knowledge-workbench-api';
 
 export function MemoryCurationWorkbench({
@@ -46,11 +46,12 @@ export function MemoryCurationWorkbench({
   const identity = useProductIdentity();
   const desktop = usePawOsDesktop();
   const queries = useMemoryCurationQueries(enabled);
+  const lifecycle = useMemoryLifecycleQueries(enabled);
   const mutationBoundary = useKnowledgeMutationBoundary();
   const [editingDiffId, setEditingDiffId] = useState(0);
   const [editError, setEditError] = useState('');
   const [startError, setStartError] = useState('');
-  const batchSize = 4;
+  const batchSize = 6;
   const statusPayload = asRecord(queries.status.data);
   const compileState = asRecord(statusPayload.compileState);
   const ownerCuration = asRecord(statusPayload.ownerCuration);
@@ -61,6 +62,8 @@ export function MemoryCurationWorkbench({
   const backlog = asRecord(ownerCuration.backlog);
   const backlogDays = arrayRecords(backlog.days);
   const backlogApplications = arrayRecords(backlog.applications);
+  const backlogFacetsReady = !queries.status.isPlaceholderData
+    && booleanValue(backlog.facetsReady, true);
   const latestModelRun = arrayRecords(modelCuration.runs)[0] ?? {};
   const bookProjection = asRecord(statusPayload.bookProjection);
   const memoryProjection = asRecord(statusPayload.projection);
@@ -90,16 +93,38 @@ export function MemoryCurationWorkbench({
   const error = (queries.status.error ?? queries.run.error) as Error | null;
   const pending = queries.status.isPending || (Boolean(queries.runId) && queries.run.isPending);
   const jobPayload = asRecord(queries.job.data);
+  const jobProgress = asRecord(jobPayload.progress);
   const jobState = stringValue(jobPayload.state, queries.jobState);
   const catalogJob = jobPayload.catalogOnly === true
     || (queries.trigger.isPending && queries.trigger.variables?.catalogOnly === true);
   const jobActive = jobState === 'queued' || jobState === 'running' || queries.trigger.isPending;
   const jobExpired = jobState === 'expired';
   const jobFailed = jobState === 'failed' || jobExpired || Boolean(queries.trigger.error ?? queries.job.error);
+  const lifecycleJobs = arrayRecords(asRecord(lifecycle.status.data).jobs);
+  const lifecycleFailedJob = lifecycleJobs.find((job) => (
+    ['paused', 'stale', 'retry_wait'].includes(stringValue(job.state))
+    && Boolean(stringValue(job.error))
+  ));
   const totalSourceCount = Math.max(governedPending, numberValue(ownerScope.totalSourceCount));
   const organizedSourceCount = Math.max(0, totalSourceCount - governedPending);
-  const progressPercent = totalSourceCount
-    ? Math.round((organizedSourceCount / totalSourceCount) * 100)
+  const liveProgress = jobActive && stringValue(jobProgress.phase) === 'owner_memory_curation';
+  const displayTotalSourceCount = liveProgress
+    ? Math.max(totalSourceCount, numberValue(jobProgress.totalSourceCount))
+    : totalSourceCount;
+  const displayOrganizedSourceCount = liveProgress
+    ? Math.min(
+      displayTotalSourceCount,
+      Math.max(
+        organizedSourceCount,
+        numberValue(jobProgress.completedSourceCount, numberValue(jobProgress.processedSourceCount)),
+      ),
+    )
+    : organizedSourceCount;
+  const displayPendingSourceCount = liveProgress
+    ? numberValue(jobProgress.pendingSourceCount, governedPending)
+    : governedPending;
+  const progressPercent = displayTotalSourceCount
+    ? Math.round((displayOrganizedSourceCount / displayTotalSourceCount) * 100)
     : 100;
   const coveredThroughDate = stringValue(backlog.coveredThroughDate);
   const targetDate = stringValue(backlog.targetDate, localToday());
@@ -140,6 +165,32 @@ export function MemoryCurationWorkbench({
           <Button leadingIcon={<Sparkles size={15} />} onClick={handoffToAgent} size="small" variant="quiet">补充整理要求</Button>
         </div>
       </div>
+      <ManagementSection
+        title="记忆生命周期"
+        description="采集先经过隐私门；日报只读消费已治理记忆，刷新任务保留输入摘要并可继续。"
+        trailing={<StatusBadge label={lifecycle.status.isPending ? '读取中' : '已接入'} tone={lifecycle.status.isError ? 'danger' : 'success'} />}
+      >
+        <MetricStrip items={[
+          { label: '来源', value: lifecycleCount(lifecycle.status.data, 'sources'), detail: '当前项目来源' },
+          { label: 'Evidence', value: lifecycleCount(lifecycle.status.data, 'evidence'), detail: '保留来源链' },
+          { label: 'Memory Atom', value: lifecycleCount(lifecycle.status.data, 'atoms'), detail: '已治理记忆' },
+          { label: '刷新任务', value: Array.isArray(asRecord(lifecycle.status.data).jobs) ? (asRecord(lifecycle.status.data).jobs as unknown[]).length : 0, detail: '持久化任务' },
+        ]} />
+        <div className="memory-curation__actions">
+          <Button
+            loading={lifecycle.refresh.isPending}
+            onClick={() => lifecycle.refresh.mutate({ operation: 'daily_report', date: localToday(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' })}
+          >生成今日日报任务</Button>
+          <Button
+            loading={lifecycle.refresh.isPending}
+            onClick={() => lifecycle.refresh.mutate({ operation: 'retrieval_projection' })}
+            variant="quiet"
+          >刷新检索投影</Button>
+        </div>
+        {lifecycle.status.error ? <InlineNotice title="生命周期状态暂不可用" tone="warning">{publicErrorText(lifecycle.status.error, '稍后会自动重试。')}</InlineNotice> : null}
+        {lifecycle.refresh.error ? <InlineNotice title="刷新任务提交失败" tone="danger">{publicErrorText(lifecycle.refresh.error, '没有改变已有记忆；请稍后重试。')}</InlineNotice> : null}
+        {lifecycleFailedJob ? <InlineNotice title="上次刷新没有完成" tone="warning">{stringValue(lifecycleFailedJob.error, '任务已暂停；输入和已有记忆保持不变。')}</InlineNotice> : null}
+      </ManagementSection>
       <p>已有主题可单独整理：合并同一对象、同一问题的重复主题，保留记忆、来源和回滚记录。</p>
 
       <QueryState error={error} isPending={pending} onRetry={refresh}>
@@ -156,13 +207,17 @@ export function MemoryCurationWorkbench({
                 <div className="memory-curation__progress-copy">
                   <span className="memory-curation__eyebrow">当前覆盖</span>
                   <strong>{caughtUp ? '已经整理到今天' : `${formatCalendarDate(coveredThroughDate)} → ${formatCalendarDate(targetDate)}`}</strong>
-                  <p>{caughtUp
-                    ? '目前没有新的候选来源等待整理。'
-                    : `${governedPending} 条来源分布在 ${numberValue(backlog.pendingDayCount)} 天、${backlogApplications.length} 个应用中。`}</p>
+                    <p>{caughtUp && !jobActive && backlogFacetsReady
+                      ? '目前没有新的候选来源等待整理。'
+                      : !backlogFacetsReady
+                        ? `${displayPendingSourceCount} 条来源待整理，正在读取日期和应用分布。`
+                        : `${displayPendingSourceCount} 条来源分布在 ${numberValue(backlog.pendingDayCount)} 天、${backlogApplications.length} 个应用中${jobActive ? '，进度会随当前批次更新' : '。'}`}</p>
                 </div>
                 <div className="memory-curation__progress-meter">
                   <div className="memory-curation__progress-label">
-                    <span>已处理 {organizedSourceCount} / {totalSourceCount}</span>
+                    <span>{jobActive && liveProgress
+                      ? `本轮已处理 ${numberValue(jobProgress.processedSourceCount)} 条 · 剩余 ${displayPendingSourceCount} 条`
+                      : `已处理 ${displayOrganizedSourceCount} / ${displayTotalSourceCount}`}</span>
                     <strong>{progressPercent}%</strong>
                   </div>
                   <div aria-label={`记忆来源整理进度 ${progressPercent}%`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={progressPercent} className="memory-curation__progress-track" role="progressbar">
@@ -176,7 +231,7 @@ export function MemoryCurationWorkbench({
                 <div className="memory-curation__runner">
                   <label>
                     <span>每轮整理上限</span>
-                    <strong className="memory-curation__batch-bound">每轮最多 {batchSize} 条来源</strong>
+                    <strong className="memory-curation__batch-bound">每批最多 {batchSize} 条来源 · 本次最多 8 批</strong>
                   </label>
                   <Button
                     disabled={startBlocked}
@@ -198,7 +253,11 @@ export function MemoryCurationWorkbench({
               ) : jobState === 'completed' ? (
                 <InlineNotice title={catalogJob ? '已有主题整理完成' : '本轮处理完成'} tone="success">状态正在刷新；{automaticOrganizationAutoApply ? '通过治理校验的结果会自动应用。' : '如果产生了草案，请在下方逐项审核。'}</InlineNotice>
               ) : jobActive ? (
-                <InlineNotice title={catalogJob ? '正在核对已有主题' : '正在读取并整理本轮来源'} tone="info">{catalogJob ? '正在检查主题和当前成员；不会推进新来源整理进度。' : '你可以留在此页，完成后会自动刷新；原始来源会保留。'}</InlineNotice>
+                <InlineNotice title={catalogJob ? '正在核对已有主题' : '正在读取并整理本轮来源'} tone="info">{catalogJob
+                  ? '正在检查主题和当前成员；不会推进新来源整理进度。'
+                  : liveProgress
+                    ? `当前批次已处理 ${numberValue(jobProgress.processedSourceCount)} 条，剩余 ${displayPendingSourceCount} 条；完成后会刷新来源和日期分布。`
+                    : '你可以留在此页，完成后会自动刷新；原始来源会保留。'}</InlineNotice>
               ) : null}
 
               {failedOwnerScope && !jobActive ? (
@@ -214,7 +273,7 @@ export function MemoryCurationWorkbench({
                       <CalendarRange size={17} />
                       <strong id="memory-curation-days-title">按日期推进</strong>
                     </div>
-                    <span>{backlogDays.length} 天</span>
+                    <span>{backlogFacetsReady ? `${backlogDays.length} 天` : '读取中'}</span>
                   </header>
                   {backlogDays.length ? (
                     <ol aria-label="待整理日期">
@@ -235,7 +294,7 @@ export function MemoryCurationWorkbench({
                         );
                       })}
                     </ol>
-                  ) : <p className="memory-curation__empty-copy">没有待整理日期。</p>}
+                  ) : <p className="memory-curation__empty-copy">{backlogFacetsReady ? '没有待整理日期。' : '正在读取日期分布。'}</p>}
                 </section>
 
                 <section aria-labelledby="memory-curation-apps-title" className="memory-curation__apps">
@@ -244,7 +303,7 @@ export function MemoryCurationWorkbench({
                       <AppWindow size={17} />
                       <strong id="memory-curation-apps-title">来源应用</strong>
                     </div>
-                    <span>{backlogApplications.length} 个</span>
+                    <span>{backlogFacetsReady ? `${backlogApplications.length} 个` : '读取中'}</span>
                   </header>
                   {backlogApplications.length ? (
                     <ol aria-label="待整理来源应用">
@@ -260,7 +319,7 @@ export function MemoryCurationWorkbench({
                         );
                       })}
                     </ol>
-                  ) : <p className="memory-curation__empty-copy">尚无应用分布。</p>}
+                  ) : <p className="memory-curation__empty-copy">{backlogFacetsReady ? '尚无应用分布。' : '正在读取应用分布。'}</p>}
                 </section>
               </div>
 
@@ -441,6 +500,10 @@ export function MemoryCurationWorkbench({
       : '请帮我稳妥地增量整理当前记忆：只准备一份可逐项审核的草案，保留原始来源，不要直接保存，也不要展示内部执行记录。完成后请告诉我可以回来审核。';
     openPawOsRoute(desktop, `/agent?draft=${encodeURIComponent(prompt)}`);
   }
+}
+
+function lifecycleCount(value: unknown, key: string): number {
+  return numberValue(asRecord(asRecord(value).counts)[key]);
 }
 
 function curationStatusLabel(status: string, stale: boolean): string {

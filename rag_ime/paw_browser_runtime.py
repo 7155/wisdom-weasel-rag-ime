@@ -24,6 +24,12 @@ CdpRequest = Callable[[str, str, dict[str, object]], object]
 ListeningPorts = Callable[[int], list[int]]
 HostRequest = Callable[[str, str, dict[str, object], str], object]
 
+CHROMIUM_ERROR_PAGE_URL = "chrome-error://chromewebdata/"
+BROWSER_LOAD_RECOVERY_HINT = (
+    "检查目标地址和服务是否可用；本地预览服务请使用 workspace_job 启动并保持运行，"
+    "再在当前标签页重试。"
+)
+
 
 class PawBrowserRuntime:
     """Direct owner of PAW's isolated Chromium DevTools session.
@@ -257,7 +263,20 @@ class PawBrowserRuntime:
             self._json_request("GET", self._endpoint(port, f"/json/close/{target['targetId']}"))
             return {"ok": True, "summary": "已关闭标签页", "targetId": target["targetId"], "tabId": target["tabId"]}
         if action == "navigate":
-            self._cdp_request(websocket_url, "Page.navigate", {"url": str(payload.get("url") or "")})
+            url = str(payload.get("url") or "")
+            navigation = self._cdp_request(websocket_url, "Page.navigate", {"url": url})
+            if isinstance(navigation, Mapping) and navigation.get("errorText"):
+                error = str(navigation["errorText"])[:240]
+                return {
+                    "ok": False,
+                    "targetId": target["targetId"],
+                    "tabId": target["tabId"],
+                    "url": url,
+                    "error": error,
+                    "failureReason": "browser_navigation_failed",
+                    "summary": f"页面加载失败：{error}",
+                    "recoveryHint": BROWSER_LOAD_RECOVERY_HINT,
+                }
             time.sleep(0.18)
         elif action == "reload":
             self._cdp_request(websocket_url, "Page.reload", {"ignoreCache": False})
@@ -314,6 +333,13 @@ class PawBrowserRuntime:
             **snapshot,
             "summary": self._summary(action, snapshot),
         }
+        if snapshot.get("url") == CHROMIUM_ERROR_PAGE_URL:
+            result.update({
+                "ok": False,
+                "failureReason": "browser_page_load_failed",
+                "summary": "页面加载失败，当前显示 Chromium 错误页",
+                "recoveryHint": BROWSER_LOAD_RECOVERY_HINT,
+            })
         if action == "screenshot":
             captured = self._cdp_request(
                 websocket_url,
@@ -468,6 +494,9 @@ class PawBrowserRuntime:
         request = Request(url, method=method, headers={"Accept": "application/json"})
         with urlopen(request, timeout=2.0) as response:
             payload = response.read(2_000_000)
+        # DevTools discovery uses JSON except for the successful close receipt.
+        if urlsplit(url).path.startswith("/json/close/") and payload.strip() == b"Target is closing":
+            return {}
         return json.loads(payload.decode("utf-8")) if payload else {}
 
     @staticmethod

@@ -130,9 +130,9 @@ export function sessionPermissionLabel(session: SessionSummary): string {
       ? 'read_only'
       : 'per_action');
   return {
-    read_only: '只读',
+    read_only: '只读（沙箱）',
     per_action: '写入与命令确认（旧配置）',
-    workspace_managed: '工作区托管',
+    workspace_managed: '工作区托管（沙箱）',
     full_trust: '全自动（旧配置）',
   }[executionMode];
 }

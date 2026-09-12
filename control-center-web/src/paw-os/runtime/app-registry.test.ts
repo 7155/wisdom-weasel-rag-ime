@@ -6,6 +6,7 @@ describe('PAWOS App registry', () => {
   it('maps legacy feature URLs onto native PAWOS Apps', () => {
     expect(pawAppForPath('/planning')?.id).toBe('project-workbench');
     expect(pawAppForPath('/rooms')?.id).toBe('agent');
+    expect(pawAppForPath('/agent-capsule')?.id).toBe('agent-capsule');
     expect(pawAppForPath('/voice')?.id).toBe('input-studio');
     expect(pawAppForPath('/context-debug')?.id).toBe('system-monitor');
     expect(pawAppForPath('/trace-agent?view=knowledge')?.id).toBe('trace-agent');

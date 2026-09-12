@@ -50,6 +50,29 @@ class AgentLabProjectApplication:
                 result["historyCollections"] = public_history_collections(self.read_experiments())
             except (OSError, ValueError, sqlite3.Error):
                 result["historyUnavailable"] = True
+        # Project summaries intentionally stay cheap.  A selected project gets
+        # a second, read-only execution projection so the UI can distinguish a
+        # real queued/running/completed model job from a published artifact or
+        # an Agent's proposed next step.  This never starts a worker.
+        if isinstance(result.get("project"), Mapping):
+            project = dict(result["project"])
+            bindings = []
+            for binding in project.get("bindings", []):
+                item = dict(binding) if isinstance(binding, Mapping) else binding
+                if isinstance(item, dict):
+                    try:
+                        observed = self._execution(project, "execution_read", {"bindingId": item.get("bindingId", "")})
+                        item["execution"] = self._execution_summary(observed.get("execution"))
+                    except (AgentLabProjectValidationError, OSError, ValueError, sqlite3.Error):
+                        # A temporary read failure must not erase the durable
+                        # binding.  The run surface will explain that it needs
+                        # a refresh and remains able to open the owner UI.
+                        item["execution"] = {"status": "unavailable", "label": "运行状态待核对",
+                                             "reason": "执行回执暂时无法读取；原绑定仍保留。", "latestJob": None,
+                                             "canContinue": False}
+                bindings.append(item)
+            project["bindings"] = bindings
+            result["project"] = project
         result["availableAdapters"] = [{"adapterId": "golden.context_qa", "title": "资料问答评测",
                                         "description": "从选定文本材料建立标准，由现有 Golden/Pi 执行。创建绑定本身不启动模型。",
                                         'input':{'targetCount':'1–100 之间的整数，默认 12','sourceIds':'可选；此项目 document/history/failure 来源的 sourceId 列表','scenario':'可选；本次评测的任务说明'}}]
@@ -64,7 +87,7 @@ class AgentLabProjectApplication:
             result['commandGuide'] = {
                 'publish_artifact':{'new':'直接提供 title,kind,view,content；不包在 artifact 对象里。','update':'artifactId + expectedArtifactRevision，附要修改的字段；只改内容可只给 content。','views':{'markdown':'content 是正文字符串','html':'content 是自包含 HTML 字符串','code':'content={source,language,filename?}','table':'content={columns:[{key,label}],rows:[{列key:值}],caption?}','form':'content={fields:[{key,label,type,required?,options?}],values:{字段key:值},description?}','json':'任意有效 JSON 内容'},'actions':'可选 [{actionId,label,prompt}]；点击会把项目输入发给当前 Guide。'},
                 'bind_execution':'input={adapterId, input:适配器参数, artifactId?,artifactRevision?}；绑定不启动模型。',
-                'execution':'execution_read 先取绑定 suite 的 revision；draft input 可为 {}，后台生成后需由前端核对和标注，模型不能冒充人工审核。',
+                'execution':'execution_read 先取绑定 suite 的 revision 和 jobs；draft 只生成待审核题集，calibrate/freeze 只在人工标准完成后进行，experiment 才会真实调用基线与候选模型并返回逐题回执、指标和用量。只有 experiment completed 回执允许发布本轮指标或 Keep/Reject；Tool、MCP/Workflow、检索方向必须使用对应已接入执行器，不能用 Agent 文本代替运行。',
                 'read_app':'op=read，提供 appId，可选 appVersion、appCallId。默认返回本项目应用版本与调用摘要；appCallId 按需读取实际输入、输出、用量和回执。不启动调用。',
                 'prepare_app':{'input':'{directory:相对 executionWorkspace.path 的应用目录, appId?:已有应用标识}',
                     'sourceFile':'app.json','schemaVersion':'paw.lab-app-source.v1','requiredFields':['schemaVersion','title','html','skill','context','actions'],
@@ -82,6 +105,57 @@ class AgentLabProjectApplication:
                     'output':'返回 application 与不可变版本；前端“应用交付”可试用、添加至 PAW、导出独立或 PAW 应用包。准备不等于安装或效果验证。'},
             }
         return result
+
+    @staticmethod
+    def _execution_summary(execution: Any) -> dict[str, Any]:
+        """Reduce an owner read to truthful project-level continuation state."""
+        if not isinstance(execution, Mapping):
+            return {"status": "unavailable", "label": "运行状态待核对",
+                    "reason": "执行器没有返回可核对的状态。", "latestJob": None,
+                    "canContinue": False}
+        jobs = execution.get("jobs")
+        if not isinstance(jobs, list):
+            suite = execution.get("suite")
+            jobs = suite.get("jobs") if isinstance(suite, Mapping) else None
+        jobs = [job for job in jobs if isinstance(job, Mapping)] if isinstance(jobs, list) else []
+        stamp = lambda job: job.get("updatedAtMs") if isinstance(job.get("updatedAtMs"), (int, float)) else job.get("createdAtMs") if isinstance(job.get("createdAtMs"), (int, float)) else 0
+        jobs.sort(key=lambda job: (stamp(job),
+                                   str(job.get("jobId") or "")), reverse=True)
+        latest = jobs[0] if jobs else None
+        state = str(latest.get("state") or "") if latest else "not_started"
+        labels = {"queued": "排队中", "running": "模型运行中", "completed": "已完成",
+                  "failed": "运行失败", "cancelled": "已停止", "interrupted": "待恢复"}
+        if state == "not_started":
+            return {"status": state, "label": "尚未运行", "reason": "执行绑定已建立，可以进入评测页面开始真实模型运行。",
+                    "latestJob": None, "canContinue": True}
+        if state in {"queued", "running"}:
+            return {"status": state, "label": labels[state],
+                    "reason": str(latest.get("progress") or "等待真实执行回执。"),
+                    "latestJob": {"jobId": str(latest.get("jobId") or ""), "kind": str(latest.get("kind") or ""),
+                                   "state": state, "progress": str(latest.get("progress") or "")},
+                    "canContinue": False}
+        if state == "completed":
+            kind = str(latest.get("kind") or "")
+            if kind != "experiment":
+                return {"status": state, "label": "评测准备完成", "canContinue": True,
+                        "reason": "评测准备步骤已完成；核对题集和标准后再开始基线与候选实验。",
+                        "latestJob": {"jobId": str(latest.get("jobId") or ""),
+                                      "kind": kind, "state": state,
+                                      "progress": str(latest.get("progress") or "")}}
+            result = latest.get("result") if isinstance(latest.get("result"), Mapping) else {}
+            comparison = result.get("comparison") if isinstance(result, Mapping) and isinstance(result.get("comparison"), Mapping) else {}
+            decision = str(comparison.get("decision") or "")
+            reason = "模型运行已完成；可以核对逐题回执后继续下一轮优化。"
+            if decision:
+                reason = f"模型运行已完成，当前判定为 {decision}；可以核对逐题回执后继续下一轮优化。"
+            return {"status": state, "label": labels[state], "reason": reason,
+                    "latestJob": {"jobId": str(latest.get("jobId") or ""), "kind": str(latest.get("kind") or ""),
+                                   "state": state, "progress": str(latest.get("progress") or ""), **({"decision": decision} if decision else {})},
+                    "canContinue": True}
+        return {"status": state if state in labels else "failed", "label": labels.get(state, "运行未完成"),
+                "reason": str(latest.get("error") or latest.get("progress") or "本次运行没有形成完整回执，请核对原始记录后继续。"),
+                "latestJob": {"jobId": str(latest.get("jobId") or ""), "kind": str(latest.get("kind") or ""),
+                               "state": state}, "canContinue": state in {"failed", "cancelled", "interrupted"}}
 
     def command(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(payload, Mapping) and payload.get("action") == "knowledge":

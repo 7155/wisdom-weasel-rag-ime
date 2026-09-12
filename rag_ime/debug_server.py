@@ -95,6 +95,7 @@ from .control_api import (
     ControlErrorCode,
     default_route_policy,
 )
+from .control_api.dispatch import DescriptorRouteDispatcher
 from .control_api.gateway_access import GatewayAccessDecision, resolve_gateway_access
 from .control_api.lab_errors import (
     lab_trial_error_response,
@@ -194,6 +195,13 @@ from .owner_memory_curation import (
     owner_memory_curation_status,
 )
 from .owner_memory_maintenance import GatewayMemoryMaintenanceJobs
+from .memory_lifecycle.common import connect as lifecycle_connect, require_schema as lifecycle_require_schema
+from .memory_lifecycle.daily import generate as lifecycle_report
+from .memory_lifecycle.forget import forget_source as lifecycle_forget_source, preview_source_forget as lifecycle_forget_preview
+from .memory_lifecycle.refresh import (
+    RefreshJobs as LifecycleRefreshJobs,
+    RefreshWorker as LifecycleRefreshWorker,
+)
 from .payloads import action_response_payload, suggestions_response_payload
 from .personal_memory_books import personal_memory_book_projection_status
 from .personal_context_maintenance import (
@@ -260,6 +268,16 @@ from .voice_control import (
 
 
 _MAX_MANUAL_CURATION_PREPARE_BATCHES = 8
+# A foreground "整理" action is still bounded.  Keeping this separate from
+# the model's per-batch source limit prevents one click from holding the
+# Gateway indefinitely while it drains an old backlog.
+_MAX_MANUAL_CURATION_TRIGGER_BATCHES = 8
+# Atom-first owner curation admits at most six logical inputs/Atoms per model
+# request. Keep the manual HTTP trigger aligned with that downstream gate.
+_MAX_MANUAL_CURATION_SOURCE_BATCH = 6
+# A timed-out frozen packet is retried with a smaller packet so one pathological
+# source group cannot block the whole backlog forever.
+_MAX_MANUAL_CURATION_TIMEOUT_RETRY_BATCH = 2
 _BROWSER_TRACE_RESOLUTION_LIMIT = 200
 
 GLOBAL_MEMORY_CATALOG_CONSOLIDATION_INSTRUCTION = (
@@ -764,6 +782,13 @@ class DebugImeService:
             self._execute_gateway_memory_maintenance,
             db_path=config.db_path,
             event_publisher=self._publish_memory_maintenance_event,
+            execution_owner=self._agent_runtime_execution_owner,
+        )
+        self.memory_lifecycle_jobs = LifecycleRefreshJobs(config.db_path)
+        self.memory_lifecycle_worker = (
+            LifecycleRefreshWorker(self.memory_lifecycle_jobs)
+            if self._agent_runtime_execution_owner
+            else None
         )
         self.frontend_gateway = FrontendGateway(
             suggest_handler=self.rime_suggest,
@@ -786,6 +811,10 @@ class DebugImeService:
         """Start non-critical workers after the HTTP listener owns the process."""
 
         self._start_background_startup_lane()
+        self.memory_maintenance_jobs.resume_persisted_jobs()
+        worker = self.memory_lifecycle_worker
+        if worker is not None:
+            worker.start()
 
     def close(self) -> None:
         """Stop process-owned workers and release service resources once."""
@@ -797,6 +826,7 @@ class DebugImeService:
             background_startup_timer = self._background_startup_timer
             self._background_startup_timer = None
             worker = self.memory_projection_worker
+            lifecycle_worker = self.memory_lifecycle_worker
         if background_startup_timer is not None:
             background_startup_timer.cancel()
         if worker is not None:
@@ -805,6 +835,11 @@ class DebugImeService:
             except Exception:
                 # Shutdown continues so one background failure cannot leak the
                 # remaining executors and provider clients.
+                pass
+        if lifecycle_worker is not None:
+            try:
+                lifecycle_worker.stop()
+            except Exception:
                 pass
         resources = (
             self.core,
@@ -966,7 +1001,10 @@ class DebugImeService:
         )
         waiting_day_count = int(summary.get("waitingDayCount") or 0)
         try:
-            managed = MemoryMaintenanceSettings.load(core.db_path)
+            managed = MemoryMaintenanceSettings.load(
+                core.db_path,
+                preverified_schema=True,
+            )
             job = jobs.activity_timeline_status(project=self.config.project)
             job_state = _string(job.get("state"))
             job_mode = _string(job.get("mode"))
@@ -3717,7 +3755,10 @@ class DebugImeService:
                 project=request.project,
                 bundle_hash=str(bundle.get("bundleHash") or ""),
             )
-        managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        managed = MemoryMaintenanceSettings.load(
+            self.core.db_path,
+            preverified_schema=True,
+        )
         if existing is not None:
             plan = memory_book_plan_from_stored_run(existing)
             validation = inspect_memory_book_plan(plan)
@@ -3997,6 +4038,81 @@ class DebugImeService:
         job_id: object,
     ) -> dict[str, object]:
         return self.memory_maintenance_jobs.status(job_id)
+
+    def memory_lifecycle_status(self, payload: Mapping[str, object]) -> dict[str, object]:
+        """Read-only lifecycle counters and the persisted refresh queue."""
+        project = _string(payload.get("project")) or self.config.project
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"ok": False, "error": "local SQLite core required"}
+        with lifecycle_connect(self.config.db_path) as conn:
+            lifecycle_require_schema(conn)
+            counts = {
+                "sources": int(conn.execute(
+                    """SELECT COUNT(*)
+                       FROM agent_memory_sources AS source
+                       JOIN input_events AS event ON event.id = source.input_event_id
+                       WHERE event.project IN ('', ?)""",
+                    (project,),
+                ).fetchone()[0]),
+                "evidence": int(conn.execute(
+                    "SELECT COUNT(*) FROM agent_memory_evidence WHERE project IN ('', ?)",
+                    (project,),
+                ).fetchone()[0]),
+                # Personal Atoms intentionally have an empty project scope;
+                # include them alongside project-scoped Atoms for this view.
+                "atoms": int(conn.execute(
+                    "SELECT COUNT(*) FROM memory_atoms WHERE COALESCE(scope_project, '') IN ('', ?)",
+                    (project,),
+                ).fetchone()[0]),
+            }
+            jobs = [dict(row) for row in conn.execute(
+                "SELECT job_id,state,error,created_at_ms,updated_at_ms,completed_at_ms FROM memory_maintenance_jobs WHERE job_id LIKE 'memory-refresh:%' ORDER BY updated_at_ms DESC LIMIT 20"
+            )]
+            exclusions = [dict(row) for row in conn.execute(
+                "SELECT project,target_kind,target_id,created_at_ms FROM memory_capture_exclusions WHERE project IN ('',?) ORDER BY created_at_ms DESC LIMIT 100", (project,)
+            )]
+        return {"schemaVersion": "paw.memory-lifecycle-status.v1", "ok": True, "project": project, "counts": counts, "jobs": jobs, "exclusions": exclusions}
+
+    def memory_lifecycle_refresh(self, payload: Mapping[str, object]) -> dict[str, object]:
+        worker = self.memory_lifecycle_worker
+        if worker is None:
+            raise ValueError("Memory lifecycle refresh must run on the Agent Gateway")
+        worker.start()
+        result = self.memory_lifecycle_jobs.submit(
+            operation=_string(payload.get("operation")) or "daily_report",
+            project=_string(payload.get("project")) or self.config.project,
+            day=_string(payload.get("date")),
+            timezone=_string(payload.get("timezone")) or "UTC",
+            scheduled=bool(payload.get("scheduled")),
+        )
+        worker.wake()
+        return result
+
+    def memory_lifecycle_report(self, payload: Mapping[str, object]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"ok": False, "error": "local SQLite core required"}
+        with lifecycle_connect(self.config.db_path) as conn:
+            lifecycle_require_schema(conn)
+            return lifecycle_report(
+                conn,
+                project=_string(payload.get("project")) or self.config.project,
+                day=_string(payload.get("date")),
+                timezone=_string(payload.get("timezone")) or "UTC",
+                include_timeline=not bool(payload.get("noTimeline")),
+            )
+
+    def memory_lifecycle_forget_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        with lifecycle_connect(self.config.db_path) as conn:
+            return lifecycle_forget_preview(conn, project=_string(payload.get("project")) or self.config.project, source_id=_string(payload.get("sourceId")))
+
+    def memory_lifecycle_forget_apply(self, payload: Mapping[str, object]) -> dict[str, object]:
+        with lifecycle_connect(self.config.db_path) as conn:
+            return lifecycle_forget_source(
+                conn,
+                project=_string(payload.get("project")) or self.config.project,
+                source_id=_string(payload.get("sourceId")),
+                expected_plan_digest=_string(payload.get("expectedPlanDigest")),
+            )
 
     def _publish_memory_maintenance_event(
         self,
@@ -4323,7 +4439,13 @@ class DebugImeService:
             }
         project = _string(payload.get("project")) or self.config.project
         manual = bool(payload.get("manual"))
-        managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        owner_kind = _string(payload.get("ownerKind"))
+        owner_id = _string(payload.get("ownerId"))
+        owner_scoped_manual = manual and bool(owner_kind and owner_id)
+        managed = MemoryMaintenanceSettings.load(
+            self.core.db_path,
+            preverified_schema=True,
+        )
         if payload.get("catalogOnly") is True:
             catalog = self._execute_gateway_memory_catalog_consolidation(
                 project=project, manual=manual, managed=managed,
@@ -4352,11 +4474,35 @@ class DebugImeService:
                 timeline_start_date=_string(payload.get("timelineStartDate")),
                 progress=payload.get("_progressCallback"),
             )
+        stage_errors: list[dict[str, object]] = []
+
+        def optional_stage(name: str, callback: Callable[[], Mapping[str, object]]) -> dict[str, object]:
+            """Keep one auxiliary lane from hiding the curation receipt."""
+
+            try:
+                value = dict(callback())
+            except Exception as exc:
+                value = {
+                    "ok": False,
+                    "error": compact_whitespace(str(exc))[:800] or exc.__class__.__name__,
+                    "errorCode": f"{name}_failed",
+                }
+            if value.get("ok") is False:
+                stage_errors.append({
+                    "stage": name,
+                    "errorCode": _string(value.get("errorCode")) or f"{name}_failed",
+                    "error": _string(value.get("error"))[:800],
+                })
+            return value
+
         lexicon = (
-            run_due_lexicon_organization(
-                self.core.db_path,
-                project=project,
-                force=manual,
+            optional_stage(
+                "lexicon",
+                lambda: run_due_lexicon_organization(
+                    self.core.db_path,
+                    project=project,
+                    force=manual,
+                ),
             )
             if managed.automatic_organization_enabled
             else {
@@ -4383,11 +4529,27 @@ class DebugImeService:
                     self.core.db_path,
                     organizer=organizer,
                     project=project,
-                    max_sources=_bounded_int(
-                        payload.get("maxSources"),
-                        default=DEFAULT_MAX_SOURCES,
-                        minimum=1,
-                        maximum=MAX_PERSONAL_V2_SOURCES,
+                    # A manual Control Center run is deliberately small and
+                    # resumable. Atom-first admits six logical inputs per
+                    # request; honour that boundary even if a caller sends
+                    # the broader scheduled-run limit (or 1,500) over HTTP.
+                    max_sources=(
+                        min(
+                            _bounded_int(
+                                payload.get("maxSources"),
+                                default=DEFAULT_MAX_SOURCES,
+                                minimum=1,
+                                maximum=MAX_PERSONAL_V2_SOURCES,
+                            ),
+                            _MAX_MANUAL_CURATION_SOURCE_BATCH,
+                        )
+                        if owner_scoped_manual
+                        else _bounded_int(
+                            payload.get("maxSources"),
+                            default=DEFAULT_MAX_SOURCES,
+                            minimum=1,
+                            maximum=MAX_PERSONAL_V2_SOURCES,
+                        )
                     ),
                     # Validated routine curation is the configured promotion
                     # path; it keeps the stored run and rollback evidence but
@@ -4408,13 +4570,150 @@ class DebugImeService:
                     parent_span_id=_string(trace_context.get("parentSpanId")),
                 )
                 curator.initialize()
-                report = curator.run_due(
-                    manual=manual,
-                    owner_kind=_string(payload.get("ownerKind")),
-                    owner_id=_string(payload.get("ownerId")),
-                    instruction=compact_whitespace(
-                        _string(payload.get("instruction"))
-                    )[:800],
+                if owner_scoped_manual:
+                    # Keep the normal manual throughput at six, but shrink a
+                    # retry after a model failure. The cursor/backoff is the
+                    # durable signal; no model output is guessed or replayed.
+                    retry_after_failure = False
+                    try:
+                        with self.core._connect() as conn:  # type: ignore[attr-defined]
+                            prior = conn.execute(
+                                """
+                                SELECT consecutive_failures, last_error
+                                FROM memory_curation_cursors
+                                WHERE owner_kind = ? AND owner_id = ?
+                                  AND project = ? AND lane = 'daily'
+                                """,
+                                (owner_kind, owner_id, project),
+                            ).fetchone()
+                        retry_after_failure = bool(
+                            prior is not None
+                            and int(prior[0] or 0) > 0
+                            # _claim_scope clears last_error when it takes the
+                            # recovery lease, so consecutive failure count is
+                            # the durable signal available at this point.
+                        )
+                    except Exception:
+                        retry_after_failure = False
+                    if retry_after_failure:
+                        curator.max_sources = min(
+                            int(curator.max_sources),
+                            _MAX_MANUAL_CURATION_TIMEOUT_RETRY_BATCH,
+                        )
+                instruction = compact_whitespace(
+                    _string(payload.get("instruction"))
+                )[:800]
+                curation_reports: list[dict[str, object]] = []
+                batch_summaries: list[dict[str, object]] = []
+                seen_progress: set[tuple[int, str, int]] = set()
+                progress_callback = payload.get("_progressCallback")
+                processed_source_count = 0
+                total_source_count = 0
+                max_batches = (
+                    _MAX_MANUAL_CURATION_TRIGGER_BATCHES
+                    if manual and managed.automatic_organization_auto_apply
+                    else 1
+                )
+                for batch_index in range(max_batches):
+                    current_report = dict(curator.run_due(
+                        manual=manual,
+                        owner_kind=owner_kind,
+                        owner_id=owner_id,
+                        instruction=instruction,
+                    ))
+                    curation_reports.append(current_report)
+                    results = [
+                        dict(item)
+                        for item in current_report.get("results") or []
+                        if isinstance(item, Mapping)
+                    ]
+                    owner_result = next(
+                        (
+                            item for item in results
+                            if (not owner_kind or _string(item.get("ownerKind")) == owner_kind)
+                            and (not owner_id or _string(item.get("ownerId")) == owner_id)
+                        ),
+                        results[0] if results else {},
+                    )
+                    status_payload = current_report.get("status")
+                    scopes = (
+                        status_payload.get("scopes")
+                        if isinstance(status_payload, Mapping)
+                        else []
+                    )
+                    owner_scope = next(
+                        (
+                            dict(item) for item in scopes
+                            if isinstance(item, Mapping)
+                            and (not owner_kind or _string(item.get("ownerKind")) == owner_kind)
+                            and (not owner_id or _string(item.get("ownerId")) == owner_id)
+                        ),
+                        {},
+                    )
+                    pending_count = int(
+                        owner_result.get("remainingSourceCount")
+                        or owner_scope.get("pendingSourceCount")
+                        or 0
+                    )
+                    processed_source_count += int(owner_result.get("sourceCount") or 0)
+                    total_source_count = max(
+                        total_source_count,
+                        int(owner_scope.get("totalSourceCount") or 0),
+                        processed_source_count + pending_count,
+                    )
+                    cursor = owner_scope.get("lastSourceCursor")
+                    cursor_map = cursor if isinstance(cursor, Mapping) else {}
+                    progress_key = (
+                        int(cursor_map.get("createdAtMs") or 0),
+                        _string(cursor_map.get("sourceId")),
+                        pending_count,
+                    )
+                    batch_summaries.append({
+                        "batch": batch_index + 1,
+                        "runId": _string(owner_result.get("runId")),
+                        "runStatus": _string(owner_result.get("runStatus")),
+                        "sourceCount": int(owner_result.get("sourceCount") or 0),
+                        "modelSourceCount": int(owner_result.get("modelSourceCount") or 0),
+                        "pendingSourceCount": pending_count,
+                        "autoApplied": bool(owner_result.get("autoApplied")),
+                    })
+                    if callable(progress_callback):
+                        try:
+                            progress_callback({
+                                "phase": "owner_memory_curation",
+                                "batch": batch_index + 1,
+                                "batchLimit": max_batches,
+                                "processedSourceCount": processed_source_count,
+                                "totalSourceCount": total_source_count,
+                                "pendingSourceCount": pending_count,
+                                "completedSourceCount": max(
+                                    0, total_source_count - pending_count
+                                ),
+                            })
+                        except Exception:
+                            # Progress is a read projection; it cannot change
+                            # the durable curation result.
+                            pass
+                    report = current_report
+                    if (
+                        not manual
+                        or not managed.automatic_organization_auto_apply
+                        or current_report.get("ok") is not True
+                        or pending_count <= 0
+                        or _string(owner_result.get("runStatus"))
+                        not in {"applied", "idle", "empty"}
+                        or progress_key in seen_progress
+                    ):
+                        break
+                    seen_progress.add(progress_key)
+                report = dict(report)
+                report["batchSummaries"] = batch_summaries
+                report["batchCount"] = len(curation_reports)
+                report["pendingSourceCount"] = batch_summaries[-1]["pendingSourceCount"] if batch_summaries else 0
+                report["drainLimited"] = bool(
+                    batch_summaries
+                    and report["pendingSourceCount"] > 0
+                    and len(curation_reports) >= max_batches
                 )
                 report["effectiveModel"] = executor.reference
                 report["effectiveThinkingLevel"] = executor.thinking_level
@@ -4432,27 +4731,61 @@ class DebugImeService:
                 "reason": "automatic_organization_disabled",
                 "results": [],
             }
-        catalog = self._execute_gateway_memory_catalog_consolidation(
-            project=project,
-            manual=manual,
-            managed=managed,
+        catalog = (
+            {
+                "ok": True,
+                "skipped": True,
+                "reason": "owner_curation_only",
+            }
+            if owner_scoped_manual
+            else optional_stage(
+                "catalog",
+                lambda: self._execute_gateway_memory_catalog_consolidation(
+                    project=project,
+                    manual=manual,
+                    managed=managed,
+                ),
+            )
         )
-        dreaming = self._execute_gateway_memory_dreaming(
-            project=project,
-            manual=manual,
-            managed=managed,
-            max_sources=payload.get("maxSources"),
-            progress=payload.get("_progressCallback"),
+        dreaming = (
+            {
+                "ok": True,
+                "skipped": True,
+                "reason": "owner_curation_only",
+            }
+            if owner_scoped_manual
+            else optional_stage(
+                "dreaming",
+                lambda: self._execute_gateway_memory_dreaming(
+                    project=project,
+                    manual=manual,
+                    managed=managed,
+                    max_sources=payload.get("maxSources"),
+                    progress=payload.get("_progressCallback"),
+                ),
+            )
         )
         report["lexiconOrganization"] = lexicon
         report["dreaming"] = dreaming
         report["catalogConsolidation"] = catalog
-        report["ok"] = (
-            report.get("ok") is True
-            and lexicon.get("ok") is not False
-            and dreaming.get("ok") is True
-            and catalog.get("ok") is True
-        )
+        # The owner curation lane is the primary result when it is enabled.
+        # Dreaming is the primary lane only when owner curation is disabled;
+        # auxiliary failures remain explicit and retryable without changing a
+        # committed curation into a false whole-job failure.
+        primary_result = report
+        if not managed.automatic_organization_enabled:
+            primary_result = dreaming
+        if primary_result.get("ok") is False:
+            stage_errors.insert(0, {
+                "stage": "curation" if managed.automatic_organization_enabled else "dreaming",
+                "errorCode": _string(primary_result.get("errorCode")) or "memory_curation_failed",
+                "error": _string(primary_result.get("error"))[:800],
+            })
+        report["stageErrors"] = stage_errors
+        report["degraded"] = bool(stage_errors) and primary_result.get("ok") is True
+        report["ok"] = primary_result.get("ok") is True
+        if report["ok"]:
+            report["error"] = ""
         report["managedSettings"] = managed.as_dict()
         report["executionOwner"] = "agent_gateway"
         report["transport"] = "gateway_internal_session"
@@ -4598,7 +4931,10 @@ class DebugImeService:
                     "error": "local SQLite core required",
                 }
             project = _string(payload.get("project")) or self.config.project
-            managed = MemoryMaintenanceSettings.load(self.core.db_path)
+            managed = MemoryMaintenanceSettings.load(
+                self.core.db_path,
+                preverified_schema=True,
+            )
             executor = build_governed_memory_model_executor(
                 self.agent.runtime,
                 managed.automatic_organization_model,
@@ -4951,7 +5287,10 @@ class DebugImeService:
         project = _string(payload.get("project")) or self.config.project
         if _bool(payload.get("projectionOnly")):
             managed = (
-                MemoryMaintenanceSettings.load(self.core.db_path)
+                MemoryMaintenanceSettings.load(
+                    self.core.db_path,
+                    preverified_schema=True,
+                )
                 if isinstance(self.core, LocalSqliteCoreClient)
                 else MemoryMaintenanceSettings()
             )
@@ -4986,7 +5325,10 @@ class DebugImeService:
                 requested_owner_id,
             )
         current_ms = int(time.time() * 1000)
-        managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        managed = MemoryMaintenanceSettings.load(
+            self.core.db_path,
+            preverified_schema=True,
+        )
         catalog_status = self._catalog_maintenance_status(project, managed)
         automatic_enabled = managed.automatic_organization_enabled
         automatic_interval_ms = (
@@ -8468,26 +8810,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, response)
             return
-        if parsed.path == "/api/agent/sessions":
-            try:
-                response = self.service.agent.list_sessions(
-                    {
-                        "includeArchived": _query_first(query, "includeArchived"),
-                        "includeInternal": _query_first(query, "includeInternal"),
-                        "limit": _query_first(query, "limit"),
-                        "beforeUpdatedAtMs": _query_first(query, "beforeUpdatedAtMs"),
-                        "beforeId": _query_first(query, "beforeId"),
-                        "surfaceKind": _query_first(query, "surfaceKind"),
-                        "ownerAppId": _query_first(query, "ownerAppId"),
-                        "surfaceKey": _query_first(query, "surfaceKey"),
-                        "projectionOnly": _query_first(query, "projectionOnly"),
-                    }
-                )
-            except ValueError as exc:
-                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
-                return
-            self._write_json(HTTPStatus.OK, response)
-            return
         if background_job_session_id:
             try:
                 if background_job_action == "collection":
@@ -8629,20 +8951,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path == "/api/agent/wake-schedules":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.agent.list_wake_schedules(
-                    {
-                        "status": _query_first(query, "status"),
-                        "targetType": _query_first(query, "targetType"),
-                        "targetId": _query_first(query, "targetId"),
-                        "createdBySessionId": _query_first(query, "createdBySessionId"),
-                        "limit": _query_first(query, "limit"),
-                    }
-                ),
-            )
-            return
         if wake_schedule_id and wake_schedule_action == "runs":
             self._write_json(
                 HTTPStatus.OK,
@@ -8660,22 +8968,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "schedule": self.service.agent.get_wake_schedule(wake_schedule_id),
                 },
-            )
-            return
-        if parsed.path == "/api/agent/rooms":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.agent.list_rooms(
-                    {
-                        "includeArchived": _query_first(query, "includeArchived"),
-                        "limit": _query_first(query, "limit"),
-                        "beforeUpdatedAtMs": _query_first(query, "beforeUpdatedAtMs"),
-                        "beforeId": _query_first(query, "beforeId"),
-                        "projectionOnly": _query_first(query, "projectionOnly"),
-                        "ownerAppId": _query_first(query, "ownerAppId"),
-                        "surfaceKey": _query_first(query, "surfaceKey"),
-                    }
-                ),
             )
             return
         if parsed.path == "/api/agent/governance":
@@ -8870,29 +9162,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path == "/api/agent/approvals":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.agent.list_approvals(
-                    {
-                        "sessionId": _query_first(query, "sessionId"),
-                        "state": _query_first(query, "state"),
-                        "limit": _query_first(query, "limit"),
-                    }
-                ),
-            )
-            return
-        if parsed.path == "/api/agent/memory-sources":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.agent.list_memory_sources(
-                    {
-                        "sessionId": _query_first(query, "sessionId"),
-                        "limit": _query_first(query, "limit"),
-                    }
-                ),
-            )
-            return
         if parsed.path == "/api/agent/memory-maintenance":
             run_id = _query_first(query, "runId")
             job_id = _query_first(query, "jobId")
@@ -8916,17 +9185,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path == "/api/agent/media":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.agent.list_media(
-                    {
-                        "sessionId": _query_first(query, "sessionId"),
-                        "roomId": _query_first(query, "roomId"),
-                        "limit": _query_first(query, "limit"),
-                    }
-                ),
-            )
+        if parsed.path == "/api/memory/lifecycle/status":
+            self._write_json(HTTPStatus.OK, self.service.memory_lifecycle_status({"project": _query_first(query, "project")}))
+            return
+        if parsed.path == "/api/memory/lifecycle/report":
+            self._write_json(HTTPStatus.OK, self.service.memory_lifecycle_report({
+                "project": _query_first(query, "project"),
+                "date": _query_first(query, "date"),
+                "timezone": _query_first(query, "timezone"),
+                "noTimeline": _query_first(query, "noTimeline") == "true",
+            }))
             return
         media_id, media_action = agent_media_route(parsed.path)
         if media_id:
@@ -9880,6 +10148,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                     self.service.agent_memory_maintenance_trigger(payload),
                 )
+            elif path == "/api/memory/lifecycle/refresh":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.memory_lifecycle_refresh(payload))
+            elif path == "/api/memory/lifecycle/forget/preview":
+                self._write_json(HTTPStatus.OK, self.service.memory_lifecycle_forget_preview(payload))
+            elif path == "/api/memory/lifecycle/forget/apply":
+                self._write_json(HTTPStatus.OK, self.service.memory_lifecycle_forget_apply(payload))
             elif work_document_id:
                 handlers = {
                     "archive": self.service.agent.work_documents.request_archive,
@@ -10691,30 +10965,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         chain remains the single owner for that path.
         """
 
-        target = self.service
-        for part in route.handler.split("."):
-            target = getattr(target, part)
-        handler = target
-        if route.contract:
-            validate_contract(payload or {}, route.contract)
-
-        # `takes_arguments` decides only how the handler is called. Response
-        # validation used to sit inside the argument-free branch, so a route
-        # that both took arguments and declared a response contract would have
-        # been served unvalidated -- the declaration would have looked
-        # enforced while doing nothing. It applies to every route now.
-        if route.takes_arguments:
-            arguments = build_arguments(
-                route,
-                payload=payload,
-                query_first=lambda name: _query_first(query or {}, name),
-            )
-            response = handler(arguments, **dict(route.payload_args))
-        else:
-            response = handler(**dict(route.payload_args))
-        if route.response_contract:
-            validate_contract(response, route.response_contract)
-        self._write_json(HTTPStatus(route.status), response)
+        result = DescriptorRouteDispatcher(
+            self.service,
+            query_first=_query_first,
+        ).dispatch(route, payload=payload, query=query)
+        self._write_json(result.status, result.payload)
 
     def _write_json(
         self,

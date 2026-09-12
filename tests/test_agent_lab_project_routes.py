@@ -90,6 +90,10 @@ class LabProjectRouteTests(unittest.TestCase):
                 self.assertEqual(suite["scenario"], project["description"])
                 self.assertEqual(suite["sources"][0]["text"], project["materialSet"]["materials"][0]["text"])
                 self.assertEqual(suite["jobs"], [])
+                projected = service.eval_lab_projects({"projectId": project["projectId"]})["project"]
+                self.assertEqual(projected["bindings"][0]["execution"]["status"], "not_started")
+                self.assertTrue(projected["bindings"][0]["execution"]["canContinue"])
+                self.assertIn("真实模型运行", projected["bindings"][0]["execution"]["reason"])
                 primary = service.configuration_store.snapshot()["configuration"]["modelRouting"]["primary"]
                 self.assertEqual(f'{suite["judgeConfig"]["provider"]}/{suite["judgeConfig"]["model"]}', primary["modelProfile"])
                 guide = {"action": "ensure_guide", "projectId": project["projectId"], "expectedRevision": project["revision"], "clientRequestId": "guide", "input": {}}

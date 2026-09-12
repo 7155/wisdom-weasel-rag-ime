@@ -15,6 +15,7 @@ from rag_ime.agent_lab.projects import (
     AgentLabProjectValidationError,
 )
 from rag_ime.agent_lab.golden import AgentLabGoldenStore
+from rag_ime.agent_lab.project_application import AgentLabProjectApplication
 
 
 class LabProjectTests(unittest.TestCase):
@@ -60,6 +61,86 @@ class LabProjectTests(unittest.TestCase):
         self.assertNotIn("text", str(self.store.read()["items"][0]))
         with self.assertRaises(AgentLabProjectConflict):
             self.store.command({**payload, "input": {"description": "另一份业务需求"}})
+
+    def test_read_projection_exposes_resume_state_without_inventing_execution_outcome(self):
+        self.create()
+        summary = self.store.read()["items"][0]
+        self.assertEqual(summary["workState"], {
+            "status": "draft", "label": "待接入材料", "reason": "项目还没有可用于验证的当前材料。",
+        })
+        self.assertEqual(summary["nextAction"]["kind"], "add_materials")
+        self.assertEqual(summary["rerunReadiness"]["status"], "not_ready")
+        self.assertIsNone(summary["latestRecord"])
+        self.assertNotIn("executionOutcome", summary)
+
+        self.command("publish_artifact", {"title": "排查记录", "kind": "investigation", "view": "markdown", "content": "已观察到连接超时。"})
+        updated = self.store.read()["items"][0]
+        self.assertEqual(updated["latestRecord"]["status"], "available")
+        self.assertEqual(updated["latestRecord"]["title"], "排查记录")
+        self.assertEqual(updated["workState"]["status"], "draft")
+
+    def test_history_projection_separates_viewable_snapshot_from_rerun_readiness(self):
+        def bind(_conn, _project, _request):
+            return {"ownerRef": {"kind": "scene", "id": "cloudops"}, "summary": "历史场景回执"}
+
+        self.store = AgentLabProjectStore(self.db, bind_execution=bind)
+        prepared = {
+            "sceneId": "cloudops", "sourceHash": "source-1", "experimentCount": 2,
+            "project": {"title": "云上事故诊断", "description": "继续历史诊断"},
+            "artifacts": [{"title": "实验快照", "kind": "history", "view": "markdown", "content": "历史结果；没有重新运行。"}],
+        }
+        payload = self.payload("import_history", {"sceneId": "cloudops", "sourceHash": "source-1"})
+        response = self.store.command(payload, history_import=lambda _value: prepared)
+        self.project = response["project"]
+        summary = self.store.read()["items"][0]
+        self.assertEqual(summary["workState"]["status"], "history_only")
+        self.assertEqual(summary["latestRecord"]["status"], "historical")
+        self.assertEqual(summary["rerunReadiness"]["status"], "not_ready")
+        self.assertIn("至少一份当前材料快照", summary["rerunReadiness"]["missing"])
+
+    def test_execution_summary_distinguishes_running_completed_and_failed_model_jobs(self):
+        running = AgentLabProjectApplication._execution_summary({"jobs": [{
+            "jobId": "job-running", "kind": "experiment", "state": "running",
+            "progress": "开发题 · 基线 · 第 1 / 4 题", "updatedAtMs": 2,
+        }]})
+        self.assertEqual(running["status"], "running")
+        self.assertFalse(running["canContinue"])
+        self.assertIn("第 1 / 4 题", running["reason"])
+        completed = AgentLabProjectApplication._execution_summary({"jobs": [{
+            "jobId": "job-complete", "kind": "experiment", "state": "completed", "updatedAtMs": 3,
+            "result": {"comparison": {"decision": "improved"}},
+        }]})
+        self.assertEqual(completed["status"], "completed")
+        self.assertTrue(completed["canContinue"])
+        self.assertIn("improved", completed["reason"])
+        nested_completed = AgentLabProjectApplication._execution_summary({
+            "ok": True,
+            "suite": {"jobs": [{
+                "jobId": "job-nested-complete", "kind": "experiment", "state": "completed", "updatedAtMs": 5,
+                "result": {"comparison": {"decision": "no_improvement"}},
+            }]},
+            "items": [],
+        })
+        self.assertEqual(nested_completed["status"], "completed")
+        self.assertEqual(nested_completed["latestJob"]["jobId"], "job-nested-complete")
+        self.assertIn("no_improvement", nested_completed["reason"])
+        failed = AgentLabProjectApplication._execution_summary({"jobs": [{
+            "jobId": "job-failed", "kind": "experiment", "state": "failed", "error": "Pi 回合未完成。", "updatedAtMs": 4,
+        }]})
+        self.assertEqual(failed["status"], "failed")
+        self.assertTrue(failed["canContinue"])
+        self.assertIn("Pi 回合未完成", failed["reason"])
+
+    def test_preparation_receipts_do_not_claim_a_completed_model_experiment(self):
+        for kind in ("draft", "calibrate", "freeze"):
+            with self.subTest(kind=kind):
+                result = AgentLabProjectApplication._execution_summary({"jobs": [{
+                    "jobId": "prepare", "kind": kind, "state": "completed", "updatedAtMs": 1,
+                    "result": {"comparison": {"decision": "no_improvement"}},
+                }]})
+                self.assertEqual(result["status"], "completed")
+                self.assertNotIn("模型运行已完成", result["reason"])
+                self.assertNotIn("decision", result["latestJob"])
 
     def test_concurrent_retry_mutates_once_and_stale_edit_preserves_newer_goal(self):
         self.create()

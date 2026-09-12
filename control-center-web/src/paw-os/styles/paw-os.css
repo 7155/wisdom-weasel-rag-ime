@@ -1202,6 +1202,17 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 80%, var(--paw-app-accent));
   --app-color: var(--paw-app-accent);
 }
+[data-app='agent-capsule'] {
+  --paw-app-accent: #7a5af8;
+  --paw-app-accent-strong: #5d43c7;
+  --paw-app-support: #d5b8ff;
+  --paw-app-material-family: capsule-overlay;
+  --paw-app-canvas: color-mix(in oklab, var(--paw-panel-strong) 96.5%, var(--paw-app-support));
+  --paw-app-nav: color-mix(in oklab, var(--paw-panel-soft) 87%, var(--paw-app-accent));
+  --paw-app-surface: color-mix(in oklab, var(--paw-panel-strong) 95%, var(--paw-app-accent));
+  --paw-app-selection: color-mix(in oklab, var(--paw-panel-strong) 77%, var(--paw-app-accent));
+  --app-color: var(--paw-app-accent);
+}
 [data-app='memory'] {
   --paw-app-accent: #a63d71;
   --paw-app-accent-strong: #7d2c55;

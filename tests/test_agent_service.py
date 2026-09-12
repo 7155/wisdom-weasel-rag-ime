@@ -4389,6 +4389,7 @@ class AgentServiceTests(unittest.TestCase):
     def test_compaction_refresh_replaces_session_context_with_recent_dialogue_and_todo(self) -> None:
         session = self.service.create_session({"title": "压缩刷新"})["session"]
         session_id = str(session["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         with patch.object(
             self.service.runtime,
             "prompt",
@@ -4477,6 +4478,7 @@ class AgentServiceTests(unittest.TestCase):
     def test_completed_todo_compaction_recovers_terminal_state_without_restarting_work(self) -> None:
         session = self.service.create_session({"title": "已完成任务压缩"})["session"]
         session_id = str(session["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         tasks = ["运行失败基线", "完成精确修改", "运行回归测试"]
         self.service.sessions.mutate_agent_todo(
             session_id,
@@ -4574,6 +4576,7 @@ class AgentServiceTests(unittest.TestCase):
     def test_subagent_task_is_combined_with_live_user_query(self) -> None:
         session = self.service.create_session({"title": "受管子任务"})["session"]
         session_id = str(session["id"])
+        self.service.sessions.set_disclosure_preferences(session_id, {"tool:memory": "enabled"})
         delegated_run = {
             "task": "只核对 Session 记忆压缩后的 0.8/0.2 向量融合",
             "state": "running",

@@ -22,19 +22,15 @@ from .owner_memory_curation import (
 
 _DEFAULT_GATEWAY_URL = "http://127.0.0.1:8768"
 _TERMINAL_JOB_STATES = frozenset({"completed", "failed", "expired"})
-_RESTART_EXPIRY_ERROR = (
-    "Gateway restarted before this process-local Memory maintenance job "
-    "could finish; the old worker cannot be resumed."
-)
 
 
 class GatewayMemoryMaintenanceJobs:
     """One trigger lane with a durable job receipt and Trace identity.
 
-    The worker itself remains process-owned, but its admission/progress/result
-    receipt is persisted. This matters for a Trace handoff: a Gateway restart
-    must not turn a real failed maintenance job into an uncorrelated
-    ``expired`` placeholder.
+    The worker thread is process-owned, while admission/progress/result and the
+    original request are persisted. A Gateway restart re-queues the same job;
+    the durable Memory executor then resumes any accepted model request by its
+    request id instead of creating an uncorrelated retry.
     """
 
     def __init__(
@@ -43,8 +39,10 @@ class GatewayMemoryMaintenanceJobs:
         *,
         db_path: str | Path | None = None,
         event_publisher: Callable[[Mapping[str, object]], None] | None = None,
+        execution_owner: bool = True,
     ) -> None:
         self._execute = execute
+        self._execution_owner = execution_owner
         self._db_path = (
             Path(db_path).expanduser()
             if db_path not in (None, "", ":memory:")
@@ -64,6 +62,9 @@ class GatewayMemoryMaintenanceJobs:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Gateway memory maintenance is closed")
+            if not self._execution_owner:
+                raise RuntimeError("Memory maintenance belongs to the Agent Gateway execution owner")
+            self._recover_and_start_locked()
             if self._active_job_id:
                 active = self._jobs.get(self._active_job_id)
                 if active is not None and str(active.get("state")) in {
@@ -85,26 +86,19 @@ class GatewayMemoryMaintenanceJobs:
                 "completedAtMs": 0,
             }
             self._jobs[job_id] = job
-            self._active_job_id = job_id
             self._persist_job(job)
-            thread = threading.Thread(
-                target=self._run,
-                args=(job_id,),
-                name="rag-ime-gateway-memory-maintenance",
-                daemon=True,
-            )
-            job["thread"] = thread
-            thread.start()
+            self._start_job_locked(job)
             return self._payload(job, reused=False)
 
     def status(self, job_id: object) -> dict[str, object]:
         normalized = str(job_id or "").strip()
         with self._lock:
-            job = self._jobs.get(normalized)
+            job = self._jobs.get(normalized) if self._execution_owner else None
             if job is None:
                 job = self._load_job(normalized)
                 if job is not None:
                     self._jobs[normalized] = job
+                    self._recover_and_start_locked()
                     return self._payload(job, reused=False)
                 # No durable receipt exists for this id. This is different
                 # from a persisted failed/completed job and remains a truthful
@@ -122,12 +116,18 @@ class GatewayMemoryMaintenanceJobs:
 
         normalized_project = str(project or "").strip()
         with self._lock:
+            if not self._execution_owner:
+                # The observer has no worker updating its cache. Read the
+                # owner's durable progress on each status projection.
+                self._jobs.clear()
+                self._recent_jobs_loaded = False
             if not self._recent_jobs_loaded:
                 for durable in self._load_recent_jobs():
                     job_id = str(durable.get("jobId") or "")
                     if job_id and job_id not in self._jobs:
                         self._jobs[job_id] = durable
                 self._recent_jobs_loaded = True
+            self._recover_and_start_locked()
             active = self._jobs.get(self._active_job_id)
             if active is not None and self._matches_project(active, normalized_project):
                 return self._payload(active, reused=False, compact=True)
@@ -191,6 +191,68 @@ class GatewayMemoryMaintenanceJobs:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+
+    def resume_persisted_jobs(self) -> None:
+        """Resume a maintenance job left queued/running by a Gateway restart."""
+
+        with self._lock:
+            if not self._closed:
+                self._recover_and_start_locked()
+
+    def _recover_and_start_locked(self) -> None:
+        if self._closed or not self._execution_owner:
+            return
+        if self._db_path is not None and not self._recent_jobs_loaded:
+            for durable in self._load_recent_jobs():
+                job_id = str(durable.get("jobId") or "")
+                if job_id and job_id not in self._jobs:
+                    self._jobs[job_id] = durable
+            self._recent_jobs_loaded = True
+        if self._active_job_id:
+            active = self._jobs.get(self._active_job_id)
+            if active is not None and str(active.get("state") or "") in {
+                "queued",
+                "running",
+            }:
+                return
+            self._active_job_id = ""
+        candidates = sorted(
+            (
+                job
+                for job in self._jobs.values()
+                if str(job.get("jobId") or "").startswith("memory-maintenance:")
+                and str(job.get("state") or "") in {"queued", "running"}
+            ),
+            key=lambda item: int(item.get("updatedAtMs") or 0),
+            reverse=True,
+        )
+        if not candidates:
+            return
+        job = candidates[0]
+        if str(job.get("state") or "") == "running":
+            # The previous process cannot still own this worker. Requeue the
+            # exact persisted request; the Memory executor will resume any
+            # accepted model turn by its durable request id.
+            job["state"] = "queued"
+            job["error"] = ""
+            job["completedAtMs"] = 0
+            job["updatedAtMs"] = int(time.time() * 1_000)
+            self._persist_job(job)
+        self._start_job_locked(job)
+
+    def _start_job_locked(self, job: dict[str, object]) -> None:
+        job_id = str(job.get("jobId") or "")
+        if not job_id or self._active_job_id:
+            return
+        thread = threading.Thread(
+            target=self._run,
+            args=(job_id,),
+            name="rag-ime-gateway-memory-maintenance",
+            daemon=True,
+        )
+        job["thread"] = thread
+        self._active_job_id = job_id
+        thread.start()
 
     def _run(self, job_id: str) -> None:
         with self._lock:
@@ -278,6 +340,7 @@ class GatewayMemoryMaintenanceJobs:
                     else error or "Memory maintenance job failed"
                 ),
             )
+            self._recover_and_start_locked()
 
     def _set_progress(
         self,
@@ -387,6 +450,7 @@ class GatewayMemoryMaintenanceJobs:
             rows = conn.execute(
                 """
                 SELECT * FROM memory_maintenance_jobs
+                WHERE job_id LIKE 'memory-maintenance:%'
                 ORDER BY updated_at_ms DESC
                 LIMIT 64
                 """
@@ -395,22 +459,17 @@ class GatewayMemoryMaintenanceJobs:
         return [self._recover_persisted_job(job) for job in jobs]
 
     def _recover_persisted_job(self, job: dict[str, object]) -> dict[str, object]:
-        """Do not resurrect a worker that died with the Gateway process."""
+        """Normalize a prior worker receipt for process-local resumption."""
 
+        # Projection refreshes have durable lease tokens and their own recovery
+        # owner. A status read must not expire another process's live worker.
+        if not self._execution_owner or str(job.get("jobId") or "").startswith("memory-refresh:"):
+            return job
         if str(job.get("state") or "") not in {"queued", "running"}:
             return job
-        timestamp = int(time.time() * 1_000)
-        job["state"] = "expired"
-        job["error"] = _RESTART_EXPIRY_ERROR
-        job["updatedAtMs"] = timestamp
-        job["completedAtMs"] = timestamp
-        self._persist_job(job)
-        self._publish_event(
-            job,
-            phase="expired",
-            status="expired",
-            summary=_RESTART_EXPIRY_ERROR,
-        )
+        job["state"] = "queued"
+        job["error"] = ""
+        job["completedAtMs"] = 0
         return job
 
     @staticmethod

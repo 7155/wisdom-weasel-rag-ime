@@ -239,6 +239,11 @@ class ControlPathId(str, Enum):
     MEMORY_ENTITY_GET = "memory.entity.get"
     MEMORY_EDIT = "memory.edit"
     MEMORY_SOURCE_DISPOSITION = "memory.source.disposition"
+    MEMORY_LIFECYCLE_STATUS = "memory.lifecycle.status"
+    MEMORY_LIFECYCLE_REFRESH = "memory.lifecycle.refresh"
+    MEMORY_LIFECYCLE_REPORT = "memory.lifecycle.report"
+    MEMORY_LIFECYCLE_FORGET_PREVIEW = "memory.lifecycle.forget.preview"
+    MEMORY_LIFECYCLE_FORGET_APPLY = "memory.lifecycle.forget.apply"
     MEMORY_BOOK_ARCHIVE_PREVIEW = "memory.book.archive.preview"
     MEMORY_BOOK_ARCHIVE_APPLY = "memory.book.archive.apply"
     MEMORY_BOOK_ARCHIVE_ROLLBACK = "memory.book.archive.rollback"
@@ -1001,6 +1006,11 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.MEMORY_ENTITY_GET, ControlMethod.GET, "/api/memory/entities/{kind}/{entityId}", "/control/v1/memory/entities/{kind}/{entityId}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind", "entityId"}, param_values={"kind": {"tag", "group", "book"}}, query={"project", "connectionsLimit", "connectionsCursor", "membersLimit", "membersCursor"}),
         _route(ControlPathId.MEMORY_EDIT, ControlMethod.POST, "/api/memory/edit", "/control/v1/memory/edit", body={"kind", "id", "title", "text", "summary", "note", "description", "tags", "aliases", "type", "color", "reason", "active"}, required_body={"kind", "id"}),
         _route(ControlPathId.MEMORY_SOURCE_DISPOSITION, ControlMethod.POST, "/api/memory/source/disposition", "/control/v1/memory/source/disposition", body={"sourceId", "evidenceId", "disposition"}, required_body={"disposition"}),
+        _route(ControlPathId.MEMORY_LIFECYCLE_STATUS, ControlMethod.GET, "/api/memory/lifecycle/status", "/control/v1/memory/lifecycle/status", scopes=[ControlScope.MEMORY_READ], remote_safe=True, query={"project"}),
+        _route(ControlPathId.MEMORY_LIFECYCLE_REFRESH, ControlMethod.POST, "/api/memory/lifecycle/refresh", "/control/v1/memory/lifecycle/refresh", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"operation", "project", "date", "timezone", "scheduled"}, required_body={"operation", "project"}, remote_body={"operation", "project", "date", "timezone", "scheduled"}),
+        _route(ControlPathId.MEMORY_LIFECYCLE_REPORT, ControlMethod.GET, "/api/memory/lifecycle/report", "/control/v1/memory/lifecycle/report", scopes=[ControlScope.MEMORY_READ], remote_safe=True, query={"project", "date", "timezone", "noTimeline"}, required_query={"project", "date", "timezone"}),
+        _route(ControlPathId.MEMORY_LIFECYCLE_FORGET_PREVIEW, ControlMethod.POST, "/api/memory/lifecycle/forget/preview", "/control/v1/memory/lifecycle/forget/preview", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"project", "sourceId"}, required_body={"project", "sourceId"}, remote_body={"project", "sourceId"}),
+        _route(ControlPathId.MEMORY_LIFECYCLE_FORGET_APPLY, ControlMethod.POST, "/api/memory/lifecycle/forget/apply", "/control/v1/memory/lifecycle/forget/apply", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"project", "sourceId", "expectedPlanDigest", "confirmText"}, required_body={"project", "sourceId", "expectedPlanDigest", "confirmText"}, remote_body={"project", "sourceId", "expectedPlanDigest", "confirmText"}, remote_body_values={"confirmText": {"forget"}}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_PREVIEW, ControlMethod.POST, "/api/memory/book/archive/preview", "/control/v1/memory/book/archive/preview", body={"bookId", "archived", "reason", "expectedRuntimeRevision"}, required_body={"bookId", "archived", "expectedRuntimeRevision"}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_APPLY, ControlMethod.POST, "/api/memory/book/archive/apply", "/control/v1/memory/book/archive/apply", body={"bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}, required_body={"bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_ROLLBACK, ControlMethod.POST, "/api/memory/book/archive/rollback", "/control/v1/memory/book/archive/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),

@@ -170,7 +170,7 @@ export function PermissionPicker({
                 <small title={scopedWorkspaceRoots.join('\n')}>
                   {scopedWorkspaceRoots.length
                     ? `${scopedWorkspaceRoots.length} 个目录 · ${scopedWorkspaceRoots.map(shortPath).join('、')}`
-                    : '尚未授权目录，工作区托管不可用'}
+                    : '尚未授权目录，工作区托管沙箱不可用'}
                 </small>
               </span>
               <Button size="small" variant="quiet" disabled={disabled} onClick={onWorkspaceRootsChange}>

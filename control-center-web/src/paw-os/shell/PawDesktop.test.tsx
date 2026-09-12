@@ -225,7 +225,7 @@ describe('PAWOS desktop', () => {
 
     // Where work happens, where what came out of it is kept, what the work
     // reaches for, what runs underneath. Every App lands in exactly one band,
-    // so eleven Apps read as one full shelf instead of lone tiles on rows of
+    // so the Apps read as one full shelf instead of lone tiles on rows of
     // their own.
     const bands = new Map<string, string[]>();
     let current = '';
@@ -242,6 +242,7 @@ describe('PAWOS desktop', () => {
       'agent',
       'eval-lab',
       'project-workbench',
+      'agent-capsule',
       ...pawApps.filter((app) => isPawExtensionAppId(app.id)).map((app) => app.id),
     ]);
     expect(bands.get('记忆与知识')).toEqual(['memory', 'knowledge']);

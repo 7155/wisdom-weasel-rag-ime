@@ -3,6 +3,9 @@ import { assistantLaunchIntent } from './assistant-launch.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+const AGENT_CAPSULE_CAPTURE_PATH = '/agent-capsule';
+const AGENT_CAPSULE_CAPTURE_QUERY = '?frontend=paw-os&pawHost=electron&surface=capture';
+
 export function installScreenAssistant({ app, BrowserWindow, ipcMain, dialog, systemPreferences, origin, preload, getMainWindow, openSession, capture = captureScreenRegion }) {
   const windows = new Map();
   let capturing = false;
@@ -67,19 +70,24 @@ export function installScreenAssistant({ app, BrowserWindow, ipcMain, dialog, sy
       if (!context || controller.signal.aborted) return false;
       const window = new BrowserWindow({
         width: 640, height: 760, minWidth: 400, minHeight: 500,
-        title: '选区对话 · PAW', backgroundColor: '#f7f8fa', show: false,
+        title: 'Agent Capsule · 选区对话', backgroundColor: '#f7f8fa', show: false,
+        alwaysOnTop: true, visibleOnAllWorkspaces: true, skipTaskbar: true,
         webPreferences: { contextIsolation: true, nodeIntegration: false, preload, sandbox: true },
       });
       windows.set(window.webContents.id, { window, capture: context });
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       window.webContents.on('will-navigate', (event, url) => {
         const target = new URL(url);
-        if (target.origin !== origin || target.pathname !== '/screen-assistant') event.preventDefault();
+        if (
+          target.origin !== origin
+          || target.pathname !== AGENT_CAPSULE_CAPTURE_PATH
+          || target.searchParams.get('surface') !== 'capture'
+        ) event.preventDefault();
       });
       const senderId = window.webContents.id;
       window.on('closed', () => windows.delete(senderId));
       window.once('ready-to-show', () => window.show());
-      await window.loadURL(`${origin}/screen-assistant?frontend=paw-os&pawHost=electron`);
+      await window.loadURL(`${origin}${AGENT_CAPSULE_CAPTURE_PATH}${AGENT_CAPSULE_CAPTURE_QUERY}`);
       return true;
     } catch (error) {
       visible.forEach((window) => { if (!window.isDestroyed()) window.showInactive(); });

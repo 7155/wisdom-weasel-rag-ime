@@ -7,14 +7,16 @@
 .screen-assistant__header span { display: block; margin-top: 3px; font-size: 12px; color: var(--text-secondary, #666); }
 .screen-assistant__tools { display: flex; gap: 6px; }
 .screen-assistant button { cursor: pointer; }
-.screen-assistant__tools button { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--border-subtle, #e4e7ec); border-radius: 8px; background: transparent; color: inherit; }
+.screen-assistant__tools button { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--border-subtle, #e4e7ec); border-radius: 10px; background: transparent; color: inherit; }
 .screen-assistant__source { margin: 0; padding: 10px 20px; border-bottom: 1px solid var(--border-subtle, #e4e7ec); }
-.screen-assistant__source summary { font-size: 12px; cursor: pointer; }
+.screen-assistant__source summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; cursor: pointer; }
 .screen-assistant__source summary span { margin-left: 8px; color: var(--text-secondary, #666); font-variant-numeric: tabular-nums; }
+.screen-assistant__source summary small { color: var(--text-tertiary, #8a94a3); font-size: 11px; }
 .screen-assistant__source img { display: block; margin: 10px auto 0; max-width: 100%; width: auto; max-height: 140px; object-fit: contain; border-radius: 4px; }
 .screen-assistant__actions { display: flex; flex-wrap: wrap; padding: 10px 20px; gap: 6px; }
-.screen-assistant__actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 5px 10px; border: 1px solid var(--border-subtle, #e4e7ec); border-radius: 7px; background: transparent; color: inherit; font-size: 12px; }
+.screen-assistant__actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; padding: 5px 11px; border: 1px solid var(--border-subtle, #e4e7ec); border-radius: 9px; background: transparent; color: inherit; font-size: 12px; transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease; }
 .screen-assistant__actions button:hover:not(:disabled), .screen-assistant__tools button:hover { background: var(--surface-hover, #f0f3f8); }
+.screen-assistant__actions button[data-active="true"] { border-color: rgb(66 118 223 / .38); color: var(--accent-primary, #2f67cf); background: rgb(66 118 223 / .08); }
 .screen-assistant button:disabled { opacity: .45; cursor: default; }
 .screen-assistant button:focus-visible, .screen-assistant summary:focus-visible { outline: 2px solid #4276df; outline-offset: 2px; }
 .screen-assistant__conversation { flex: 1; min-height: 0; display: grid; }
@@ -22,4 +24,11 @@
 .screen-assistant__notice, .screen-assistant__error, .screen-assistant__loading { margin: 0; padding: 10px 20px; font-size: 13px; }
 .screen-assistant__notice { color: var(--text-secondary, #526174); }
 .screen-assistant__error { border-top: 1px solid var(--border-subtle, #e4e7ec); color: var(--status-error, #b42318); }
+.screen-assistant__error button { min-height: 40px; margin: 0 20px 12px; padding: 6px 11px; border: 1px solid currentColor; border-radius: 8px; color: inherit; background: transparent; }
 @media (max-height: 650px) { .screen-assistant__source img { max-height: 80px; } }
+@media (max-width: 520px) {
+  .screen-assistant__header { padding-inline: 14px; }
+  .screen-assistant__source, .screen-assistant__actions { padding-inline: 14px; }
+  .screen-assistant__actions button { flex: 1 1 calc(50% - 6px); }
+}
+@media (prefers-reduced-motion: reduce) { .screen-assistant__actions button { transition: none; } }

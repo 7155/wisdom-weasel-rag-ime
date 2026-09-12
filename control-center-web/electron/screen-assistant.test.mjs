@@ -37,7 +37,11 @@ test('popup owns its capture, opens the exact Session, and drops pixels on close
   const h = harness();
   assert.equal(await h.manager.startCapture('com.example.Editor'), true);
   const window = h.created[0]; const event = { sender: window.webContents };
-  assert.equal(window.url, 'http://127.0.0.1:7777/screen-assistant?frontend=paw-os&pawHost=electron');
+  assert.equal(window.url, 'http://127.0.0.1:7777/agent-capsule?frontend=paw-os&pawHost=electron&surface=capture');
+  assert.equal(window.options.title, 'Agent Capsule · 选区对话');
+  assert.equal(window.options.alwaysOnTop, true);
+  assert.equal(window.options.visibleOnAllWorkspaces, true);
+  assert.equal(window.options.skipTaskbar, true);
   assert.equal(h.handlers.get('paw-screen:context')(event), h.capture);
   assert.throws(() => h.handlers.get('paw-screen:context')({ sender: { id: 999 } }), /rejected/);
   h.handlers.get('paw-screen:open-session')(event, 'session-screen');

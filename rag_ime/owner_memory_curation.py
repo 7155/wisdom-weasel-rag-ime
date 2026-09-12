@@ -1447,6 +1447,11 @@ class OwnerMemoryCurator:
                 row is not None
                 and str(row["status"]) == "running"
                 and current_ms - int(row["updated_at_ms"] or 0) < self.running_lease_ms
+                # A manual Gateway retry is the recovery boundary after a
+                # failed/expired maintenance job.  The Gateway admits only
+                # one active job at a time, so a cursor that already carries
+                # failures cannot belong to a live competing run here.
+                and not (manual and int(row["consecutive_failures"] or 0) > 0)
             ):
                 conn.commit()
                 return {"claimed": False, "reason": "already_running"}

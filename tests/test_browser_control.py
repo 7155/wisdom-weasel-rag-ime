@@ -208,6 +208,52 @@ class BrowserControlServiceTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         start_managed.assert_called_once_with()
 
+    def test_error_page_result_is_terminal_and_the_same_tab_can_retry(self) -> None:
+        error_page = {
+            "ok": False,
+            "url": "chrome-error://chromewebdata/",
+            "tabId": self.runtime.tab_id,
+            "markdown": "# This site cannot be reached",
+            "summary": "页面加载失败：net::ERR_CONNECTION_REFUSED",
+            "failureReason": "browser_navigation_failed",
+        }
+        with mock.patch.object(self.runtime, "execute", return_value=error_page):
+            result = self.service.submit_command(
+                "navigate", {"url": "http://127.0.0.1:4173/"},
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("ERR_CONNECTION_REFUSED", result["summary"])
+        trace = self.service.traces()["items"][0]
+        self.assertEqual(trace["status"], "failed")
+        self.assertIsNotNone(trace["completedAtMs"])
+        self.assertEqual(trace["result"]["url"], error_page["url"])
+        self.assertFalse(self.service.latest_snapshot(tab_id=self.runtime.tab_id)["ok"])
+
+        retried = self.service.submit_command(
+            "navigate", {"tabId": self.runtime.tab_id, "url": "http://127.0.0.1:4173/"},
+        )
+        self.assertTrue(retried["ok"])
+
+    def test_live_error_snapshot_does_not_raise_a_navigation_parameter_error(self) -> None:
+        with mock.patch.object(self.runtime, "execute", return_value={
+            "ok": False,
+            "url": "chrome-error://chromewebdata/",
+            "tabId": self.runtime.tab_id,
+            "markdown": "# This site cannot be reached",
+            "summary": "页面加载失败，请检查目标服务后重试",
+        }):
+            result = self.service.latest_snapshot(tab_id=self.runtime.tab_id)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["url"], "chrome-error://chromewebdata/")
+        self.assertIn("页面加载失败", result["summary"])
+
+    def test_observed_error_page_does_not_expand_navigation_schemes(self) -> None:
+        for url in ("chrome-error://chromewebdata/", "file:///tmp/private", "javascript:alert(1)"):
+            with self.subTest(url=url), self.assertRaises(BrowserControlError):
+                self.service.submit_command("navigate", {"url": url})
+
     def test_screenshot_is_stored_behind_bounded_binary_route(self) -> None:
         result = self.service.submit_command(
             "screenshot",

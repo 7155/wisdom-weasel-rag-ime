@@ -8391,6 +8391,11 @@ def _legal_source_event_ids(source_bundle: dict[str, object] | None) -> list[int
                 result.append(event_id)
     for collection_name in (
         "existingMemoryBooks",
+        # Owner curation receives a complete identity index separately from
+        # the bounded related-book body.  Topic projection intentionally keeps
+        # historical source lineage from that index, so those immutable
+        # evidence references must be legal during plan inspection as well.
+        "existingMemoryBookIndex",
         "existingMemoryAtoms",
         "existingSemanticGroups",
         "existingSemanticTags",

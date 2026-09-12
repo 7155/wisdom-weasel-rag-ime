@@ -51,3 +51,10 @@
 .lab-knowledge-history li { display: grid; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--lab-line); font-size: 12px; line-height: 1.6; }
 .lab-knowledge-history small { color: var(--lab-muted); overflow-wrap: anywhere; }
 @container lab-project (max-width: 620px) { .lab-knowledge { padding: 20px 16px 32px; } .lab-knowledge > header { gap: 10px; } .lab-knowledge h2 { font-size: 19px; } .lab-knowledge-fields { grid-template-columns: minmax(0, 1fr); } .lab-knowledge-search { flex-wrap: wrap; } .lab-knowledge-search label { flex-basis: 100%; } }
+.lab-knowledge-mode-choice { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin: 1rem 0; }
+.lab-knowledge-mode-choice label { display: grid; grid-template-columns: auto 1fr; gap: .3rem .55rem; padding: 1rem; border: 1px solid var(--border-subtle, #d9e0ea); border-radius: .7rem; cursor: pointer; }
+.lab-knowledge-mode-choice label.is-selected { border-color: #315efb; background: color-mix(in srgb, #315efb 6%, #fff); }
+.lab-knowledge-mode-choice input { grid-row: span 2; margin-top: .2rem; }
+.lab-knowledge-mode-choice span { grid-column: 2; color: var(--text-muted, #667085); font-size: .82rem; line-height: 1.45; }
+.lab-knowledge-agent-dataset { padding: 1rem; border: 1px dashed var(--border-subtle, #d9e0ea); border-radius: .7rem; }
+@media (max-width: 680px) { .lab-knowledge-mode-choice { grid-template-columns: 1fr; } }

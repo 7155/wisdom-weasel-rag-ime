@@ -14,6 +14,7 @@ function iconFor(appId: PawOsAppId): PawOsAppIconComponent {
 export const pawOsAppIcons: Record<PawOsAppId, PawOsAppIconComponent> = {
   'project-workbench': iconFor('project-workbench'),
   agent: iconFor('agent'),
+  'agent-capsule': iconFor('agent-capsule'),
   memory: iconFor('memory'),
   knowledge: iconFor('knowledge'),
   'input-studio': iconFor('input-studio'),

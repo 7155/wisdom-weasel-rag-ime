@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+from io import BytesIO
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.paw_browser_runtime import PawBrowserRuntime
 
@@ -161,6 +163,27 @@ class PawBrowserRuntimeTests(unittest.TestCase):
             any(kind == "json" and "/json/new" in str(params) for kind, _method, params in self.calls)
         )
 
+    def test_navigation_preserves_chromium_network_failure(self) -> None:
+        with patch.object(self.runtime, "_cdp_request", return_value={
+            "frameId": "FRAME", "errorText": "net::ERR_CONNECTION_REFUSED",
+        }), patch.object(self.runtime, "_snapshot") as snapshot:
+            result = self.runtime.execute(9222, "navigate", {"url": "http://127.0.0.1:4173/"})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["failureReason"], "browser_navigation_failed")
+        self.assertIn("ERR_CONNECTION_REFUSED", result["summary"])
+        self.assertIn("workspace_job", result["recoveryHint"])
+        snapshot.assert_not_called()
+
+    def test_reading_chromium_error_page_reports_page_failure_with_diagnostics(self) -> None:
+        with patch.object(self.runtime, "_snapshot", return_value={
+            "url": "chrome-error://chromewebdata/",
+            "title": "", "markdown": "# This site cannot be reached",
+        }):
+            result = self.runtime.execute(9222, "read_page", {})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["failureReason"], "browser_page_load_failed")
+        self.assertIn("This site cannot be reached", result["markdown"])
+
     def test_screenshot_returns_a_bounded_data_url_and_structured_page(self) -> None:
         result = self.runtime.execute(
             9222,
@@ -183,6 +206,12 @@ class PawBrowserRuntimeTests(unittest.TestCase):
         self.assertEqual(result["url"], "about:blank")
         self.assertIn("Page.navigate", [method for kind, method, _params in self.calls if kind == "cdp"])
         self.assertFalse(any(kind == "json" and "/json/close/" in str(params) for kind, _method, params in self.calls))
+
+    def test_devtools_close_accepts_its_plain_text_success_receipt(self) -> None:
+        with patch("rag_ime.paw_browser_runtime.urlopen", return_value=BytesIO(b"Target is closing")):
+            self.assertEqual(self.runtime._default_json_request(
+                "GET", "http://127.0.0.1:9222/json/close/TEST",
+            ), {})
 
     def _json_request(self, method: str, url: str) -> object:
         self.calls.append(("json", method, url))

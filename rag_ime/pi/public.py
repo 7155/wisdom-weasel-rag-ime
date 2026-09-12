@@ -1113,12 +1113,12 @@ def runtime_tool_result_is_error(
     *,
     reported_is_error: bool = False,
 ) -> bool:
-    """Return the authoritative terminal error state for a coding Tool.
+    """Return the authoritative terminal error state for a managed Tool.
 
     Pi marks a Tool invocation as failed when its implementation raises. The
     PAW backend command bridge instead returns a normal ToolResult containing
     the durable workspace receipt, including ``exitCode`` and ``timedOut``.
-    For command aliases only, that structured receipt is therefore more
+    For command aliases and Browser, that structured receipt is therefore more
     authoritative than Pi's transport-level ``isError`` bit. Output text is
     deliberately ignored: tests and programs may print words such as
     ``FAILED`` while still exiting successfully.
@@ -1126,14 +1126,19 @@ def runtime_tool_result_is_error(
 
     if reported_is_error:
         return True
-    if str(tool_name or "").strip().lower() not in {
+    normalized_tool = str(tool_name or "").strip().lower()
+    root = as_mapping(raw_result)
+    details = as_mapping(root.get("details"))
+    if normalized_tool == "browser":
+        # Inspect only the Tool's own receipt. Page text and historical entries
+        # returned by browser.trace must never change this invocation's status.
+        return any(receipt.get("ok") is False for receipt in (details, root))
+    if normalized_tool not in {
         "bash",
         "workspace_shell",
     }:
         return False
 
-    root = as_mapping(raw_result)
-    details = as_mapping(root.get("details"))
     approval = as_mapping(details.get("approval"))
     candidates = (
         as_mapping(details.get("receipt")),

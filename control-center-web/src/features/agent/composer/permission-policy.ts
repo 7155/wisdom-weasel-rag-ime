@@ -17,8 +17,8 @@ export type PermissionPreset = AgentPermissionSelection & {
 export const PERMISSION_PRESETS: PermissionPreset[] = [
   {
     id: 'readonly',
-    label: '只读',
-    description: '只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止',
+    label: '只读（沙箱）',
+    description: 'macOS 沙箱内只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止',
     mode: 'coordinator',
     toolProfileVersion: 'subagent-readonly-v1',
     executionMode: 'read_only',
@@ -35,8 +35,8 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
   },
   {
     id: 'managed',
-    label: '工作区托管',
-    description: '批准所选项目范围；范围内自动执行，越界继续请求确认',
+    label: '工作区托管（沙箱）',
+    description: 'macOS 沙箱仅开放已批准的项目范围；范围内自动执行，越界继续请求确认',
     mode: 'coordinator',
     toolProfileVersion: 'control-center-v1',
     executionMode: 'workspace_managed',
@@ -63,16 +63,16 @@ const LEGACY_PERMISSION_PRESETS: PermissionPreset[] = [
   },
   {
     id: 'readonly',
-    label: '只读',
-    description: '只读自动；隔离无网络的只读验证命令可运行，写入与应用动作阻止',
+    label: '只读（沙箱）',
+    description: '只读沙箱自动运行；隔离无网络的只读验证命令可运行，写入与应用动作阻止',
     mode: 'assistant',
     toolProfileVersion: 'subagent-readonly-v1',
     executionMode: 'read_only',
   },
   {
     id: 'managed',
-    label: '工作区托管',
-    description: '启动时批准范围，范围内自动，越界再问',
+    label: '工作区托管（沙箱）',
+    description: '工作区沙箱启动时批准范围，范围内自动，越界再问',
     mode: 'coordinator',
     toolProfileVersion: 'control-center-v1',
     executionMode: 'workspace_managed',

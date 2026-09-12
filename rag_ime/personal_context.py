@@ -26,6 +26,7 @@ from .knowledge_scope import (
 )
 from .sensitive_content import (
     contains_sensitive_content,
+    is_redacted_or_sensitive,
     is_sensitive_mapping_key,
     redact_sensitive_text,
 )
@@ -231,7 +232,7 @@ def load_activity_timeline_context(
         text = compact_whitespace(str(event["committed_text"] or ""))
         if not text:
             continue
-        if _contains_sensitive_content(text):
+        if is_redacted_or_sensitive(text):
             redacted += 1
             continue
         app = _bounded_text(event["app"], 240) or "unknown-app"
@@ -426,6 +427,22 @@ class AgentMemoryEvidenceStore:
         if kind not in EVIDENCE_SOURCE_KINDS:
             raise ValueError(f"unsupported evidence source kind: {kind}")
         source = _required_text(source_id, "source_id", 320)
+        from .memory_lifecycle.privacy import assess_capture
+
+        decision = assess_capture(
+            source=kind,
+            text=text,
+            metadata={"metadata": dict(metadata or {}), "provenance": dict(provenance or {})},
+        )
+        if not decision.allowed:
+            return {
+                "schemaVersion": "rag-ime.agent-memory-evidence-write.v1",
+                "ok": True, "stored": False, "status": "skipped_privacy",
+                "reason": decision.reason,
+            }
+        text = decision.text
+        metadata = decision.metadata["metadata"]
+        provenance = decision.metadata["provenance"]
         canonical = compact_whitespace(text)
         if not canonical:
             raise ValueError("evidence text must not be empty")
@@ -467,6 +484,14 @@ class AgentMemoryEvidenceStore:
         metadata_json = _json_object_text(safe_metadata, "metadata")
 
         with self._connect(immediate=True) as conn:
+            from .memory_lifecycle.common import excluded
+
+            if excluded(conn, project=self.project, session_id=session, source_id=source):
+                return {
+                    "schemaVersion": "rag-ime.agent-memory-evidence-write.v1",
+                    "ok": True, "stored": False, "status": "skipped_privacy",
+                    "reason": "capture_scope_excluded",
+                }
             scope_columns = {
                 "owner_kind": "user", "owner_id": "default",
                 "knowledge_domain": "legacy", "scope_kind": "legacy", "scope_id": "",

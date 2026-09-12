@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-10T10:35:01.744141+00:00",
+  "generatedAt": "2026-09-12T09:35:54.363928+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -15,11 +15,11 @@
   "groups": {
     "brand_stellar": {
       "description": "User-selected branding and bounded stellar visual behavior.",
-      "pathCount": 39
+      "pathCount": 55
     },
     "composition_refactor": {
       "description": "Typed application dependencies and construction using existing Runtime and store owners.",
-      "pathCount": 8
+      "pathCount": 31
     },
     "lab_backend": {
       "description": "Agent Lab package, resource resolution and service consumers.",
@@ -51,7 +51,7 @@
     },
     "public_showcase": {
       "description": "Public synthetic-data screenshots and usage documentation.",
-      "pathCount": 20
+      "pathCount": 21
     },
     "react_os_docs": {
       "description": "Current React OS naming, architecture and development entrypoints.",
@@ -87,11 +87,11 @@
     },
     "trace_optimization": {
       "description": "Trace diagnosis and bounded optimization source, contracts and executable regressions.",
-      "pathCount": 60
+      "pathCount": 61
     },
     "verification": {
       "description": "Regression checks for the included product changes.",
-      "pathCount": 47
+      "pathCount": 74
     },
     "voice_desktop": {
       "description": "App naming and desktop voice integration.",
@@ -107,28 +107,48 @@
     },
     "conversation_controls": {
       "description": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery.",
-      "pathCount": 28
+      "pathCount": 46
+    },
+    "agent_capsule": {
+      "description": "Unified Agent Capsule app entry, global screen capture and same-Session recovery.",
+      "pathCount": 3
+    },
+    "memory_lifecycle": {
+      "description": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "pathCount": 12
+    },
+    "browser_recovery": {
+      "description": "Preserve Browser load errors, terminal receipts and same-tab recovery.",
+      "pathCount": 1
+    },
+    "lab_frontend": {
+      "description": "Lab workflow presentation backed by project and experiment receipts.",
+      "pathCount": 11
     }
   },
   "summary": {
-    "pathCount": 667,
+    "pathCount": 780,
     "dispositionCounts": {
       "delete_old_implementation": 185,
-      "keep_release": 482
+      "keep_release": 595
     },
     "groupCounts": {
-      "brand_stellar": 39,
-      "composition_refactor": 8,
-      "conversation_controls": 28,
+      "agent_capsule": 3,
+      "brand_stellar": 55,
+      "browser_recovery": 1,
+      "composition_refactor": 31,
+      "conversation_controls": 46,
       "lab_backend": 62,
+      "lab_frontend": 11,
       "lab_tools": 8,
       "local_docs": 122,
+      "memory_lifecycle": 12,
       "offline_installer": 12,
       "owner_boundaries": 7,
       "pi_runtime_refactor": 23,
       "portable_agent_ui": 8,
       "product_integration": 30,
-      "public_showcase": 20,
+      "public_showcase": 21,
       "react_os_docs": 3,
       "refactor_docs_examples": 9,
       "refactor_integration": 19,
@@ -138,8 +158,8 @@
       "room_frontend": 18,
       "room_service_refactor": 43,
       "session_full_access": 9,
-      "trace_optimization": 60,
-      "verification": 47,
+      "trace_optimization": 61,
+      "verification": 74,
       "voice_desktop": 17
     },
     "unclassifiedPathCount": 0,
@@ -1071,6 +1091,20 @@
       "reason": "Installed app naming and Electron voice control integration."
     },
     {
+      "path": "control-center-web/electron/screen-assistant.mjs",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/electron/screen-assistant.test.mjs",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/electron/voice-control.mjs",
       "status": "added",
       "group": "voice_desktop",
@@ -1134,11 +1168,25 @@
       "reason": "Shared Agent controls and their standalone bundle entry."
     },
     {
+      "path": "control-center-web/src/app/App.tsx",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/src/app/mount-control-center.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "owner_boundaries",
       "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "control-center-web/src/app/preview-control-transport.test.ts",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
     },
     {
       "path": "control-center-web/src/app/preview-control-transport.tsx",
@@ -1153,6 +1201,55 @@
       "disposition": "keep_release",
       "group": "owner_boundaries",
       "reason": "Product extension host assembly and module dependency checks."
+    },
+    {
+      "path": "control-center-web/src/app/route-registry.test.ts",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/app/route-registry.ts",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/app/standalone-surface.test.ts",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/app/standalone-surface.ts",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/components/layout/route-icons.ts",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/contracts/agent-reducer.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/contracts/agent-reducer.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "control-center-web/src/contracts/generated-validators.ts",
@@ -1232,11 +1329,32 @@
       "reason": "Regression checks for the included product changes."
     },
     {
+      "path": "control-center-web/src/design/workspace.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/features/agent/agent-feature.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_full_access",
       "reason": "Full Access applies unrestricted paths and direct tool execution consistently for existing and new Sessions."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/AgentComposer.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/PermissionPicker.tsx",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
     },
     {
       "path": "control-center-web/src/features/agent/composer/ToolPicker.test.tsx",
@@ -1260,7 +1378,21 @@
       "reason": "Full Access applies unrestricted paths and direct tool execution consistently for existing and new Sessions."
     },
     {
+      "path": "control-center-web/src/features/agent/composer/tool-picker.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/features/agent/composer/tool-policy.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/agent/index.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "conversation_controls",
@@ -1316,6 +1448,13 @@
       "reason": "Full Access applies unrestricted paths and direct tool execution consistently for existing and new Sessions."
     },
     {
+      "path": "control-center-web/src/features/agent/timeline/AgentTimeline.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/features/agent/timeline/chat-ui-kit/ATTRIBUTION.md",
       "status": "modified",
       "disposition": "keep_release",
@@ -1358,6 +1497,111 @@
       "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
+      "path": "control-center-web/src/features/conversation-ui/components/AssistantTurn.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/conversation-ui/components/MessageActions.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/StoryDeck.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/StoryDeck.tsx",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/eval-lab.css",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/index.tsx",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabExperimentLifecycle.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabExperimentLifecycle.tsx",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabKnowledge.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabKnowledge.tsx",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabProjectWorkbench.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabProjectWorkbench.tsx",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/api.ts",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/lab-knowledge.css",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/lab-project-workbench.css",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/src/features/eval-lab/projects/portable-agent-ui.css",
       "status": "deleted",
       "disposition": "delete_old_implementation",
@@ -1384,6 +1628,20 @@
       "disposition": "keep_release",
       "group": "portable_agent_ui",
       "reason": "Shared Agent controls and their standalone bundle entry."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/types.ts",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/views.ts",
+      "disposition": "keep_release",
+      "group": "lab_frontend",
+      "reason": "Lab workflow presentation backed by project and experiment receipts.",
+      "status": "modified"
     },
     {
       "path": "control-center-web/src/features/files/PawOsFilesApp.tsx",
@@ -1426,6 +1684,48 @@
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/features/memory/ActivityTimeline.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryCurationWorkbench.tsx",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/memory/activity-timeline.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/memory/api.ts",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-feature.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-loading.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
     },
     {
       "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.test.tsx",
@@ -1477,6 +1777,13 @@
       "reason": "Integrate current product source and public contribution guidance."
     },
     {
+      "path": "control-center-web/src/features/plugins/plugins-feature.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/src/features/rooms/composer/RoomCapabilityControls.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -1491,6 +1798,13 @@
       "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
+      "path": "control-center-web/src/features/rooms/composer/RoomComposer.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/features/rooms/composer/RoomComposer.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -1498,11 +1812,46 @@
       "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
+      "path": "control-center-web/src/features/rooms/room-presentation.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/rooms/room-presentation.tsx",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/rooms/rooms-feature.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/src/features/rooms/rooms.css",
       "status": "modified",
       "disposition": "keep_release",
       "group": "conversation_controls",
       "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/features/screen-assistant/ScreenAssistant.tsx",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "control-center-web/src/features/screen-assistant/screen-assistant.css",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
     },
     {
       "path": "control-center-web/src/features/trace-agent/diagnostic-start.test.ts",
@@ -1666,6 +2015,34 @@
       "reason": "Installed app naming and Electron voice control integration."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/PawAgentApp.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawAgentApp.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawAgentCapsuleApp.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "added"
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawAgentCapsuleApp.tsx",
+      "disposition": "keep_release",
+      "group": "agent_capsule",
+      "reason": "Unified Agent Capsule app entry, global screen capture and same-Session recovery.",
+      "status": "added"
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/PawAgentHome.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -1708,6 +2085,20 @@
       "reason": "Integrate current product source and public contribution guidance."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/PawRoomConversation.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomConversation.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/PawRoomRoundSheet.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -1734,6 +2125,20 @@
       "disposition": "keep_release",
       "group": "room_frontend",
       "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawSessionWorkspace.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawSessionWorkspace.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "conversation_controls",
+      "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
       "path": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.test.tsx",
@@ -1771,11 +2176,25 @@
       "reason": "Room partner windows, readable replies, sidebars and responsive layout."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/entries/PawAgentCapsuleAppEntry.tsx",
+      "disposition": "keep_release",
+      "group": "agent_capsule",
+      "reason": "Unified Agent Capsule app entry, global screen capture and same-Session recovery.",
+      "status": "added"
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/entries/PawTraceAgentAppEntry.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "trace_optimization",
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-agent-capsule.css",
+      "disposition": "keep_release",
+      "group": "agent_capsule",
+      "reason": "Unified Agent Capsule app entry, global screen capture and same-Session recovery.",
+      "status": "added"
     },
     {
       "path": "control-center-web/src/paw-os/apps/paw-apps-style.test.ts",
@@ -1825,6 +2244,76 @@
       "disposition": "keep_release",
       "group": "room_frontend",
       "reason": "Room partner windows, readable replies, sidebars and responsive layout."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/00.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/01.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/02.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/03.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/04.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/05.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/06.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/07.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/08.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/jupiter-frames/09.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
     },
     {
       "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/00.png",
@@ -1891,6 +2380,20 @@
     },
     {
       "path": "control-center-web/src/paw-os/assets/stellar/nebula-frames/09.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/planet-cinematic.png",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/assets/stellar/planet-cinematic.provenance.json",
       "status": "added",
       "disposition": "keep_release",
       "group": "brand_stellar",
@@ -2072,6 +2575,13 @@
       "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
+      "path": "control-center-web/src/paw-os/shell/PawDesktop.test.tsx",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
       "path": "control-center-web/src/paw-os/shell/PawDesktop.tsx",
       "disposition": "keep_release",
       "group": "brand_stellar",
@@ -2081,6 +2591,13 @@
     {
       "path": "control-center-web/src/paw-os/shell/PawStellarBackdrop.tsx",
       "status": "modified",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawStellarPlanet.tsx",
+      "status": "added",
       "disposition": "keep_release",
       "group": "brand_stellar",
       "reason": "User-selected branding and bounded stellar visual behavior."
@@ -2121,6 +2638,27 @@
       "reason": "User-selected branding and bounded stellar visual behavior."
     },
     {
+      "path": "control-center-web/src/paw-os/shell/stellar-planet-material.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/stellar-planet-renderer.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/stellar-planet-renderer.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "brand_stellar",
+      "reason": "User-selected branding and bounded stellar visual behavior."
+    },
+    {
       "path": "control-center-web/src/paw-os/shell/stellar-stop-motion.test.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -2140,6 +2678,13 @@
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-app-palette.test.ts",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
     },
     {
       "path": "control-center-web/src/paw-os/styles/paw-os-room-focus.css",
@@ -2168,6 +2713,13 @@
       "disposition": "keep_release",
       "group": "product_integration",
       "reason": "Integrate current product source and public contribution guidance."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os.css",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
     },
     {
       "path": "control-center-web/src/platform/http-transport.test.ts",
@@ -2471,11 +3023,32 @@
       "reason": "Relocate to control-center-web/docs/references/packages/paw-agent-chat-ui-kit-source.zip without retaining a duplicate implementation."
     },
     {
+      "path": "pelican-bike.html",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "public_showcase",
+      "reason": "Public synthetic-data screenshots and usage documentation."
+    },
+    {
       "path": "pyproject.toml",
       "status": "modified",
       "disposition": "keep_release",
       "group": "refactor_integration",
       "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor."
+    },
+    {
+      "path": "rag_ime/activity_timeline.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "rag_ime/activity_timeline_curation.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
     },
     {
       "path": "rag_ime/agent_approval_application.py",
@@ -2975,6 +3548,13 @@
       "reason": "Relocate to rag_ime/agent_lab/trials.py without retaining a duplicate implementation."
     },
     {
+      "path": "rag_ime/agent_memory_sources.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
       "path": "rag_ime/agent_prompt_application.py",
       "status": "modified",
       "group": "composition_refactor",
@@ -3255,6 +3835,13 @@
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     },
     {
+      "path": "rag_ime/control_api/dispatch.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "added"
+    },
+    {
       "path": "rag_ime/control_api/lab_errors.py",
       "status": "added",
       "disposition": "keep_release",
@@ -3290,6 +3877,13 @@
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
     },
     {
+      "path": "rag_ime/db/migrations/0201_memory_lifecycle.sql",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
       "path": "rag_ime/debug_server.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3302,6 +3896,13 @@
       "disposition": "keep_release",
       "group": "lab_backend",
       "reason": "Agent Lab package, resource resolution and service consumers."
+    },
+    {
+      "path": "rag_ime/local_sqlite_core.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
     },
     {
       "path": "rag_ime/macos_uninstall.py",
@@ -3318,6 +3919,90 @@
       "disposition": "keep_release"
     },
     {
+      "path": "rag_ime/memory_book_compiler.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/README.md",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/__init__.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/__main__.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/cli.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/common.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/daily.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/forget.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/ingress.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/portability.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/privacy.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
+      "path": "rag_ime/memory_lifecycle/refresh.py",
+      "disposition": "keep_release",
+      "group": "memory_lifecycle",
+      "reason": "Canonical Memory import/export, ingress privacy, daily reports and owner-scoped resumable refresh.",
+      "status": "added"
+    },
+    {
       "path": "rag_ime/memory_model_executor.py",
       "status": "modified",
       "group": "refactor_integration",
@@ -3330,6 +4015,34 @@
       "group": "refactor_integration",
       "reason": "Current imports, packaging inputs, Runtime source fingerprints and supported Python installation floor.",
       "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/owner_memory_curation.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "rag_ime/owner_memory_maintenance.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
+      "path": "rag_ime/paw_browser_runtime.py",
+      "disposition": "keep_release",
+      "group": "browser_recovery",
+      "reason": "Preserve Browser load errors, terminal receipts and same-tab recovery.",
+      "status": "modified"
+    },
+    {
+      "path": "rag_ime/personal_context.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
     },
     {
       "path": "rag_ime/pi/README.md",
@@ -3647,6 +4360,13 @@
       "disposition": "keep_release"
     },
     {
+      "path": "rag_ime/sensitive_content.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
+    },
+    {
       "path": "rag_ime/trace_diagnostics.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -3680,6 +4400,13 @@
       "disposition": "keep_release",
       "group": "trace_optimization",
       "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions."
+    },
+    {
+      "path": "rag_ime/trace_optimization_lifecycle.py",
+      "disposition": "keep_release",
+      "group": "trace_optimization",
+      "reason": "Trace diagnosis and bounded optimization source, contracts and executable regressions.",
+      "status": "added"
     },
     {
       "path": "rag_ime/trace_optimization_pi.py",
@@ -3813,6 +4540,13 @@
       "disposition": "keep_release",
       "group": "refactor_verification",
       "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
+    },
+    {
+      "path": "scripts/check_pawos_frontend_source_map.py",
+      "disposition": "keep_release",
+      "group": "composition_refactor",
+      "reason": "Typed application dependencies and construction using existing Runtime and store owners.",
+      "status": "modified"
     },
     {
       "path": "scripts/check_project_harness.py",
@@ -4025,6 +4759,13 @@
       "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
+      "path": "tests/memory_lifecycle_fixture.sql",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "added"
+    },
+    {
       "path": "tests/test_agent_app_owned_sessions.py",
       "status": "modified",
       "group": "refactor_verification",
@@ -4100,6 +4841,13 @@
       "disposition": "keep_release",
       "group": "session_full_access",
       "reason": "Full Access applies unrestricted paths and direct tool execution consistently for existing and new Sessions."
+    },
+    {
+      "path": "tests/test_agent_governed_memory_tools.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
     },
     {
       "path": "tests/test_agent_lab_app_paw_gateway.py",
@@ -4494,6 +5242,13 @@
       "reason": "Explicit collaboration layout, persistent background resource observers, opt-in memory, Session resource controls, and actionable model account recovery."
     },
     {
+      "path": "tests/test_browser_failure_projection.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "added"
+    },
+    {
       "path": "tests/test_build_agent_lab_cost_receipt_from_runtime_db.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -4529,6 +5284,13 @@
       "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
     },
     {
+      "path": "tests/test_control_api_route_policy.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
       "path": "tests/test_control_center_cutover.py",
       "status": "modified",
       "group": "voice_desktop",
@@ -4540,6 +5302,13 @@
       "group": "verification",
       "disposition": "keep_release",
       "reason": "Regression checks for included source changes.",
+      "status": "modified"
+    },
+    {
+      "path": "tests/test_debug_management_api.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
       "status": "modified"
     },
     {
@@ -4620,11 +5389,32 @@
       "disposition": "keep_release"
     },
     {
+      "path": "tests/test_memory_book_compiler.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
       "path": "tests/test_memory_consumer_acceptance.py",
       "status": "modified",
       "group": "refactor_verification",
       "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
       "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_memory_lifecycle.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "added"
+    },
+    {
+      "path": "tests/test_memory_lifecycle_integration.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "added"
     },
     {
       "path": "tests/test_memory_model_executor.py",
@@ -4639,6 +5429,20 @@
       "disposition": "keep_release",
       "group": "refactor_verification",
       "reason": "Regression and architecture checks for the Runtime and application dependency refactoring."
+    },
+    {
+      "path": "tests/test_owner_memory_maintenance.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
+    },
+    {
+      "path": "tests/test_paw_browser_runtime.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
     },
     {
       "path": "tests/test_pawos_frontend_source_map.py",
@@ -4758,6 +5562,13 @@
       "group": "refactor_verification",
       "reason": "Regression and architecture checks for the Runtime and application dependency refactoring.",
       "disposition": "keep_release"
+    },
+    {
+      "path": "tests/test_route_table_dispatch.py",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Regression checks for the included product changes.",
+      "status": "modified"
     },
     {
       "path": "tests/test_run_cloudops_agent_eval.py",

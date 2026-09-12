@@ -999,7 +999,7 @@ describe('PAWOS Room collaboration tools', () => {
       'aria-disabled',
       'true',
     );
-    await user.click(within(listbox).getByRole('option', { name: '只读' }));
+    await user.click(within(listbox).getByRole('option', { name: '只读（沙箱）' }));
 
     expect(governance).toHaveTextContent('未继承，直接配置');
     await user.click(within(governance).getByRole('button', { name: '保存' }));

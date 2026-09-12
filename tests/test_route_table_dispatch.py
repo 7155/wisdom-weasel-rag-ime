@@ -219,6 +219,37 @@ class _Recorder:
         return {"ok": True}
 
 
+class DescriptorDispatcherModuleTests(unittest.TestCase):
+    """The deep dispatch module can be exercised without an HTTP server."""
+
+    def test_dispatch_returns_declared_status_and_payload(self) -> None:
+        from rag_ime.control_api.dispatch import DescriptorRouteDispatcher
+        from rag_ime.control_api.route_table import RouteDescriptor
+
+        class _Reader:
+            def read(self, payload: dict[str, object]) -> dict[str, object]:
+                return {"ok": True, "query": payload}
+
+        class _Service:
+            reader = _Reader()
+
+        route = RouteDescriptor(
+            method="GET",
+            path="/api/test/read",
+            handler="reader.read",
+            query_args=("q",),
+            takes_arguments=True,
+            status=202,
+        )
+        result = DescriptorRouteDispatcher(
+            _Service(),
+            query_first=lambda query, name: (query.get(name) or [""])[0],
+        ).dispatch(route, query={"q": ["locality"]})
+
+        self.assertEqual(result.status, 202)
+        self.assertEqual(result.payload, {"ok": True, "query": {"q": "locality"}})
+
+
 class PostDescriptorPassThroughTests(unittest.TestCase):
     """Every straight POST descriptor must hand its payload through unchanged.
 

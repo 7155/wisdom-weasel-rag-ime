@@ -3,6 +3,7 @@ import { routeRegistry, type RouteId } from '@/app/route-registry';
 export type PawOsAppId =
   | 'project-workbench'
   | 'agent'
+  | 'agent-capsule'
   | 'memory'
   | 'knowledge'
   | 'input-studio'
@@ -61,6 +62,16 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     presentation: 'conversation',
     accent: 'violet',
     tagline: '对话、上下文与多 Agent 协作',
+  },
+  {
+    id: 'agent-capsule',
+    label: 'Agent Capsule',
+    shortLabel: '胶囊',
+    routeIds: ['agent-capsule'],
+    defaultRouteId: 'agent-capsule',
+    presentation: 'conversation',
+    accent: 'violet',
+    tagline: '任何界面框选、识别与对话',
   },
   {
     id: 'memory',
@@ -184,6 +195,20 @@ export const primaryDockAppIds: readonly PawOsAppId[] = [
   'files',
   'browser',
   'terminal',
+];
+
+/**
+ * The six product entry points used when presenting the PAWOS core workflow.
+ * System utilities and optional tools remain registered and launchable, but
+ * are intentionally not counted as core product Apps.
+ */
+export const coreAppIds: readonly PawOsAppId[] = [
+  'agent',
+  'eval-lab',
+  'project-workbench',
+  'memory',
+  'knowledge',
+  'input-studio',
 ];
 
 const appById = new Map(pawOsAppRegistry.map((app) => [app.id, app]));

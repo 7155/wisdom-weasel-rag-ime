@@ -43,6 +43,7 @@ export const memoryQueryKeys = {
   curationStatus: () => [...memoryQueryKeys.root, 'curation-status'] as const,
   curationRun: (runId: string) => [...memoryQueryKeys.root, 'curation-run', runId] as const,
   curationJob: (jobId: string) => [...memoryQueryKeys.root, 'curation-job', jobId] as const,
+  lifecycleStatus: (project: string) => [...memoryQueryKeys.root, 'lifecycle-status', project] as const,
   capabilities: () => [...memoryQueryKeys.root, 'capabilities'] as const,
   activityTimeline: (date: string) => [...memoryQueryKeys.root, 'activity-timeline', date] as const,
   activityTimelineCalendar: (month: string) => [...memoryQueryKeys.root, 'activity-timeline-calendar', month] as const,
@@ -60,6 +61,29 @@ export const memoryQueryKeys = {
     referenceId,
   ] as const,
 };
+
+export function useMemoryLifecycleQueries(enabled: boolean, project = '') {
+  const transport = useControlTransport();
+  const queryClient = useQueryClient();
+  const status = useQuery({
+    enabled,
+    queryKey: memoryQueryKeys.lifecycleStatus(project),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'memory.lifecycle.status',
+      query: project ? { project } : {},
+      signal,
+    }),
+    refetchInterval: enabled ? 15_000 : false,
+  });
+  const refresh = useMutation({
+    mutationFn: (input: { operation: 'daily_report' | 'retrieval_projection'; date?: string; timezone?: string }) => transport.request({
+      pathId: 'memory.lifecycle.refresh',
+      body: { operation: input.operation, project, date: input.date ?? '', timezone: input.timezone ?? 'UTC' },
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: memoryQueryKeys.lifecycleStatus(project) }),
+  });
+  return { status, refresh };
+}
 
 export const memoryBookArchivePathIds = {
   preview: 'memory.book.archive.preview',
@@ -551,9 +575,12 @@ function memoryMaintenanceStatusPlaceholder(value: unknown): Record<string, unkn
     pendingSourceCount: pending,
     needsReviewSourceCount: needsReview,
     scopes: Array.isArray(summaryOwner.scopes) ? summaryOwner.scopes : [],
-    backlog: Object.keys(summaryBacklog).length > 0
-      ? summaryBacklog
-      : { pendingSourceCount: pending, pendingDayCount: 0, days: [], applications: [] },
+    backlog: {
+      ...(Object.keys(summaryBacklog).length > 0
+        ? summaryBacklog
+        : { pendingSourceCount: pending, pendingDayCount: 0, days: [], applications: [] }),
+      facetsReady: false,
+    },
   };
 
   // Disable actions until the real report arrives. The placeholder is only a

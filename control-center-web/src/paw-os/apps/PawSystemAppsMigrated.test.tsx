@@ -410,8 +410,8 @@ describe('PawSystemAppsMigrated', () => {
   });
 
   it.each([
-    ['read_only', '只读'],
-    ['workspace_managed', '工作区托管'],
+    ['read_only', '只读（沙箱）'],
+    ['workspace_managed', '工作区托管（沙箱）'],
   ] as const)('shows the saved %s Agent default without relabeling it as Full Access', async (executionMode, label) => {
     const transport = baseTransport({
       'configuration.settings': agentPreferenceSettings(executionMode),

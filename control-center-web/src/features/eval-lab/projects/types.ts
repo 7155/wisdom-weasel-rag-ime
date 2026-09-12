@@ -23,10 +23,28 @@ export type LabBinding = {
   bindingId: string; adapterId: string; materialSetId: string; briefVersion: number;
   artifactId: string; artifactRevision: number; ownerRef: { kind: string; id: string };
   summary: string; createdAtMs: number; input: Record<string, JsonValue>;
+  execution?: LabBindingExecution;
+};
+export type LabBindingExecution = {
+  status: 'not_started' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unavailable';
+  label: string; reason: string; canContinue: boolean;
+  latestJob: { jobId: string; kind: string; state: string; progress?: string; decision?: string } | null;
+};
+export type LabProjectWorkStatus = 'draft' | 'blocked' | 'needs_binding' | 'history_only' | 'ready' | 'active';
+export type LabProjectWorkState = { status: LabProjectWorkStatus; label: string; reason: string };
+export type LabProjectNextAction = {
+  kind: 'add_materials' | 'fix_materials' | 'prepare_rerun' | 'bind_execution' | 'start_validation' | 'review_latest';
+  label: string; reason: string;
+};
+export type LabProjectRerunReadiness = { status: 'ready' | 'not_ready'; reason: string; missing: string[] };
+export type LabProjectLatestRecord = {
+  kind: 'artifact' | 'history'; status: 'available' | 'historical'; title: string; updatedAtMs: number; artifactId: string;
 };
 export type LabProjectSummary = {
   projectId: string; revision: number; title: string; materialCount: number; artifactCount: number;
   guideSessionId: string; createdAtMs: number; updatedAtMs: number;
+  workState?: LabProjectWorkState; nextAction?: LabProjectNextAction;
+  rerunReadiness?: LabProjectRerunReadiness; latestRecord?: LabProjectLatestRecord | null;
   historyOrigin?: { sceneId: string; sourceHash: string; experimentCount: number; importedAtMs: number; snapshotArtifactId: string; snapshotArtifactRevision: number };
 };
 export type LabProject = LabProjectSummary & {
@@ -58,6 +76,28 @@ const natural = (value: unknown): value is number => Number.isSafeInteger(value)
 const texts = (value: unknown): value is string[] => Array.isArray(value) && value.every(text);
 const views: ArtifactView[] = ['markdown', 'table', 'form', 'code', 'html', 'json'];
 const fields = ['text', 'long_text', 'number', 'boolean', 'select', 'multiselect'];
+const workStatuses: LabProjectWorkStatus[] = ['draft', 'blocked', 'needs_binding', 'history_only', 'ready', 'active'];
+const actionKinds: LabProjectNextAction['kind'][] = ['add_materials', 'fix_materials', 'prepare_rerun', 'bind_execution', 'start_validation', 'review_latest'];
+const isWorkState = (value: unknown): value is LabProjectWorkState => {
+  const item = object(value); return workStatuses.includes(item.status as LabProjectWorkStatus) && text(item.label) && text(item.reason);
+};
+const isNextAction = (value: unknown): value is LabProjectNextAction => {
+  const item = object(value); return actionKinds.includes(item.kind as LabProjectNextAction['kind']) && text(item.label) && text(item.reason);
+};
+const isRerunReadiness = (value: unknown): value is LabProjectRerunReadiness => {
+  const item = object(value); return ['ready', 'not_ready'].includes(String(item.status)) && text(item.reason) && texts(item.missing);
+};
+const isLatestRecord = (value: unknown): value is LabProjectLatestRecord => {
+  const item = object(value); return ['artifact', 'history'].includes(String(item.kind)) && ['available', 'historical'].includes(String(item.status))
+    && text(item.title) && natural(item.updatedAtMs) && text(item.artifactId);
+};
+const isBindingExecution = (value: unknown): value is LabBindingExecution => {
+  const item = object(value); const latest = item.latestJob === null ? null : object(item.latestJob);
+  return ['not_started', 'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted', 'unavailable'].includes(String(item.status))
+    && text(item.label) && text(item.reason) && typeof item.canContinue === 'boolean'
+    && (latest === null || (text(latest.jobId) && text(latest.kind) && text(latest.state)
+      && (latest.progress === undefined || text(latest.progress)) && (latest.decision === undefined || text(latest.decision))));
+};
 
 export function isArtifactSummary(value: unknown): value is ArtifactSummary {
   const item = object(value);
@@ -84,7 +124,11 @@ export function isArtifact(value: unknown): value is LabArtifact {
 export function isProjectSummary(value: unknown): value is LabProjectSummary {
   const item = object(value);
   return text(item.projectId) && !!item.projectId && natural(item.revision) && item.revision > 0 && text(item.title)
-    && natural(item.materialCount) && natural(item.artifactCount) && text(item.guideSessionId) && natural(item.createdAtMs) && natural(item.updatedAtMs);
+    && natural(item.materialCount) && natural(item.artifactCount) && text(item.guideSessionId) && natural(item.createdAtMs) && natural(item.updatedAtMs)
+    && (item.workState === undefined || isWorkState(item.workState))
+    && (item.nextAction === undefined || isNextAction(item.nextAction))
+    && (item.rerunReadiness === undefined || isRerunReadiness(item.rerunReadiness))
+    && (item.latestRecord === undefined || item.latestRecord === null || isLatestRecord(item.latestRecord));
 }
 export function isProject(value: unknown): value is LabProject {
   const item = object(value); const materialSet = object(item.materialSet); const intake = object(item.intake); const workspace = object(item.workspace);
@@ -92,7 +136,8 @@ export function isProject(value: unknown): value is LabProject {
     && natural(item.briefVersion) && text(item.materialSetId) && text(materialSet.materialSetId) && natural(materialSet.version)
     && Array.isArray(materialSet.materials) && materialSet.materials.every((raw) => { const source = object(raw); return ['sourceId', 'title', 'text', 'uri', 'kind'].every((key) => text(source[key])) && natural(source.byteSize); })
     && Array.isArray(item.materialVersions) && Array.isArray(item.artifacts) && item.artifacts.every(isArtifactSummary)
-    && Array.isArray(item.bindings) && item.bindings.every((raw) => { const binding = object(raw); return text(binding.bindingId) && text(binding.adapterId) && text(object(binding.ownerRef).kind) && text(object(binding.ownerRef).id); })
+    && Array.isArray(item.bindings) && item.bindings.every((raw) => { const binding = object(raw); return text(binding.bindingId) && text(binding.adapterId) && text(object(binding.ownerRef).kind) && text(object(binding.ownerRef).id)
+      && (binding.execution === undefined || isBindingExecution(binding.execution)); })
     && ['needs_materials', 'read', 'unavailable'].includes(String(intake.state)) && Array.isArray(intake.issues)
     && intake.issues.every((raw) => ['code', 'title', 'message'].every((key) => text(object(raw)[key])))
     && texts(workspace.artifactOrder) && text(workspace.primaryArtifactId) && ['split', 'focus'].includes(String(workspace.layout));

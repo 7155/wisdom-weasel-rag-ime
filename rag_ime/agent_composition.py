@@ -98,6 +98,13 @@ def build_session_applications(
     pending_memory_bootstrap: Callable[[Mapping[str, object]], Mapping[str, object]],
     probe_memory_maintenance: MemoryMaintenanceProbe,
     prompt_with_checkpoint: RewriteCheckpoint,
+    cancel_pending_approvals: Callable[..., Mapping[str, object]],
+    recent_recall_messages: Callable[[str], list[dict[str, object]]],
+    checkpoint_runtime_compaction: Callable[
+        [str, Mapping[str, object], str], Mapping[str, object]
+    ],
+    refresh_session_context: Callable[[Mapping[str, object]], Mapping[str, object]],
+    public_error: Callable[[BaseException], str],
 ) -> SessionApplications:
     application = AgentSessionApplicationService(
         sessions=sessions,
@@ -111,6 +118,11 @@ def build_session_applications(
         runtime_status=runtime_status,
         pending_memory_bootstrap=pending_memory_bootstrap,
         probe_memory_maintenance=probe_memory_maintenance,
+        cancel_pending_approvals=cancel_pending_approvals,
+        recent_recall_messages=recent_recall_messages,
+        checkpoint_runtime_compaction=checkpoint_runtime_compaction,
+        refresh_session_context=refresh_session_context,
+        public_error=public_error,
     )
     policy = AgentSessionPolicyService(
         sessions=sessions,

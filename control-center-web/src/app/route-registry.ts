@@ -3,6 +3,7 @@ export type RouteId =
   | 'overview'
   | 'input'
   | 'agent'
+  | 'agent-capsule'
   | 'rooms'
   | 'plugins'
   | 'approvals'
@@ -41,6 +42,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'project-field', path: '/project-field', label: '项目场', shortLabel: '项目', group: 'work' },
   { id: 'overview', path: '/overview', label: '概览', shortLabel: '概览', group: 'work' },
   { id: 'agent', path: '/agent', label: '对话', shortLabel: '对话', group: 'work' },
+  { id: 'agent-capsule', path: '/agent-capsule', label: 'Agent Capsule', shortLabel: '胶囊', group: 'work' },
   { id: 'rooms', path: '/rooms', label: '多人协作', shortLabel: '协作', group: 'work' },
   { id: 'planning', path: '/planning', label: '任务', shortLabel: '任务', group: 'work' },
   { id: 'work-documents', path: '/work-documents', label: '工作文档', shortLabel: '文档', group: 'work' },

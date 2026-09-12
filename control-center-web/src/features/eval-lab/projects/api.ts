@@ -38,7 +38,14 @@ export function useLabProjects(projectId: string) {
   const project = useQuery({ queryKey: projectKey, queryFn: projectId ? ({ signal }) => readLabProject(transport, projectId, '', undefined, signal) : skipToken,
     retry: false, refetchOnWindowFocus: false,
     // A recovered catalog can have the same revision: retry failed reads independently.
-    refetchInterval: (query) => query.state.status === 'error' ? 3000 : false, refetchIntervalInBackground: false });
+    // While a Golden/Pi job is queued or running, refresh the read-only
+    // execution projection. This observes the real owner without starting a
+    // second worker or replaying a command.
+    refetchInterval: (query) => {
+      const bindings = query.state.data?.project?.bindings ?? [];
+      const active = bindings.some((binding) => binding.execution?.status === 'queued' || binding.execution?.status === 'running');
+      return active ? 2000 : query.state.status === 'error' ? 3000 : false;
+    }, refetchIntervalInBackground: false });
   const observedRevision = catalog.data?.items.find((item) => item.projectId === projectId)?.revision;
   const savedRevision = project.data?.project?.revision;
   useEffect(() => {
@@ -63,7 +70,12 @@ export function useLabProjects(projectId: string) {
       if (definite) persist(transport, null);
       throw error;
     }
-  }, onSettled: (_value, error) => { if (!error || projectCommandRejected(error)) void client.invalidateQueries({ queryKey: catalogKey }); } });
+  }, onSettled: (_value, error) => {
+    if (!error || projectCommandRejected(error)) {
+      void client.invalidateQueries({ queryKey: catalogKey });
+      if (projectId) void client.invalidateQueries({ queryKey: projectKey });
+    }
+  } });
   return { connection, catalog, project, mutation, pending: pending.data ?? null,
     async submit(action: ProjectAction, input: ProjectCommand['input'], target?: LabProject | null) {
       if (client.getQueryData<Pending | null>(pendingKey)) return undefined;

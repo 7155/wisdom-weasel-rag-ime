@@ -1480,6 +1480,35 @@ export const CONTROL_ROUTES = {
     body: ['sourceId', 'evidenceId', 'disposition'],
     requiredBody: ['disposition'],
   },
+  'memory.lifecycle.status': {
+    method: 'GET',
+    path: '/api/memory/lifecycle/status',
+    query: ['project'],
+  },
+  'memory.lifecycle.refresh': {
+    method: 'POST',
+    path: '/api/memory/lifecycle/refresh',
+    body: ['operation', 'project', 'date', 'timezone', 'scheduled'],
+    requiredBody: ['operation', 'project'],
+  },
+  'memory.lifecycle.report': {
+    method: 'GET',
+    path: '/api/memory/lifecycle/report',
+    query: ['project', 'date', 'timezone', 'noTimeline'],
+    requiredQuery: ['project', 'date', 'timezone'],
+  },
+  'memory.lifecycle.forget.preview': {
+    method: 'POST',
+    path: '/api/memory/lifecycle/forget/preview',
+    body: ['project', 'sourceId'],
+    requiredBody: ['project', 'sourceId'],
+  },
+  'memory.lifecycle.forget.apply': {
+    method: 'POST',
+    path: '/api/memory/lifecycle/forget/apply',
+    body: ['project', 'sourceId', 'expectedPlanDigest', 'confirmText'],
+    requiredBody: ['project', 'sourceId', 'expectedPlanDigest', 'confirmText'],
+  },
   'memory.book.archive.preview': {
     method: 'POST',
     path: '/api/memory/book/archive/preview',

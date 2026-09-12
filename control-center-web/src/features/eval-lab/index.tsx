@@ -50,6 +50,7 @@ import { bindSceneRecipeState, getSceneRecipeState, sceneRecipeIdForExperiment }
 import { TraceLabContext } from './TraceLabContext';
 import { CandidatePatchEvidence } from './CandidatePatchEvidence';
 import { CandidateDispatchRecovery, useCandidateRoomDispatch } from './candidate-room-dispatch';
+import { StoryDeck } from './StoryDeck';
 import { canonicalEvidenceRunId, evidenceRunMatches, evidenceRunMatchesVersion, evidenceTraceIds, experimentBaselineTraceIds, experimentRunBindings, matchingEvidenceRuns } from './evidence-identity';
 import './eval-lab.css';
 
@@ -70,7 +71,7 @@ const EVAL_LAB_CANDIDATE_PERMISSION_POLICY: RoomPermissionPolicy = {
   toolAgent: { executionMode: 'inherit' },
 };
 
-type EvalLabPage = 'workspace' | 'overview' | 'paths' | 'details' | 'sessions' | 'golden';
+type EvalLabPage = 'workspace' | 'overview' | 'paths' | 'details' | 'sessions' | 'story' | 'golden';
 type ExperimentRecordView = 'task' | 'dataset' | 'baseline' | 'optimization' | 'candidate';
 type RoomAction = { runId: string; state: 'creating' | 'sending' | 'error'; message?: string };
 const EVAL_LAB_PAGES = [
@@ -79,6 +80,7 @@ const EVAL_LAB_PAGES = [
   ['paths', '方案路径'],
   ['details', '实验详情'],
   ['sessions', '对话与证据'],
+  ['story', '实验记录'],
 ] as const satisfies readonly (readonly [EvalLabPage, string])[];
 
 export function EvalLabFeature({ initialPage }: { initialPage?: EvalLabPage } = {}) {
@@ -434,6 +436,7 @@ export function LegacyEvalLabFeature({ initialPage = 'workspace' }: { initialPag
                 })() : null}
               </section>
             ) : null}
+            {page === 'story' && runs.data.experiments.length ? <StoryDeck experiments={runs.data.experiments} onSelect={setSelectedExperimentId} selectedId={selectedExperimentId} /> : null}
             {page === 'sessions' && (runs.data.items.length || sourceEvidence.data || ownedRooms.length) ? (
               <section aria-label="真实 Session runs" className="eval-lab__session-runs">
                 <AgentLabRoomDeck

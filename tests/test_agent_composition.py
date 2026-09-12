@@ -32,6 +32,7 @@ class AgentCompositionTests(unittest.TestCase):
         events = AgentEventHub()
         self.addCleanup(events.close)
         runtime = Mock(side_effect=AssertionError("list must not initialize a Runtime"))
+        lifecycle = Mock(side_effect=AssertionError("list must not invoke Session lifecycle hooks"))
         apps = build_session_applications(
             sessions=sessions, rooms=stores.rooms, runtime_provider=runtime,
             runtime_factory=Mock(spec=RuntimeDriverFactory),
@@ -41,12 +42,18 @@ class AgentCompositionTests(unittest.TestCase):
             runtime_status=lambda: {"activeSessionId": ""}, pending_memory_bootstrap=lambda _: {},
             probe_memory_maintenance=lambda *_args, **_kwargs: {},
             prompt_with_checkpoint=lambda **_kwargs: {},
+            cancel_pending_approvals=lifecycle,
+            recent_recall_messages=lifecycle,
+            checkpoint_runtime_compaction=lifecycle,
+            refresh_session_context=lifecycle,
+            public_error=str,
         )
         listing = apps.application.list_sessions()
         self.assertEqual([item["id"] for item in listing["items"]], [created["id"]])
         self.assertIs(apps.policy.sessions, sessions)
         self.assertIs(apps.branching.sessions, sessions)
         self.assertFalse(runtime.called)
+        lifecycle.assert_not_called()
         self.assertFalse(apps.application.delegation.mock_calls)
 
     def test_room_group_closes_connection_on_partial_initialization_failure(self):

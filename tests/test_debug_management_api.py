@@ -1574,6 +1574,24 @@ class DebugManagementApiTests(unittest.TestCase):
         compile_due.assert_not_called()
         owner_status.assert_not_called()
 
+    def test_memory_lifecycle_refresh_is_consumed_by_gateway_worker(self) -> None:
+        submitted = self.service.memory_lifecycle_refresh({
+            "operation": "daily_report",
+            "project": "wisdom-weasel-rag-ime",
+            "date": "2026-09-12",
+            "timezone": "UTC",
+        })
+        deadline = time.monotonic() + 2
+        status = self.service.memory_lifecycle_jobs.status(submitted["jobId"])
+        while status["state"] not in {"completed", "failed", "paused", "stale"} and time.monotonic() < deadline:
+            time.sleep(0.01)
+            status = self.service.memory_lifecycle_jobs.status(submitted["jobId"])
+        self.assertEqual(status["state"], "completed")
+        self.assertEqual(status["result"], {"ok": True, "reportReady": True})
+        projection = self.service.memory_lifecycle_status({"project": "wisdom-weasel-rag-ime"})
+        self.assertEqual(projection["jobs"][0]["job_id"], submitted["jobId"])
+        self.assertEqual(projection["jobs"][0]["state"], "completed")
+
     def test_global_catalog_policy_change_runs_once_then_reuses(self) -> None:
         managed = MemoryMaintenanceSettings(
             automatic_organization_enabled=True,
@@ -1890,6 +1908,179 @@ class DebugManagementApiTests(unittest.TestCase):
             instruction="",
         )
 
+    def test_manual_memory_maintenance_drains_bounded_batches_and_is_degraded_on_auxiliary_failure(self) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=True,
+            dreaming_enabled=True,
+            catalog_consolidation_enabled=False,
+        )
+        executor = Mock(
+            reference="openai-codex/gpt-5.6-luna",
+            thinking_level="max",
+            selected_model={"contextWindow": 400_000},
+        )
+        organizer = Mock(curation_protocol_version="atom-first-v1")
+        curator = Mock()
+        curator.run_due.side_effect = [
+            {
+                "ok": True,
+                "results": [{
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "runId": "run-1",
+                    "runStatus": "applied",
+                    "sourceCount": 6,
+                    "modelSourceCount": 6,
+                    "autoApplied": True,
+                    "remainingSourceCount": 6,
+                }],
+                "status": {"scopes": [{
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "pendingSourceCount": 6,
+                    "lastSourceCursor": {"createdAtMs": 100, "sourceId": "source-1"},
+                }]},
+            },
+            {
+                "ok": True,
+                "results": [{
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "runId": "run-2",
+                    "runStatus": "applied",
+                    "sourceCount": 6,
+                    "modelSourceCount": 6,
+                    "autoApplied": True,
+                    "remainingSourceCount": 0,
+                }],
+                "status": {"scopes": [{
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "pendingSourceCount": 0,
+                    "lastSourceCursor": {"createdAtMs": 200, "sourceId": "source-2"},
+                }]},
+            },
+        ]
+
+        with (
+            patch(
+                "rag_ime.debug_server.MemoryMaintenanceSettings.load",
+                return_value=managed,
+            ),
+            patch(
+                "rag_ime.debug_server.run_due_lexicon_organization",
+                return_value={"ok": True},
+            ),
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor",
+                return_value=executor,
+            ),
+            patch(
+                "rag_ime.debug_server.ManagedPiMemoryOrganizer",
+                return_value=organizer,
+            ),
+            patch(
+                "rag_ime.debug_server.OwnerMemoryCurator",
+                return_value=curator,
+            ) as curator_type,
+            patch.object(
+                self.service,
+                "_execute_gateway_memory_dreaming",
+                return_value={"ok": False, "error": "timeline unavailable"},
+            ),
+        ):
+            progress: list[dict[str, object]] = []
+            report = self.service._execute_gateway_memory_maintenance({
+                "project": "wisdom-weasel-rag-ime",
+                "manual": True,
+                "maxSources": 6,
+                "_progressCallback": progress.append,
+            })
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["degraded"])
+        self.assertEqual(report["pendingSourceCount"], 0)
+        self.assertEqual(report["batchCount"], 2)
+        self.assertEqual(report["stageErrors"][0]["stage"], "dreaming")
+        self.assertEqual(curator.run_due.call_count, 2)
+        self.assertEqual(
+            [(item["processedSourceCount"], item["pendingSourceCount"]) for item in progress],
+            [(6, 6), (12, 0)],
+        )
+
+    def test_owner_scoped_manual_maintenance_skips_unrelated_dreaming(self) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=True,
+            dreaming_enabled=True,
+            catalog_consolidation_enabled=False,
+        )
+        executor = Mock(
+            reference="openai-codex/gpt-5.6-luna",
+            thinking_level="max",
+            selected_model={"contextWindow": 400_000},
+        )
+        organizer = Mock(curation_protocol_version="atom-first-v1")
+        curator = Mock()
+        curator.run_due.return_value = {
+            "ok": True,
+            "results": [{
+                "ownerKind": "user",
+                "ownerId": "default",
+                "runStatus": "empty",
+                "sourceCount": 0,
+                "remainingSourceCount": 0,
+            }],
+            "status": {"scopes": [{
+                "ownerKind": "user",
+                "ownerId": "default",
+                "pendingSourceCount": 0,
+                "lastSourceCursor": {},
+            }]},
+        }
+
+        with (
+            patch(
+                "rag_ime.debug_server.MemoryMaintenanceSettings.load",
+                return_value=managed,
+            ),
+            patch(
+                "rag_ime.debug_server.run_due_lexicon_organization",
+                return_value={"ok": True},
+            ),
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor",
+                return_value=executor,
+            ),
+            patch(
+                "rag_ime.debug_server.ManagedPiMemoryOrganizer",
+                return_value=organizer,
+            ),
+            patch(
+                "rag_ime.debug_server.OwnerMemoryCurator",
+                return_value=curator,
+            ) as curator_type,
+            patch.object(
+                self.service,
+                "_execute_gateway_memory_dreaming",
+                side_effect=AssertionError("owner curation must not start dreaming"),
+            ),
+        ):
+            report = self.service._execute_gateway_memory_maintenance({
+                "project": "wisdom-weasel-rag-ime",
+                "manual": True,
+                "ownerKind": "user",
+                "ownerId": "default",
+                "maxSources": 1500,
+            })
+
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(report["dreaming"]["skipped"])
+        self.assertEqual(report["dreaming"]["reason"], "owner_curation_only")
+        self.assertTrue(report["catalogConsolidation"]["skipped"])
+        self.assertEqual(report["catalogConsolidation"]["reason"], "owner_curation_only")
+        self.assertEqual(curator_type.call_args.kwargs["max_sources"], 6)
+        self.assertEqual(curator.run_due.call_count, 1)
+
     def test_scheduled_gateway_dreaming_enables_bounded_timeline_backfill(self) -> None:
         managed = MemoryMaintenanceSettings(
             automatic_organization_enabled=True,
@@ -2157,7 +2348,7 @@ class DebugManagementApiTests(unittest.TestCase):
             ],
         )
     def test_memory_evidence_catalog_never_exposes_sensitive_audit_sources(self) -> None:
-        event_ref, _receipt = self.core.record_event_with_capture_receipt(
+        event_ref, receipt = self.core.record_event_with_capture_receipt(
             InputEvent(
                 event_id=None,
                 created_at_ms=int(time.time() * 1000),
@@ -2172,13 +2363,14 @@ class DebugManagementApiTests(unittest.TestCase):
                 ),
             )
         )
-        with self.core._connect() as conn:  # type: ignore[attr-defined]
-            source_id = str(
-                conn.execute(
-                    "SELECT source_id FROM agent_memory_sources WHERE input_event_id = ?",
-                    (int(event_ref.split(":", 1)[1]),),
-                ).fetchone()[0]
-            )
+
+        # A typed capture whose text needs redaction must be acknowledged
+        # without creating an input event or a memory source. This keeps the
+        # native capture identity honest and prevents sensitive audit text from
+        # entering the evidence catalog.
+        self.assertEqual(event_ref, "skipped:typed_capture_requires_no_store")
+        self.assertEqual(receipt["outcome"], "no_store")
+        self.assertEqual(receipt["reason"], "typed_capture_requires_no_store")
 
         page = self.service.management.memory_page(
             "evidence",
@@ -2187,16 +2379,6 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertEqual(page["items"], [])
         self.assertNotIn("sk-abcdefghijk", json.dumps(page, ensure_ascii=False))
-        with self.assertRaisesRegex(
-            ValueError,
-            "sensitive memory evidence cannot be restored",
-        ):
-            self.service.management.memory_source_disposition(
-                {
-                    "sourceId": source_id,
-                    "disposition": "pending",
-                }
-            )
 
     def test_agent_memory_run_review_and_apply_are_owner_scoped(self) -> None:
         event_ref = self.core.record_event(
@@ -2504,6 +2686,23 @@ class DebugManagementApiTests(unittest.TestCase):
             with urlopen(create_request, timeout=5) as response:
                 created = json.loads(response.read().decode("utf-8"))
             session_id = created["session"]["id"]
+
+            # Memory is opt-in at the Session capability boundary. Exercise
+            # the real HTTP update before invoking the protected tool route.
+            disclosure_request = Request(
+                f"{base_url}/sessions/{session_id}",
+                data=json.dumps(
+                    {
+                        "capabilityDisclosurePreferences": {
+                            "tool:memory": "enabled",
+                        }
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="PATCH",
+            )
+            with urlopen(disclosure_request, timeout=5) as response:
+                disclosure = json.loads(response.read().decode("utf-8"))
 
             with urlopen(f"{base_url}/sessions", timeout=5) as response:
                 listed = json.loads(response.read().decode("utf-8"))
@@ -2938,6 +3137,10 @@ class DebugManagementApiTests(unittest.TestCase):
             server.server_close()
 
         self.assertTrue(created["ok"])
+        self.assertEqual(
+            disclosure["session"]["capabilityDisclosurePreferences"],
+            {"tool:memory": "enabled"},
+        )
         self.assertEqual(listed["items"][0]["id"], session_id)
         self.assertEqual(directory["items"][0]["id"], session_id)
         self.assertNotIn("sessionFile", directory["items"][0])

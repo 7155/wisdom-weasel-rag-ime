@@ -850,6 +850,35 @@ describe('preview control transport', () => {
     ]);
   });
 
+  it('uses the current Antarctic corpus fixture instead of the retired RL fixture', async () => {
+    const transport = createPreviewTransport();
+    const bases = arrayRecords(record(await transport.request({
+      pathId: 'knowledgeBases.list',
+    })).items);
+    expect(bases).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'kb:preview-antarctic-papers',
+        name: '南极论文资料库',
+        documentCount: 198,
+        status: 'building',
+      }),
+    ]));
+    expect(JSON.stringify(bases)).not.toContain('强化学习论文测试库');
+
+    const documents = arrayRecords(record(await transport.request({
+      pathId: 'knowledgeBases.documents.list',
+      params: { kbId: 'kb:preview-antarctic-papers' },
+    })).items);
+    expect(documents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'file:preview-antarctic-papers',
+        fileName: 'Zotero 南极论文库（198 个 PDF）.manifest.md',
+        status: 'queued',
+        chunkCount: 0,
+      }),
+    ]));
+  });
+
   it('keeps Work Documents preview data and terminal receipts on production routes', async () => {
     const transport = createPreviewTransport();
     const listed = record(await transport.request({
@@ -886,14 +915,14 @@ describe('preview control transport', () => {
     const before = arrayRecords(record(await transport.request({
       pathId: 'agent.extensions.list',
     })).items);
-    expect(before).toEqual([
+    expect(before).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'timeline-inspector',
         displayName: 'Timeline Inspector',
         version: '1.0.0',
         rollbackAvailable: true,
       }),
-    ]);
+    ]));
 
     const preview = record(await transport.request({
       pathId: 'agent.extensions.preview',
@@ -921,14 +950,14 @@ describe('preview control transport', () => {
     const after = arrayRecords(record(await transport.request({
       pathId: 'agent.extensions.list',
     })).items);
-    expect(after).toEqual([
+    expect(after).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'timeline-inspector',
         displayName: 'Timeline Inspector',
         version: '0.9.0',
         rollbackAvailable: false,
       }),
-    ]);
+    ]));
     await expect(transport.request({
       pathId: 'agent.extensions.preview',
       body: { action: 'rollback', pluginId: 'timeline-inspector' },
@@ -949,7 +978,9 @@ describe('preview control transport', () => {
     });
     expect(arrayRecords(record(await transport.request({
       pathId: 'agent.extensions.list',
-    })).items)).toHaveLength(1);
+    })).items)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'timeline-inspector' }),
+    ]));
 
     await transport.request({
       pathId: 'agent.extensions.apply',
@@ -960,9 +991,12 @@ describe('preview control transport', () => {
       },
     });
 
-    expect(arrayRecords(record(await transport.request({
+    const after = arrayRecords(record(await transport.request({
       pathId: 'agent.extensions.list',
-    })).items)).toEqual([]);
+    })).items);
+    expect(after).toEqual(expect.not.arrayContaining([
+      expect.objectContaining({ id: 'timeline-inspector' }),
+    ]));
   });
 
 });

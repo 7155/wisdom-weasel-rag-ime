@@ -19,6 +19,7 @@ type PawNativeAppId = Extract<PawAppId,
   | 'system-settings'>;
 
 const loadPawAgentApp = () => import('./entries/PawAgentAppEntry');
+const loadPawAgentCapsuleApp = () => import('./entries/PawAgentCapsuleAppEntry');
 const loadPawBrowserApp = () => import('./entries/PawBrowserAppEntry');
 const loadPawNativeApp = () => import('./entries/PawNativeAppEntry');
 const loadTraceAgentApp = () => import('./entries/PawTraceAgentAppEntry');
@@ -32,6 +33,7 @@ const loadTerminalApp = async () => ({
 });
 
 const PawAgentApp = lazy(loadPawAgentApp);
+const PawAgentCapsuleApp = lazy(loadPawAgentCapsuleApp);
 const PawBrowserApp = lazy(loadPawBrowserApp);
 const PawNativeApp = lazy(loadPawNativeApp);
 const TraceAgentApp = lazy(loadTraceAgentApp);
@@ -43,6 +45,8 @@ const TerminalApp = lazy(loadTerminalApp);
 export function warmPawAppBody(appId: PawAppId): void {
   const load = appId === 'agent'
     ? loadPawAgentApp
+    : appId === 'agent-capsule'
+    ? loadPawAgentCapsuleApp
     : appId === 'browser'
     ? loadPawBrowserApp
     : appId === 'files'
@@ -98,6 +102,8 @@ function renderApp(appId: PawAppId, entityId?: string, initialRoute?: string, ta
   switch (appId) {
     case 'agent':
       return <PawAgentApp initialRoute={initialRoute} target={target ?? (entityId ? { kind: 'session', id: entityId, title: entityId } : undefined)} />;
+    case 'agent-capsule':
+      return <PawAgentCapsuleApp />;
     case 'browser':
       return <PawBrowserApp target={target?.kind === 'browser-target' ? target : undefined} />;
     case 'files':

@@ -16,6 +16,10 @@ vi.mock('./PawAgentApp', () => ({
   ),
 }));
 
+vi.mock('./PawAgentCapsuleApp', () => ({
+  PawAgentCapsuleApp: () => <main data-testid="agent-capsule-app">capsule-home</main>,
+}));
+
 vi.mock('@/features/paw-os/PawOsSatelliteHost', () => ({
   PawOsSatelliteHost: ({ target }: { target: { kind: string; panel?: string } }) => (
     <aside data-testid="satellite-host">{`${target.kind}:${target.panel ?? 'none'}`}</aside>
@@ -25,6 +29,11 @@ vi.mock('@/features/paw-os/PawOsSatelliteHost', () => ({
 afterEach(cleanup);
 
 describe('PAWOS App runtime', () => {
+  it('mounts Agent Capsule as a managed App entry', async () => {
+    render(<PawAppBody appId="agent-capsule" />);
+    expect(await screen.findByTestId('agent-capsule-app')).toHaveTextContent('capsule-home');
+  });
+
   it('mounts Trace Agent as an independent App with its own task and library navigation', async () => {
     const transport = new MockControlTransport({ routes: {
       'observability.traceDiagnosticReports.list': { schemaVersion: 'rag-ime.trace-diagnostic-report-list.v1', total: 0, truncated: false, items: [] },

@@ -1877,7 +1877,7 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
-  it.each([false, true])('retries a durably accepted failed turn without command-receipt lineage (screen: %s)', async (withScreen) => {
+  it.each([false, true])('continues a durably accepted failed turn without replaying its input (screen: %s)', async (withScreen) => {
     const sessionId = 'session-accepted-turn-retry';
     const promptRequests: ControlRequest[] = [];
     const context = { mediaId: 'media_abcdefghijklmnop', sourceAppBundleId: 'com.example.Editor', capturedAtMs: 1000 };
@@ -1949,19 +1949,20 @@ describe('PAWOS Agent Session structural migration', () => {
       </ControlTransportProvider>,
     );
 
-    const retry = await screen.findByRole('button', { name: '重试本轮' });
+    const retry = await screen.findByRole('button', { name: '继续' });
     fireEvent.click(retry);
     fireEvent.click(retry);
 
     await waitFor(() => expect(promptRequests).toHaveLength(1));
     expect(promptRequests[0]?.body).toMatchObject({
-      message: '查询本月经营数据',
+      message: '继续。请基于当前 Session 已保留的工具结果和文件生成最终回复，不要重试或重复已经完成的操作；如果仍缺少信息，明确说明下一步。',
+      attachments: [],
     });
     expect(promptRequests[0]?.body).not.toHaveProperty('retryOfClientMessageId');
-    if (withScreen) expect(promptRequests[0]?.body).toMatchObject({ screenContext: context, attachments: [context.mediaId] });
+    if (withScreen) expect(promptRequests[0]?.body).toMatchObject({ screenContext: context });
     useAgentLiveStore.getState().clear(sessionId);
   });
-  it('rolls back a migrated retry card when admission becomes unresolved before submission', async () => {
+  it('rolls back a rejected admission retry card when admission becomes unresolved before submission', async () => {
     const sessionId = 'session-unresolved-retry-rollback';
     const pendingSessionRefresh = deferred<unknown>();
     let holdSessionRefresh = false;
@@ -1970,25 +1971,7 @@ describe('PAWOS Agent Session structural migration', () => {
         ? pendingSessionRefresh.promise
         : { ok: true, items: [{ ...liveSession(), id: sessionId }] },
       'agent.session.snapshot': {
-        messages: [{
-          schemaVersion: 'rag-ime.agent-message.v1',
-          id: `${sessionId}:user`,
-          sessionId,
-          turnId: 'turn-failed',
-          role: 'user',
-          status: 'completed',
-          blocks: [{
-            id: `${sessionId}:user:text`,
-            type: 'text',
-            status: 'completed',
-            presentationKind: 'markdown',
-            data: { text: '这条消息需要安全重试' },
-          }],
-          attachments: [],
-          citations: [],
-          createdAtMs: 1,
-          completedAtMs: 1,
-        }],
+        messages: [],
         liveEvents: [],
         lastSequence: 1,
         resumeToken: `${sessionId}:1`,
@@ -2016,9 +1999,19 @@ describe('PAWOS Agent Session structural migration', () => {
       </ControlTransportProvider>,
     );
 
+    await screen.findByRole('textbox', { name: '消息' });
+    act(() => {
+      const store = useAgentLiveStore.getState();
+      store.appendOptimistic(sessionId, {
+        clientMessageId: 'client-unresolved-retry', text: '这条消息需要安全重试',
+        attachments: [], nowMs: Date.now(),
+      });
+      store.failOptimistic(sessionId, 'client-unresolved-retry', 'prompt rejected', Date.now());
+    });
+
     const retry = await screen.findByRole('button', { name: '重试本轮' });
     const projection = useAgentLiveStore.getState().projections[sessionId]!;
-    const userMessage = projection.messagesById[`${sessionId}:user`]!;
+    const userMessage = projection.messagesById['local:client-unresolved-retry']!;
     const sessionListRequestsBeforeRetry = transport.requests.filter(
       (request) => request.pathId === 'agent.sessions.list',
     ).length;
@@ -2184,7 +2177,7 @@ describe('PAWOS Agent Session structural migration', () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: '对话权限：工作区托管' }));
+    await user.click(await screen.findByRole('button', { name: '对话权限：工作区托管（沙箱）' }));
     const workspace = screen.getByRole('region', { name: '授权工作区' });
     await user.click(within(workspace).getByRole('button', { name: '更改目录' }));
 

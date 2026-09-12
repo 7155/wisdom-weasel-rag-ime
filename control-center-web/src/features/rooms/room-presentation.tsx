@@ -39,15 +39,15 @@ export function roomExecutionModeOptions(roomKind: RoomKind): Array<{
 }> {
   if (roomKind === 'roleplay') {
     return [
-      { value: 'read_only', label: '只读', description: '可以查看文件；写入和命令都不执行' },
+      { value: 'read_only', label: '只读（沙箱）', description: 'macOS 沙箱内可以查看文件；写入和命令都不执行' },
       { value: 'per_action', label: '每次确认', description: '沿用角色 Session 边界；有影响的操作逐项确认' },
     ];
   }
   return [
     {
       value: 'read_only',
-      label: '只读',
-      description: '可以读取已授权上下文；写入、命令和其他有影响的操作被阻止',
+      label: '只读（沙箱）',
+      description: 'macOS 沙箱内可以读取已授权上下文；写入、命令和其他有影响的操作被阻止',
     },
     {
       value: 'per_action',
@@ -56,8 +56,8 @@ export function roomExecutionModeOptions(roomKind: RoomKind): Array<{
     },
     {
       value: 'workspace_managed',
-      label: '工作区托管',
-      description: '仅已批准的工作区范围；范围内自动执行，越界时请求确认',
+      label: '工作区托管（沙箱）',
+      description: 'macOS 沙箱仅开放已批准的工作区范围；范围内自动执行，越界时请求确认',
     },
     {
       value: 'full_trust',
@@ -90,8 +90,8 @@ export function roomExecutionModeLabel(
   }
   return {
     per_action: '全权限',
-    read_only: '只读',
-    workspace_managed: '工作区托管',
+    read_only: '只读（沙箱）',
+    workspace_managed: '工作区托管（沙箱）',
     full_trust: '全自动',
   }[value ?? 'full_trust'];
 }
@@ -305,7 +305,7 @@ function roomPermissionModeDetails(
 > {
   if (mode === 'read_only') {
     return {
-      workspaceScope: '可读取授权上下文，不允许写入',
+      workspaceScope: '沙箱内可读取授权上下文，不允许写入',
       toolScope: '仅当前可用的读取与核对能力',
       approvalBehavior: '写入、命令和其他有影响的操作被阻止',
     };
@@ -326,7 +326,7 @@ function roomPermissionModeDetails(
   }
   if (mode === 'workspace_managed') {
     return {
-      workspaceScope: '仅已批准的工作区范围',
+      workspaceScope: '沙箱内仅开放已批准的工作区范围',
       toolScope: '该范围内适用且已启用的 Tool 与 Skill',
       approvalBehavior: '范围内自动执行，越界时请求确认',
     };

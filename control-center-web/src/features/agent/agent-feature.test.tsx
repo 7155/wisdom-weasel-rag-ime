@@ -2370,39 +2370,35 @@ describe('Agent experience', () => {
 
 
 
-  it('continues from a network interruption without replaying the failed prompt', async () => {
-    let attempt = 0;
-    const transport = featureTransport(
-      previewModelCatalog('session-preview'),
-      { ok: true, items: toolCatalog() },
-      { ok: true, items: previewSessions },
-      () => {
-        attempt += 1;
-        if (attempt === 1) throw new Error('WebSocket error');
-        return new Promise(() => {});
+  it('continues from an accepted network-interrupted turn without replaying the failed prompt', async () => {
+    const transport = productionTransport({
+      'agent.session.snapshot': {
+        lastSequence: 7, resumeToken: 'network-failed:7', status: 'idle',
+        items: [{
+          ...historyMessage('session-preview', 'network-user', 'user', '先执行这轮工作'),
+          turnId: 'turn-network-failed', clientMessageId: 'client-network-original',
+        }, {
+          ...historyMessage('session-preview', 'network-assistant', 'assistant', ''),
+          turnId: 'turn-network-failed', status: 'failed',
+          blocks: [{ id: 'network-error', type: 'error', status: 'failed',
+            presentationKind: 'error', data: { message: 'WebSocket error' } }],
+        }],
       },
-    );
+      'agent.session.prompt': () => new Promise(() => {}),
+    });
     const user = userEvent.setup();
     renderAgent(transport);
-    const composer = await screen.findByRole('textbox', { name: '消息' });
-    await user.type(composer, '先执行这轮工作');
-    await user.click(screen.getByRole('button', { name: '发送' }));
-
     await user.click(await screen.findByRole('button', { name: '继续' }));
-
     await waitFor(() => expect(
-      transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
-    ).toHaveLength(2));
-    const prompts = transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt');
-    const continuation = prompts[1]?.request.body as Record<string, unknown>;
+      transport.requests.filter((call) => call.pathId === 'agent.session.prompt'),
+    ).toHaveLength(1));
+    const continuation = transport.requests.find((call) => call.pathId === 'agent.session.prompt')?.body as Record<string, unknown>;
     expect(continuation.message).toBe(
       '继续完成上一轮。请基于当前 Session 已保留的工具结果和文件生成最终回复，不要重复已经完成的操作。',
     );
     expect(continuation.attachments).toEqual([]);
     expect(continuation).not.toHaveProperty('retryOfClientMessageId');
-    expect(continuation.clientMessageId).not.toBe(
-      (prompts[0]?.request.body as Record<string, unknown>).clientMessageId,
-    );
+    expect(continuation.clientMessageId).not.toBe('client-network-original');
     expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
   });
 
@@ -2735,7 +2731,7 @@ describe('Agent experience', () => {
     expect(within(picker).getByRole('option', { name: '选择模型 GPT-5.4' })).toBeInTheDocument();
   });
 
-  it('unlocks send and retry when projection status is stale working but the latest turn failed', async () => {
+  it('unlocks send and continuation when projection status is stale working but the latest turn failed', async () => {
     const failedTurnId = 'turn-provider-failed';
     const transport = productionTransport({
       'agent.session.snapshot': {
@@ -2770,7 +2766,7 @@ describe('Agent experience', () => {
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById[failedTurnId]?.status).toBe('failed');
     expect(await screen.findByRole('button', { name: /^发送/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '停止本轮' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '重试本轮' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '继续' })).toBeEnabled();
     expect(screen.getByText('模型服务请求失败，请重试或切换模型。')).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: '消息' }), '新的输入');
     expect(screen.getByRole('button', { name: /^发送/ })).toBeEnabled();
@@ -4341,7 +4337,7 @@ describe('Agent experience', () => {
     renderAgent(transport);
     const trigger = await screen.findByRole(
       'button',
-      { name: '这段对话可执行工具：14 个；已登记工具：14 个' },
+      { name: '对话功能：记忆、工具、插件与技能；这段对话可执行工具：14 个；已登记工具：14 个' },
       { timeout: 5_000 },
     );
 
@@ -4378,9 +4374,9 @@ describe('Agent experience', () => {
 
     expect(await screen.findByRole('button', { name: '控制中心迁移' })).toBeInTheDocument();
     expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
-    const unavailableTools = await screen.findByRole('button', { name: '能力列表暂不可用' });
+    const unavailableTools = await screen.findByRole('button', { name: '对话功能：记忆、工具、插件与技能；能力列表暂不可用' });
     expect(unavailableTools).toBeDisabled();
-    expect(unavailableTools).toHaveTextContent('工具 · 未加载');
+    expect(unavailableTools).toHaveTextContent('功能 · 未加载');
   });
 
   it('opens the backend active conversation instead of a newer empty Session', async () => {

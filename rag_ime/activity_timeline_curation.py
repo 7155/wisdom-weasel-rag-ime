@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .sensitive_content import contains_sensitive_content
+from .sensitive_content import is_redacted_or_sensitive
 from .text_utils import compact_whitespace
 
 
@@ -230,12 +230,12 @@ def build_activity_organization_packet(
         )
         raw_context = _value(row, "recent_context", "referenceContext")
 
-        redacted = contains_sensitive_content(current_text)
+        redacted = is_redacted_or_sensitive(current_text)
         if redacted:
             current_text = _REDACTED_TEXT
             reference_context = ""
             context_status = "redacted"
-        elif contains_sensitive_content(raw_context):
+        elif is_redacted_or_sensitive(raw_context):
             reference_context = ""
             context_status = "redacted"
         else:

@@ -8,6 +8,7 @@ import pawOsCss from './paw-os.css?raw';
 const appIds = [
   'project-workbench',
   'agent',
+  'agent-capsule',
   'memory',
   'knowledge',
   'input-studio',
@@ -33,7 +34,7 @@ function token(block: string, name: string): string {
 }
 
 describe('UR-104 PAWOS App color identities', () => {
-  it('gives all twelve Apps distinct primary, supporting, and surface relationships', () => {
+  it('gives all PAWOS Apps distinct primary, supporting, and surface relationships', () => {
     const palettes = appIds.map((appId) => {
       const block = appPaletteBlock(appId);
       return {

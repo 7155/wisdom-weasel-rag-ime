@@ -140,7 +140,7 @@ export function NewSessionDialog({
           </Button>
         </section>
         <section className="agent-new-task-dialog__permissions" aria-label="新对话权限">
-          <header><strong>执行权限</strong><small>从只读、逐项确认、项目托管或全自动中选择</small></header>
+          <header><strong>执行权限</strong><small>从只读（沙箱）、逐项确认、工作区托管（沙箱）或全自动中选择</small></header>
           <RadioGroup.Root
             aria-label="新对话的执行权限"
             value={executionMode}
@@ -151,7 +151,7 @@ export function NewSessionDialog({
           >
             <RadioGroup.Item value="read_only">
               <Eye size={16} />
-              <span><strong>只读</strong><small>只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止</small></span>
+              <span><strong>只读（沙箱）</strong><small>macOS 沙箱内只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止</small></span>
             </RadioGroup.Item>
             <RadioGroup.Item value="per_action">
               <ShieldCheck size={16} />
@@ -159,7 +159,7 @@ export function NewSessionDialog({
             </RadioGroup.Item>
             <RadioGroup.Item value="workspace_managed" disabled={!primaryRoot}>
               <FolderOpen size={16} />
-              <span><strong>工作区托管</strong><small>{primaryRoot ? '批准所选项目范围；范围内自动执行，越界继续请求确认' : '先选择起始项目后可用'}</small></span>
+              <span><strong>工作区托管（沙箱）</strong><small>{primaryRoot ? 'macOS 沙箱仅开放已批准的项目范围；范围内自动执行，越界继续请求确认' : '先选择起始项目后可用'}</small></span>
             </RadioGroup.Item>
             <RadioGroup.Item value="full_trust">
               <TriangleAlert size={16} />

@@ -37,8 +37,8 @@ describe('Room permission presentation', () => {
     expect(roomExecutionModeOptions('collaboration')).toEqual([
       {
         value: 'read_only',
-        label: '只读',
-        description: '可以读取已授权上下文；写入、命令和其他有影响的操作被阻止',
+        label: '只读（沙箱）',
+        description: 'macOS 沙箱内可以读取已授权上下文；写入、命令和其他有影响的操作被阻止',
       },
       {
         value: 'per_action',
@@ -47,8 +47,8 @@ describe('Room permission presentation', () => {
       },
       {
         value: 'workspace_managed',
-        label: '工作区托管',
-        description: '仅已批准的工作区范围；范围内自动执行，越界时请求确认',
+        label: '工作区托管（沙箱）',
+        description: 'macOS 沙箱仅开放已批准的工作区范围；范围内自动执行，越界时请求确认',
       },
       {
         value: 'full_trust',
@@ -61,7 +61,7 @@ describe('Room permission presentation', () => {
 
   it('keeps roleplay permission labels distinct from collaboration access', () => {
     expect(roomExecutionModeOptions('roleplay').map((option) => option.label))
-      .toEqual(['只读', '每次确认']);
+      .toEqual(['只读（沙箱）', '每次确认']);
     expect(roomExecutionModeLabel('per_action', 'roleplay')).toBe('每次确认');
   });
 

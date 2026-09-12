@@ -34,9 +34,9 @@ type PawMenuTarget =
 /* The archive is grouped the way the machine is actually laid out: where the
  * work happens (工作), where what came out of it is kept (记忆与知识), what the
  * work reaches for (工具), and what runs underneath (系统). Splitting 工作 from
- * Agent left two lone tiles on their own bands and made eleven Apps read as a
- * half-empty shelf; this order is also the flywheel read left to right —
- * Session, its deposits, its instruments, the floor. */
+ * Agent left two lone tiles on their own bands and made the archive read as a
+ * half-empty shelf; this order reads left to right — Session, its deposits,
+ * its instruments, the floor. */
 const LAUNCHPAD_GROUP_ORDER = ['work', 'library', 'tool', 'system'] as const;
 const LAUNCHPAD_GROUP_LABEL: Record<(typeof LAUNCHPAD_GROUP_ORDER)[number], string> = {
   work: '工作',

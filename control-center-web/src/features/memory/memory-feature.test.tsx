@@ -436,7 +436,7 @@ describe('MemoryFeature relations', () => {
             ok: true,
             jobId: 'memory-maintenance:test',
             state: 'completed',
-            result: { ok: true, requestedSourceCount: 4 },
+            result: { ok: true, requestedSourceCount: 6 },
           }
           : {
             ok: true,
@@ -473,7 +473,7 @@ describe('MemoryFeature relations', () => {
             ownerKind: 'user',
             ownerId: 'default',
             manual: true,
-            maxSources: 4,
+            maxSources: 6,
             instruction: '从当前已保存的整理位置继续，按时间顺序处理下一批个人记忆来源；只生成可审核草案，不直接保存。',
           });
           return { ok: true, jobId: 'memory-maintenance:test', state: 'queued' };

@@ -29,9 +29,9 @@ class LabHistoryImportTests(unittest.TestCase):
         return {"action": "import_history", "expectedRevision": 0, "clientRequestId": request_id,
                 "input": {key: collection[key] for key in ("sceneId", "sourceHash")}}
 
-    def test_four_existing_scenarios_preserve_exact_evidence_without_model_calls(self):
+    def test_six_existing_scenarios_preserve_exact_evidence_without_model_calls(self):
         collections = history_collections(self.records)
-        self.assertEqual({row["sceneId"] for row in collections}, {"enterpriseops", "enterprise-rag", "cloudops", "memory"})
+        self.assertEqual({row["sceneId"] for row in collections}, {"enterpriseops", "enterprise-rag", "trace-agent", "cloudops", "memory", "model-cost"})
         for source in collections:
             project = self.app.command(self.request(source, source["sceneId"]))["project"]
             origin = project["historyOrigin"]
@@ -42,8 +42,26 @@ class LabHistoryImportTests(unittest.TestCase):
             self.assertEqual(project["guideSessionId"], "")
             self.assertEqual(project["materialCount"], 0)
             self.assertEqual(project["bindings"][0]["ownerRef"], {"kind": "scene_trial", "id": source["sceneId"]})
-            self.assertEqual(project["artifactCount"], 4)
-        self.assertEqual(len(self.app.read()["items"]), 4)
+            self.assertEqual(project["artifactCount"], 6)
+            steps = self.app.read({"projectId": project["projectId"]})["project"]["artifacts"]
+            self.assertIn("逐步实验卡", {item["title"] for item in steps})
+            detail = next(item for item in steps if item["title"] == "逐步实验卡")
+            # The detailed card keeps the causal change surface and claim boundary;
+            # the raw snapshot remains the immutable source of truth.
+            detail_payload = self.app.read({"projectId": project["projectId"], "artifactId": detail["artifactId"]})["artifact"]["content"]
+            self.assertEqual(len(detail_payload["experiments"]), source["experimentCount"])
+            self.assertTrue(all({"steps", "promptChanges", "toolChanges", "workflowChanges", "modelChanges", "effect", "allowedClaim", "forbiddenClaim"}.issubset(item) for item in detail_payload["experiments"]))
+            self.assertTrue(all({"continuation", "comparedTo", "metricDeltas"}.issubset(item) for item in detail_payload["experiments"]))
+            ids = {item["experimentId"] for item in source["records"]}
+            if any(item.get("supersededBy") in ids for item in source["records"]):
+                self.assertTrue(any(item["comparedTo"] for item in detail_payload["experiments"]),
+                                "supersededBy links must produce adjacent causal comparisons")
+            chain = next(item for item in steps if item["title"] == "实验链")
+            chain_payload = self.app.read({"projectId": project["projectId"], "artifactId": chain["artifactId"]})["artifact"]["content"]
+            self.assertEqual(chain_payload["columns"][-2]["key"], "failureEvidence")
+            self.assertEqual(chain_payload["columns"][-1]["key"], "metricDeltas")
+            self.assertTrue(all("failureEvidence" in row and "metricDeltas" in row for row in chain_payload["rows"]))
+        self.assertEqual(len(self.app.read()["items"]), 6)
         self.assertEqual(self.records, self.original)
         self.sessions.create_in_transaction.assert_not_called()
 

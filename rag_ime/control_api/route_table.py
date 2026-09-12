@@ -36,6 +36,14 @@ from .lab_errors import (
 ErrorResponseAdapter = Callable[[Exception], tuple[HTTPStatus, dict[str, object]]]
 
 
+def _value_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
+    """Preserve a legacy route's bounded invalid-request projection."""
+
+    if not isinstance(exc, ValueError):
+        raise exc
+    return HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}
+
+
 @dataclass(frozen=True)
 class RouteDescriptor:
     """Everything one route needs, in one place."""
@@ -414,6 +422,49 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
     _get("/api/browser/status", "browser_control.status"),
     _get("/api/browser/tabs", "browser_control.tabs"),
     _get("/api/agent/runtime", "agent.runtime_status"),
+    _get(
+        "/api/agent/sessions",
+        "agent.list_sessions",
+        query_args=(
+            "includeArchived", "includeInternal", "limit", "beforeUpdatedAtMs",
+            "beforeId", "surfaceKind", "ownerAppId", "surfaceKey", "projectionOnly",
+        ),
+        takes_arguments=True,
+        error_response=_value_error_response,
+    ),
+    _get(
+        "/api/agent/wake-schedules",
+        "agent.list_wake_schedules",
+        query_args=("status", "targetType", "targetId", "createdBySessionId", "limit"),
+        takes_arguments=True,
+    ),
+    _get(
+        "/api/agent/approvals",
+        "agent.list_approvals",
+        query_args=("sessionId", "state", "limit"),
+        takes_arguments=True,
+    ),
+    _get(
+        "/api/agent/rooms",
+        "agent.list_rooms",
+        query_args=(
+            "includeArchived", "limit", "beforeUpdatedAtMs", "beforeId",
+            "projectionOnly", "ownerAppId", "surfaceKey",
+        ),
+        takes_arguments=True,
+    ),
+    _get(
+        "/api/agent/memory-sources",
+        "agent.list_memory_sources",
+        query_args=("sessionId", "limit"),
+        takes_arguments=True,
+    ),
+    _get(
+        "/api/agent/media",
+        "agent.list_media",
+        query_args=("sessionId", "roomId", "limit"),
+        takes_arguments=True,
+    ),
     _get(
         "/api/agent/eval-lab/runs",
         "agent.eval_lab_runs",

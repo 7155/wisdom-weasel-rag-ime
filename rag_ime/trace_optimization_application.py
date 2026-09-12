@@ -9,12 +9,12 @@ from typing import Mapping
 from .agent_lab.optimization_knowledge import AgentLabOptimizationKnowledge
 from .agent_lab.projects import AgentLabProjectStore
 from .agent_lab.trials import TERMINAL_STATES
-from .db import sqlite_connection
 from .trace_optimization_execution import SCENE_ID, TraceOptimizationCommandAdapter, controls_for_plan
 from .trace_optimization_pi import (
     SCENE_ID as PI_SCENE_ID, TraceOptimizationPiAdapter, controls_for_plan as pi_controls_for_plan,
 )
-from .trace_optimization_versions import digest, now_ms, text
+from .trace_optimization_lifecycle import TraceOptimizationRunCoordinator
+from .trace_optimization_versions import digest, text
 
 _LOG = logging.getLogger(__name__)
 
@@ -42,6 +42,15 @@ class TraceOptimizationApplication:
         if agent._eval_lab_trial_application is not None:
             agent._eval_lab_trial_application.adapters[SCENE_ID] = adapter
             agent._eval_lab_trial_application.adapters[PI_SCENE_ID] = self.pi_adapter
+        self.run_coordinator = TraceOptimizationRunCoordinator(
+            self.db_path,
+            versions=self.versions,
+            candidates=self.candidates,
+            start_trial=lambda payload: self.agent.eval_lab_trial_start(payload),
+            cancel_trial=lambda job_id: self.agent.eval_lab_trial_cancel({"jobId": job_id}),
+            read_trial=lambda job_id: self.agent._trial_store().read(job_id),
+            record_outcome=self.record_outcome,
+        )
 
     def session_policy(self, session: Mapping) -> dict | None:
         return self.pi_adapter.session_policy(session)
@@ -234,64 +243,13 @@ class TraceOptimizationApplication:
         raise ValueError("unsupported optimization operation")
 
     def start(self, candidate: Mapping, request_id: str) -> None:
-        with self._mutation_lock:
-            self._start(candidate, request_id)
-
-    def _start(self, candidate: Mapping, request_id: str) -> None:
-        with sqlite_connection(self.db_path) as conn:
-            previous = conn.execute("SELECT candidate_id FROM trace_optimization_run_pairs WHERE request_id=?", (request_id,)).fetchone()
-        if previous:
-            if previous[0] != candidate["candidateId"]:
-                raise ValueError("run request identity conflict")
-            return
-        candidate = self.candidates.get_candidate(candidate["candidateId"])
-        if "run_candidate" not in candidate["availableActions"]:
-            raise ValueError("candidate has no registered execution path")
-        plan = self.versions.get_plan(candidate["comparisonContract"]["caseSetRef"])
-        scene_id = PI_SCENE_ID if plan["plan"].get("executionKind") == "pi_session" else SCENE_ID
-        # The Lab's durable admission prevents a repeat request from re-running.
-        ids = {}
-        try:
-            for role in ("baseline", "candidate"):
-                response = self.agent.eval_lab_trial_start({"clientRequestId": "trace-run:" + digest([request_id, role]),
-                    "sceneId": scene_id, "spec": {"candidateId": candidate["candidateId"], "role": role}})
-                ids[role] = response["job"]["jobId"]
-        except Exception:
-            # A failed second admission must not leave the first execution
-            # running after the UI receives an error. Durable Lab IDs remain.
-            for job_id in ids.values():
-                self.agent.eval_lab_trial_cancel({"jobId": job_id})
-            raise
-        with sqlite_connection(self.db_path) as conn:
-            previous = conn.execute("SELECT candidate_id,baseline_job_id,candidate_job_id FROM trace_optimization_run_pairs WHERE request_id=?", (request_id,)).fetchone()
-            if previous and tuple(previous) != (candidate["candidateId"], ids["baseline"], ids["candidate"]):
-                raise ValueError("run request identity conflict")
-            conn.execute("INSERT OR IGNORE INTO trace_optimization_run_pairs VALUES(?,?,?,?,?,?,?)",
-                (request_id, candidate["reportId"], candidate["candidateId"], ids["baseline"], ids["candidate"], "", now_ms()))
+        self.run_coordinator.start(candidate, request_id)
 
     def jobs(self, report_id: str) -> list[dict]:
-        with sqlite_connection(self.db_path) as conn:
-            rows = conn.execute("SELECT candidate_id,baseline_job_id,candidate_job_id,comparison_id FROM trace_optimization_run_pairs WHERE report_id=? ORDER BY created_at_ms DESC LIMIT 50", (report_id,)).fetchall()
-        return [{"candidateId": row[0], "baseline": self.agent._trial_store().read(row[1])["job"],
-                 "candidate": self.agent._trial_store().read(row[2])["job"], "comparisonId": row[3]} for row in rows]
+        return self.run_coordinator.jobs(report_id)
 
     def reconcile(self, report_id: str) -> None:
-        for row in self.jobs(report_id):
-            if row["comparisonId"]:
-                comparison = self.candidates.get_comparison(row["comparisonId"])
-                if comparison:
-                    self.record_outcome(self.candidates.get_candidate(row["candidateId"]), comparison)
-                continue
-            if row["baseline"]["state"] not in TERMINAL_STATES or row["candidate"]["state"] not in TERMINAL_STATES:
-                continue
-            candidate = self.candidates.get_candidate(row["candidateId"])
-            comparison = self.candidates.record_validation(row["candidateId"],
-                client_request_id="trace-comparison:" + digest([row["baseline"]["jobId"], row["candidate"]["jobId"]]),
-                baseline_trial_id=row["baseline"]["jobId"], candidate_trial_id=row["candidate"]["jobId"])
-            with sqlite_connection(self.db_path) as conn:
-                conn.execute("UPDATE trace_optimization_run_pairs SET comparison_id=? WHERE baseline_job_id=? AND candidate_job_id=?",
-                    (comparison["comparisonId"], row["baseline"]["jobId"], row["candidate"]["jobId"]))
-            self.record_outcome(candidate, comparison)
+        self.run_coordinator.reconcile(report_id)
 
     def record_report(self, report: Mapping) -> None:
         if not report.get("optimizationProjectId") or report.get("status") != "completed":
