@@ -328,7 +328,7 @@ SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
 # with the runtime, including when this script runs before the main web build.
 PORTABLE_UI_SOURCE="$ROOT/control-center-web/.generated/portable-agent-ui"
 if [[ ! -s "$PORTABLE_UI_SOURCE/agent-ui.js" || ! -s "$PORTABLE_UI_SOURCE/agent-ui.css" ]]; then
-  pnpm --dir "$ROOT/control-center-web" run build:app-ui
+  (cd "$ROOT/control-center-web" && pnpm run build:app-ui)
 fi
 PORTABLE_UI_TARGET="$APP_CODE_DIR/control-center-web/.generated/portable-agent-ui"
 
