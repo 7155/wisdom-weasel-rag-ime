@@ -135,7 +135,7 @@ def _project_work_summary(project: Mapping[str, Any], artifacts: list[Mapping[st
     ordered_artifacts = sorted((dict(item) for item in (artifacts or [])), key=lambda item: (int(item.get("updatedAtMs") or 0), str(item.get("artifactId") or "")), reverse=True)
     if history:
         snapshot_id = str(history.get("snapshotArtifactId") or "")
-        snapshot = next((item for item in ordered_artifacts if str(item.get("artifactId") or "") == snapshot_id), ordered_artifacts[0] if ordered_artifacts else None)
+        snapshot = next((item for item in ordered_artifacts if str(item.get("artifactId") or "") == snapshot_id), None)
         latest = {"kind": "history", "status": "historical", "title": str((snapshot or {}).get("title") or "历史实验快照"),
                   "updatedAtMs": int(history.get("importedAtMs") or project.get("updatedAtMs") or 0),
                   "artifactId": snapshot_id}
@@ -246,6 +246,14 @@ class AgentLabProjectStore:
                     (item["projectId"],),
                 ).fetchone()
                 latest_artifact = [json.loads(artifact_row[0])] if artifact_row is not None else []
+                snapshot_id = (item.get("historyOrigin") or {}).get("snapshotArtifactId")
+                if snapshot_id and not any(value.get("artifactId") == snapshot_id for value in latest_artifact):
+                    snapshot_row = conn.execute(
+                        "SELECT payload_json FROM agent_lab_project_artifacts WHERE project_id=? AND artifact_id=?",
+                        (item["projectId"], snapshot_id),
+                    ).fetchone()
+                    if snapshot_row is not None:
+                        latest_artifact.append(json.loads(snapshot_row[0]))
                 summary = {key: item[key] for key in ("projectId", "revision", "title", "materialCount", "artifactCount", "guideSessionId", "createdAtMs", "updatedAtMs")}
                 summary.update(_project_work_summary(item, latest_artifact))
                 items.append(summary)

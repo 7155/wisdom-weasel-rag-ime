@@ -92,7 +92,7 @@ function ExperimentExplorer({ data }: { data: RecordValue }) {
   const evidence = [...new Set([...list(record.evidenceRefs), ...list(baseline.evidenceRefs), ...list(candidate.evidenceRefs)].filter((item): item is string => typeof item === 'string'))];
   const navigate = (id: string) => { setSelected(id); setSection('changes'); };
   return <div className="lab-experiment-visual">
-    <div className="lab-visual-context"><span>历史实验 · {records.length} 条记录</span><p>{text(data.caption, data.executionPerformed === false ? '这是保存的实验快照，本次导入没有重新执行。当前运行请到“运行”查看。' : '按原始回执整理；这里的步骤是历史记录，当前运行请到“运行”查看。')}</p></div>
+    <div className="lab-visual-context"><span>{data.schemaVersion === 'paw.lab-imported-experiments.v1' ? '历史实验' : '实验结果'} · {records.length} 条记录</span><p>{text(data.caption, data.executionPerformed === false ? '这是保存的实验快照，本次导入没有重新执行。当前运行请到“运行”查看。' : '按原始回执整理；当前执行状态请到“运行”查看。')}</p></div>
     <label className="lab-experiment-picker">实验记录<select value={text(record.experimentId)} onChange={(event) => navigate(event.target.value)}>{records.map((item) => <option key={text(item.experimentId)} value={text(item.experimentId)}>{text(item.title, text(item.experimentId))}</option>)}</select></label>
     <div className="lab-experiment-explorer">
       <nav className="lab-experiment-timeline" aria-label="实验演进"><h3>实验演进</h3><ol>{records.map((item, index) => {

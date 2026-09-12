@@ -98,6 +98,14 @@ class LabProjectTests(unittest.TestCase):
         self.assertEqual(summary["rerunReadiness"]["status"], "not_ready")
         self.assertIn("至少一份当前材料快照", summary["rerunReadiness"]["missing"])
 
+        snapshot_id = self.project["historyOrigin"]["snapshotArtifactId"]
+        self.command("publish_artifact", {"title": "新的复跑准备说明", "view": "markdown", "content": "等待接入当前材料。"})
+        catalog = self.store.read()["items"][0]
+        detail = self.store.read(self.project["projectId"])["project"]
+        self.assertEqual(catalog["latestRecord"]["artifactId"], snapshot_id)
+        self.assertEqual(catalog["latestRecord"]["title"], "实验快照")
+        self.assertEqual(catalog["latestRecord"], detail["latestRecord"])
+
     def test_execution_summary_distinguishes_running_completed_and_failed_model_jobs(self):
         running = AgentLabProjectApplication._execution_summary({"jobs": [{
             "jobId": "job-running", "kind": "experiment", "state": "running",

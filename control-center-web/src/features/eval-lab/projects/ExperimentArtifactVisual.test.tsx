@@ -36,6 +36,12 @@ describe('structured Lab results', () => {
     expect(screen.getAllByLabelText('基线：未记录')).toHaveLength(2);
     expect(screen.getByLabelText('候选：20')).toBeInTheDocument();
   });
+  it('distinguishes actual experiment results from imported history', () => {
+    render(<ExperimentArtifactVisual content={{ schemaVersion: 'paw.lab-experiment-steps.v1', executionPerformed: true, experiments: [{ experimentId: 'run-1', title: '实际对照' }] }} />);
+    expect(screen.getByText('实验结果 · 1 条记录')).toBeInTheDocument();
+    expect(screen.queryByText(/历史实验/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/导入没有重新执行/)).not.toBeInTheDocument();
+  });
   it('scopes paired table charts to the chosen experiment', () => {
     render(<ExperimentTableVisual content={{ columns: ['experiment', 'metric', 'baseline', 'candidate'].map((key) => ({ key, label: key })), rows: [
       { experiment: '实验 A', metric: 'passRate', baseline: 0, candidate: .5 },
