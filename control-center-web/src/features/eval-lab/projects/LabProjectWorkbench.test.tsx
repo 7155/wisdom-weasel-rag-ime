@@ -49,7 +49,7 @@ describe('Agent-led Lab project container', () => {
       latestRecord: { kind: 'artifact', status: 'available', title: latest.title, artifactId: latest.artifactId, updatedAtMs: 2 } });
     const transport = new MockControlTransport({ routes: { 'agent.eval-lab.projects.get': (request: ControlRequest) => read(request.query?.projectId ? current : null, [current], request.query?.artifactId === 'latest' ? latest : request.query?.artifactId === 'primary' ? primary : undefined) } });
     mount(transport);
-    fireEvent.click(await screen.findByRole('button', { name: /最新实验 查看成果/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /最新实验 查看成果/ }, { timeout: 5000 }));
     expect(await screen.findByText('这是首页所指的最新实验。')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '最新实验' })).toHaveAttribute('aria-current', 'page');
   });

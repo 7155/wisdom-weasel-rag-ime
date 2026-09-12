@@ -169,7 +169,13 @@ describe('PAWOS native Apps', () => {
     expect(handoffDraft).toContain('任务：统一 Agent 入口（task-1）');
 
     await user.click(screen.getByRole('button', { name: '定时安排' }));
-    expect(openApp).toHaveBeenLastCalledWith('schedules', '/schedules?view=agent');
+    expect(await screen.findByRole('heading', { name: '自动执行安排' })).toBeInTheDocument();
+    expect(await screen.findByText('还没有定时安排')).toBeInTheDocument();
+    await waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(expect.arrayContaining([
+      'agent.sessions.list',
+      'agent.roles.list',
+      'agent.wakeSchedules.list',
+    ])));
   });
 
   it('registers a WorkDocument through the disclosed production route and refreshes the list', async () => {
