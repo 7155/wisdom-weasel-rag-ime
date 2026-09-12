@@ -3,6 +3,23 @@
 Personal Agent Workbench follows a source-first development model. A public
 source checkpoint is not a signed and notarized macOS binary release.
 
+## 0.1.0-alpha.7 — 2026-09-12
+
+- Preserve Browser connection failures and Chromium error-page state instead
+  of reporting an invalid URL. Project failed tool receipts consistently in
+  live and restored conversations, and support recovery in the same tab.
+- Continue accepted failed turns in their existing Session, while retaining
+  the original submission when an unaccepted message needs a retry.
+- Integrate the Agent Capsule entry, desktop context requests and shared
+  conversation controls.
+- Add Memory import/export, daily reports and privacy filtering before
+  capture. Resume owner-scoped maintenance jobs without letting observers
+  start duplicate work or store redacted placeholders as Evidence.
+- Extend Lab project, material and evaluation workflows with persisted
+  receipts. Keep preparation completion distinct from evaluation results.
+- Consolidate descriptor routing and Session/Trace lifecycle ownership, and
+  refine stellar materials and workspace presentation.
+
 ## 0.1.0-alpha.6 — 2026-09-10
 
 - Enter the collaboration layout only through its explicit control. Show
