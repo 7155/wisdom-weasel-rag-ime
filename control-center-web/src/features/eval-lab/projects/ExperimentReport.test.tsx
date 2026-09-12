@@ -17,6 +17,25 @@ const data: JsonValue = { schemaVersion: 'paw.lab-imported-experiments.v1', exec
 const report: LabArtifact = { artifactId: 'changes', title: '改动与结论', kind: 'experiment_history', view: 'markdown', content: '# 完整说明\n成本节省 999%，这一句不参与图表。', revision: 1, summary: '', actions: [], templateRef: null, createdAtMs: 1, updatedAtMs: 1 };
 
 describe('engineering Lab report', () => {
+  it.each(['overview', 'metrics'] as const)('renders recorded task counts using the frozen case denominator in %s', (mode) => {
+    render(<ExperimentReport mode={mode} content={{ schemaVersion: 'paw.lab-imported-experiments.v1', experiments: [{ experimentId: 'support', dataset: { caseCount: 3 }, comparison: { stageChain: [
+      { stage: 'sol_baseline', taskSuccessCount: 3, decision: 'baseline' },
+      { stage: 'luna_model_only', taskSuccessCount: 2, decision: 'reject' },
+      { stage: 'luna_prompt_adapted', taskSuccessRate: 1, decision: 'keep' },
+    ] } }] }} />);
+    const quality = screen.getByRole('group', { name: '各阶段质量' });
+    expect(within(quality).getAllByText('100%')).toHaveLength(2);
+    expect(within(quality).getByText('66.67%')).toBeInTheDocument();
+    expect(within(quality).getByText('Luna · 优化提示词')).toBeInTheDocument();
+  });
+  it('does not derive a rate from missing, zero or invalid denominators', () => {
+    render(<ExperimentReport mode="overview" content={{ schemaVersion: 'paw.lab-imported-experiments.v1', experiments: [{ experimentId: 'unknown', comparison: { stageChain: [
+      { taskSuccessCount: 2 }, { taskSuccessCount: 0, taskCount: 0 }, { taskSuccessCount: 4, taskCount: 3 }, { taskSuccessCount: '2', taskCount: 3 }, { taskSuccessCount: 0, taskCount: 3 },
+    ] } }] }} />);
+    const quality = screen.getByRole('group', { name: '各阶段质量' });
+    expect(quality.querySelectorAll('strong')).toHaveLength(5);
+    expect([...quality.querySelectorAll('strong')].map((node) => node.textContent)).toEqual(['未记录', '未记录', '未记录', '未记录', '0%']);
+  });
   it('copies exact evidence references and translates recorded comparison decisions', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });

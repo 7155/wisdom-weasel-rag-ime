@@ -10,9 +10,9 @@ export type ExperimentReportMode = 'overview' | 'changes' | 'metrics' | 'records
 const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 const label = (value: unknown, fallback = '未记录') => typeof value === 'string' && value.trim() ? value : fallback;
 const numeric = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-const decisionLabels: Record<string, string> = { keep: '保留候选', reject: '保留基线', improved: '候选有提升', no_improvement: '未观察到提升', diagnostic_only: '仅供诊断', not_run: '尚未运行', inconclusive: '待验证', unknown: '待验证' };
+const decisionLabels: Record<string, string> = { baseline: '基线', keep: '保留候选', reject: '保留基线', improved: '候选有提升', no_improvement: '未观察到提升', diagnostic_only: '仅供诊断', not_run: '尚未运行', inconclusive: '待验证', unknown: '待验证' };
 const decisionLabel = (value: unknown) => decisionLabels[label(value)] ?? label(value, '尚无判定');
-const stageLabels: Record<string, string> = { sol_baseline: 'Sol · 起始基线', luna_model_only: 'Luna · 仅更换模型', luna_prompt_v4: 'Luna · 优化提示词' };
+const stageLabels: Record<string, string> = { sol_baseline: 'Sol · 起始基线', luna_model_only: 'Luna · 仅更换模型', luna_prompt_v4: 'Luna · 优化提示词', luna_prompt_adapted: 'Luna · 优化提示词' };
 const factorLabels: Record<string, string> = { model: '模型', prompt: '提示词', retrieval: '检索', workflow: '工作流', tool: '工具', data: '数据' };
 const money = (value: unknown) => numeric(value) === undefined ? '未记录' : `$${Number(value).toLocaleString('en-US', { maximumFractionDigits: 6 })}`;
 const percent = (value: unknown) => numeric(value) === undefined ? '未记录' : `${Number((Number(value) * 100).toFixed(2))}%`;
@@ -58,11 +58,11 @@ export function ExperimentReport({ content, mode, selectedId, onSelect, toolbar 
     {mode === 'overview' || mode === 'changes' ? <>
       {stages.length ? <StageFlow stages={stages} /> : <div className="lab-report__simple-flow" aria-label="方案对照"><span>基线方案</span><ArrowRight size={20} /><span>候选方案</span><ArrowRight size={20} /><Decision value={decision} /></div>}
       {mode === 'changes' ? <section aria-label="改动前后"><SectionTitle title="具体改了什么" detail={`${factors.length} 项已记录的改动`} />{factors.length ? <div className="lab-report__changes">{factors.map((factor, index) => <div key={index} className="lab-report__change"><header><span>{String(index + 1).padStart(2, '0')}</span><h4>{factorLabels[label(factor.name)] ?? label(factor.name, '方案调整')}</h4></header><div className="lab-report__change-pair"><div><small>改动前</small><Value value={factor.before} /></div><ArrowRight size={18} aria-hidden="true" /><div><small>改动后</small><Value value={factor.after} /></div></div><p>{label(factor.reason, '尚未记录改动原因。')}</p></div>)}</div> : <p className="lab-visual-empty">这份回执没有记录逐项改动。可以在原始方案中查看已有配置。</p>}</section> : null}
-      <section aria-label="结果对比"><SectionTitle title="结果发生了什么变化" detail="质量与成本一起看" />{stages.length ? <StageCharts stages={stages} /> : <MetricComparison baseline={object(baseline.metrics)} candidate={object(candidate.metrics)} />}</section>
+      <section aria-label="结果对比"><SectionTitle title="结果发生了什么变化" detail="质量与成本一起看" />{stages.length ? <StageCharts stages={stages} caseCount={numeric(dataset.caseCount)} /> : <MetricComparison baseline={object(baseline.metrics)} candidate={object(candidate.metrics)} />}</section>
       <Conclusion record={record} />
       {mode === 'overview' ? <section><SectionTitle title="全部实验" detail="选择一条，查看它的方案与结果" /><div className="lab-report__history">{records.map((row, index) => <button key={label(row.experimentId)} aria-current={row === record ? 'true' : undefined} onClick={() => select(label(row.experimentId))}><span>{String(index + 1).padStart(2, '0')}</span><span><strong>{label(row.title)}</strong><small>{row.projectionState === 'current' ? '当前对照' : '历史记录'} · {label(object(row.dataset).split, '划分未记录')}</small></span><Decision value={label(object(row.comparison).decision)} /></button>)}</div></section> : null}
     </> : mode === 'metrics' ? <>
-      {stages.length ? <section><SectionTitle title="各阶段实测对照" detail="按回执中的阶段排列" /><StageCharts stages={stages} /></section> : null}
+      {stages.length ? <section><SectionTitle title="各阶段实测对照" detail="按回执中的阶段排列" /><StageCharts stages={stages} caseCount={numeric(dataset.caseCount)} /></section> : null}
       <section><SectionTitle title="基线 → 候选" detail="展开可查看全部数值指标" /><MetricComparison key={label(record.experimentId)} baseline={object(baseline.metrics)} candidate={object(candidate.metrics)} /></section>
       <Conclusion record={record} />
     </> : <>
@@ -92,11 +92,15 @@ function Scope({ comparison, dataset, imported }: { comparison: Row; dataset: Ro
 function StageFlow({ stages }: { stages: Row[] }) {
   return <section aria-label="已记录的优化过程"><SectionTitle title="方案演进" detail={`${stages.length} 个已记录阶段`} /><ol className="lab-report__stages">{stages.map((stage, index) => <li key={index}><span className="lab-report__step">{String(index + 1).padStart(2, '0')}</span><div><h4>{stageLabels[label(stage.stage)] ?? label(stage.stage, `阶段 ${index + 1}`)}</h4><Decision value={label(stage.decision)} stage /></div>{index < stages.length - 1 ? <ArrowRight className="lab-report__stage-arrow" size={19} aria-hidden="true" /> : null}</li>)}</ol></section>;
 }
-function StageCharts({ stages }: { stages: Row[] }) {
+function StageCharts({ stages, caseCount }: { stages: Row[]; caseCount?: number }) {
   const maxCost = Math.max(...stages.map((stage) => Math.abs(numeric(stage.costUsd) ?? 0)), Number.EPSILON);
   return <div className="lab-report__charts">
     <div className="lab-report__chart" role="group" aria-label="各阶段质量"><h5>完整任务通过率</h5><span className="lab-report__chart-unit">0 — 100%</span>{stages.map((stage, index) => {
-      const rate = numeric(stage.agentSuccessRate); const covered = numeric(stage.exactCitationFactsCovered); const total = numeric(stage.citationFactCount);
+      const passed = numeric(stage.taskSuccessCount); const count = numeric(stage.taskCount) ?? caseCount;
+      const recordedRate = numeric(stage.agentSuccessRate) ?? numeric(stage.taskSuccessRate);
+      const rate = recordedRate !== undefined ? (recordedRate >= 0 && recordedRate <= 1 ? recordedRate : undefined)
+        : passed !== undefined && count !== undefined && Number.isInteger(count) && count > 0 && Number.isInteger(passed) && passed >= 0 && passed <= count ? passed / count : undefined;
+      const covered = numeric(stage.exactCitationFactsCovered); const total = numeric(stage.citationFactCount);
       return <div className="lab-report__bar-row" key={index}><span>{stageLabels[label(stage.stage)] ?? label(stage.stage)}</span><strong>{percent(rate)}</strong><div className="lab-report__track" aria-hidden="true"><span style={{ width: `${rate === undefined ? 0 : Math.max(0, Math.min(1, rate)) * 100}%` }} /></div>{covered !== undefined && total !== undefined ? <small>证据覆盖 {covered} / {total}</small> : null}</div>;
     })}</div>
     <div className="lab-report__chart" role="group" aria-label="各阶段成本"><h5>运行估算成本</h5><span className="lab-report__chart-unit">USD · 相同标尺</span>{stages.map((stage, index) => <div className="lab-report__bar-row" key={index}><span>{stageLabels[label(stage.stage)] ?? label(stage.stage)}</span><strong>{money(stage.costUsd)}</strong><div className="lab-report__track" data-series="cost" aria-hidden="true"><span style={{ width: `${Math.abs(numeric(stage.costUsd) ?? 0) / maxCost * 100}%` }} /></div><small>{stage.decision === 'reject' ? '未通过标准' : stage.decision === 'keep' ? '通过标准' : decisionLabel(stage.decision)}</small></div>)}</div>
