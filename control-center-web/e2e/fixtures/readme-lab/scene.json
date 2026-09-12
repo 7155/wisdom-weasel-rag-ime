@@ -1,0 +1,176 @@
+{
+  "schemaVersion": "paw.story.agent-lab-current.v1",
+  "sourceDocument": "agent-experiments.v1.json",
+  "sourceSha256": "40b70123591896ddbeb2dcfeea81dcab8238a00ce8895634de97648c002b9612",
+  "sourceHashEncoding": "UTF-8 JSON; sorted keys; compact separators; ensure_ascii=false",
+  "sourceGeneratedAt": "2026-09-05",
+  "projection": "Explicit public metadata and aggregate metrics only; no task, answer, Gold or transcript bodies. Receipt filenames and content hashes preserve provenance without host paths.",
+  "multiAgentMatchedBenefitMeasured": false,
+  "experiments": [
+    {
+      "key": "enterpriseops",
+      "id": "enterpriseops-csm.luna-prompt-adaptation-r7.v1",
+      "title": "EnterpriseOps CSM · Sol→Luna→通用 Prompt 适配路径",
+      "businessProblem": "在不牺牲客户支持任务终态质量的前提下，把已验证的 Sol/max Agent 降到更低价 Luna/max，并明确区分模型切换与 Prompt 修复的因果阶段。",
+      "status": "kept",
+      "dataset": {
+        "id": "enterpriseops-csm-suite-v2-post-heldout-validation",
+        "split": "validation",
+        "unit": "end-to-end customer-support tasks with 31 Host-private verifiers",
+        "manifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+        "caseCount": 3,
+        "heldOutConsumed": false
+      },
+      "factors": [
+        {
+          "name": "model",
+          "before": "gpt-5.6-sol / max",
+          "after": "gpt-5.6-luna / max",
+          "reason": "第一阶段只换模型，真实结果 2/3、30/31，被质量门禁 Reject。"
+        },
+        {
+          "name": "prompt",
+          "before": "state-contract-preloaded-v3 prompt a16bb73f",
+          "after": "luna-explicit-enum-preloaded-v6 prompt d35237c1",
+          "reason": "第二阶段冻结 Luna 和其他控制，只加入通用角色/地区/tenure、已选 Tool authority 与 exact enum precedence；不含 case ID、答案或 Gold。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "task_tool_dataset_runner",
+          "value": "3 tasks；31 verifiers；manifest d5ef3eb6；Tool catalog 349a40e3；runner 51de12fd",
+          "reason": "三阶段不换题、不换 scorer、不换 Tool 或 runner。"
+        },
+        {
+          "name": "runtime_binary",
+          "value": "runtimeVersion pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad；manifest/entrypoint/extension/node/tool-profile hashes 相同",
+          "reason": "Runtime binary 与 Tool bytes 相同；Sol/Luna identitySha 因模型字段变化，两个 Luna 阶段 identitySha 相同。"
+        },
+        {
+          "name": "cost_authority",
+          "value": "runtime_cost_reconciled；pricing source b8ed197e；Provider bill unavailable",
+          "reason": "成本由 Runtime DB 的逐请求 usage/reportedCost 与内容寻址价格身份交叉验证。"
+        }
+      ],
+      "hardGates": [
+        "3/3 task success",
+        "31/31 Host-private verifier",
+        "zero failed Tool calls",
+        "all temporary databases cleaned"
+      ],
+      "baseline": {
+        "runId": "enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904-r8",
+        "metrics": {
+          "allDatabasesCleaned": 1,
+          "apiCostUsd": 1.711214,
+          "databasesCleaned": 3,
+          "failedToolCalls": 0,
+          "taskCount": 3,
+          "taskSuccessCount": 3,
+          "taskSuccessRate": 1.0,
+          "toolCalls": 51,
+          "totalTokens": 1388540,
+          "verifierCount": 31,
+          "verifierPassCount": 31,
+          "verifierPassRate": 1.0
+        }
+      },
+      "candidate": {
+        "runId": "enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904-r7",
+        "metrics": {
+          "allDatabasesCleaned": 1,
+          "apiCostUsd": 0.07291692,
+          "databasesCleaned": 3,
+          "failedToolCalls": 0,
+          "taskCount": 3,
+          "taskSuccessCount": 3,
+          "taskSuccessRate": 1.0,
+          "toolCalls": 55,
+          "totalTokens": 1185986,
+          "verifierCount": 31,
+          "verifierPassCount": 31,
+          "verifierPassRate": 1.0
+        }
+      },
+      "stages": [
+        {
+          "stage": "sol_baseline",
+          "runId": "enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904-r8",
+          "decision": "baseline",
+          "metrics": {
+            "failedToolCalls": 0,
+            "taskSuccessCount": 3,
+            "toolCalls": 51,
+            "verifierPassCount": 31
+          },
+          "costUsd": 1.711214
+        },
+        {
+          "stage": "luna_model_only",
+          "runId": "enterpriseops-csm-luna-preloaded-model-only-validation-20260904-r5",
+          "decision": "reject",
+          "metrics": {
+            "failedToolCalls": 0,
+            "taskSuccessCount": 2,
+            "toolCalls": 59,
+            "verifierPassCount": 30
+          },
+          "costUsd": 0.09453296
+        },
+        {
+          "stage": "luna_prompt_adapted",
+          "runId": "enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904-r7",
+          "decision": "keep",
+          "metrics": {
+            "failedToolCalls": 0,
+            "taskSuccessCount": 3,
+            "toolCalls": 55,
+            "verifierPassCount": 31
+          },
+          "costUsd": 0.07291692
+        }
+      ],
+      "decision": "keep",
+      "costAuthority": "runtime_cost_reconciled",
+      "costDecreasePercent": 95.73887777916731,
+      "providerBillAvailable": false,
+      "promptAdaptationNeeded": true,
+      "validationBoundary": {},
+      "openGaps": [
+        "每阶段仅单轮 source-local Validation，没有重复运行置信区间",
+        "Provider bill unavailable；exact Runtime 对账成本不等于真实扣款",
+        "未做新 Held-out、安装态或前台验收"
+      ],
+      "evidence": [
+        {
+          "file": "agent-lab-cost-enterpriseops-luna-max-explicit-enum-prompt-20260904.r7.v1.json",
+          "sha256": "ec53f50d0a7a9a7f318c89952e37f6ce49bf4f4ebc34eb734fce490855d0524f"
+        },
+        {
+          "file": "agent-lab-cost-enterpriseops-luna-max-preloaded-model-only-20260904.r5.v1.json",
+          "sha256": "fa885c7367bf2c44dbc2914c498b95c7b83aa378be8644f50aeb50a8c0f52aef"
+        },
+        {
+          "file": "agent-lab-cost-enterpriseops-sol-max-preloaded-current-runtime-20260904.r8.v1.json",
+          "sha256": "e26e47541229ee4d0e64a6a829db899b6c21902eca840b3672ed469e62ef11d3"
+        },
+        {
+          "file": "enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json",
+          "sha256": "637aa4c7b63b78cd24572d91490f0e5832a27a3917ee42b76abea664e322c18e"
+        },
+        {
+          "file": "enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json",
+          "sha256": "0a9ff609d9c0515d73ecf8d91aaf93ba69a7f65abe8422cd289b310d00601222"
+        },
+        {
+          "file": "enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json",
+          "sha256": "5c52f9c3295a9504946ed6b5fbc499e26c709f4fdb1150c999040eb0f26b2f5c"
+        },
+        {
+          "file": "enterpriseops-csm-sol-to-luna-prompt-adaptation-20260904.r1.json",
+          "sha256": "74a0e8d4d2303789f444094a5f0989d14881649b1dc3344d19ece6021195c55f"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "paw.readme-showcase.v1",
+  "capturedAt": "2026-09-12T16:36:33.716Z",
+  "sourceCommit": "6d487fa03c8d4f99c727a598361c2304b2274f46",
+  "workingTree": "modified",
+  "fixture": "control-center-web/e2e/fixtures/readme-lab",
+  "fixtureSha256": {
+    "index.html": "391d2d4f1d8e7e1d40841cd84f815c1fe6fc105ad8093072e5c41472c5ba7357",
+    "main.tsx": "95493fc983e33a164382c106415956bb34abe3a0868bc119cf1fa04db99ff901",
+    "preview.css": "cd07e6928d1419c97ab244fe08ca6c76d6312ef13f4adf0be93682464ec64f6e",
+    "scene.json": "bf55bbfe5fda83cb422be2e14f3d191e46c23c49d5840c41f214a06d8d307336"
+  },
+  "sourceDocument": "agent-experiments.v1.json",
+  "sourceSha256": "40b70123591896ddbeb2dcfeea81dcab8238a00ce8895634de97648c002b9612",
+  "transport": "mock",
+  "modelCalls": 0,
+  "personalDataAccessed": false,
+  "evidenceBoundary": "Current source components with allowlisted public historical metadata. No current experiment, installed application, model call or native acceptance is asserted.",
+  "command": "node scripts/capture_readme_lab.mjs <Vite origin>",
+  "assets": [
+    {
+      "file": "lab-workspace.webp",
+      "caption": "新版 Lab 项目与三阶段实验过程",
+      "bytes": 44540,
+      "sha256": "52f9da90be4c67b22d20c164b432c25cdfdda2e61b8e2a9f7426a39aa012fdb1",
+      "viewport": {
+        "width": 1180,
+        "height": 1050
+      }
+    },
+    {
+      "file": "lab-metrics.webp",
+      "caption": "同一组任务的基线与候选指标",
+      "bytes": 43294,
+      "sha256": "75456d5b4596f10d6ff1043ade5d90886011e96e68006406990e73e3687e41f6",
+      "viewport": {
+        "width": 1180,
+        "height": 1050
+      }
+    }
+  ]
+}

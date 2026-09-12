@@ -1,271 +1,266 @@
 # PAW — Personal Agent Workbench
 
-使用 AI 完成一件事，往往要付出两种成本：**把想法讲清楚的沟通成本，以及把事情做完的模型成本。** PAW 从这两个问题出发。
+**少重复解释，让 AI 接着做；先验证效果，再选择成本合适的方案。**
 
-先让 AI 理解你的目标、习惯和已有背景，少一些反复解释；当需求对齐后，再为具体任务选择效果达标、成本合适的模型、提示词和工作流。
+使用 AI 完成一件事，常常要付出两种成本：**把需求讲清楚的沟通成本，以及把任务做完的模型成本。** PAW 从这两个问题出发，把日常上下文、Agent 执行和场景评测放进同一个本地优先的工作台。
 
-PAW 是一个本地优先的个人 Agent 工作台：通过授权输入采集与 Memory 衔接日常工作，通过 Agent Lab 评测垂直场景，并把验证过的方案交付为应用。模型可以更换，而你的需求、偏好、项目知识和有效的工作方法可以持续积累。
+- **Memory 减少重复沟通**：在授权范围内整理输入和工作背景，让输入法与 Agent 按需复用。
+- **Agent Lab 优化执行方案**：用同一组任务比较模型、提示词、检索和工作流，再把有效的方案交付为 App。
 
-**macOS 14+ · Python 3.12+ · Node.js 22.19+ · [GPL-3.0-only](LICENSE)**
+模型可以更换；你的需求、偏好、项目知识和验证过的工作方法可以持续积累。
 
-[为什么做 PAW](#为什么做-paw) · [核心工作流](#核心工作流) · [功能](#功能) · [隐私与权限](#隐私与权限) ·
-[架构](#架构与职责) · [开始使用](#开始使用) · [构建与安装](release/README.md) ·
-[更新记录](CHANGELOG.md) · [Memory 生命周期](rag_ime/memory_lifecycle/README.md) ·
-[Releases](https://github.com/7155/personal-agent-workbench/releases)
+[为什么做 PAW](#为什么做-paw) · [开始使用](#开始使用) · [上手教程](#上手教程) · [功能](#功能) · [架构](#架构与职责) · [更新记录](CHANGELOG.md) · [下载预览版](https://github.com/7155/personal-agent-workbench/releases)
+
+![PAWOS 桌面：Agent、Lab、Memory 和 Knowledge 的统一入口](assets/showcase/current/pawos-desktop.webp)
+
+*桌面截图使用公开演示数据；新版 Lab 配图见下文。[完整图集与采集说明](assets/showcase/current/README.md)。*
 
 ## 为什么做 PAW
 
-### 1. 降低沟通成本：已经说过的背景，不必每次从头讲
+### 1. 减少沟通成本：已经说过的背景，下次接着用
 
-你在浏览器里填写需求，在文档里记录决策，在其他应用里讨论项目。只获得当前对话的 Agent 看不到这些背景，也无从知道你的习惯；换一个任务或模型，往往又要解释一遍。
+你在浏览器里填写需求，在文档里记录决策，在其他应用里讨论项目。如果 Agent 只能看到当前对话，你就需要反复补充背景；换一个任务，这个过程又来一次。
 
-PAW 将可选的输入法、语音和桌面采集接入同一个上下文体系。在你授权的范围内，输入经过筛选、脱敏和整理，成为可追溯、可修改的记忆。这些记忆有两个直接用途：**输入法根据场景提供补全，Agent 在执行任务时按需召回历史背景。** 已知信息可以复用，新目标和不确定的地方仍然需要与你确认。
+PAW 的可选输入法、语音和桌面适配器把**授权范围内的输入**送入记忆整理流程。整理后的内容保留来源，可以核对、修改和撤回。输入法可以据此提供场景补全，Agent 可以按当前任务召回背景；新要求和不确定的信息仍需要补充。
 
-以继续一个项目任务为例，假设需要“项目目标、技术栈、输出格式、个人偏好、本次截止时间”五项背景，其中前四项已经保存在记忆中且被正确召回：
-
-| 同一个任务需要的上下文 | 只获得本次对话的 Agent | PAW（已启用采集与记忆） |
+| 继续同一个项目 | 只获得本次对话的 Agent | PAW 已保存并正确召回相关记忆时 |
 | --- | --- | --- |
-| 在其他应用中说过的项目目标、技术栈 | 再次粘贴或解释 | 从相关记忆中召回 |
-| 已经表达过的输出格式、个人偏好 | 再次说明 | 复用已保存的偏好 |
+| 其他应用中说过的目标、技术栈 | 再次粘贴或解释 | 复用相关背景 |
+| 已表达的输出格式、个人偏好 | 再次说明 | 复用已有偏好 |
 | 本次新增的截止时间 | 由你补充 | 由你补充 |
-| 本例需要再次提供的背景项 | 5 项 | 1 项 |
+| 示例：5 项必要背景中已有 4 项 | 重新提供 5 项 | 只补充 1 项 |
 
-**这个示例中，需要补充的背景项减少 80%（5 → 1）。** 这是解释工作方式的场景示意，未测量真实追问轮次或沟通时间。已有的 [6 案例召回微评测](eval/session-recall/session-recall-effect-eval.md)记录了有用命中 4 → 6、无关注入 2 → 0；它衡量召回效果，不能换算成沟通成本降幅。
+**5 → 1，相当于少提供 80% 的背景项。** 这是一组解释机制的假设，不是真实追问次数或沟通时间的测量结果。已有的 [6 案例召回微评测](eval/session-recall/session-recall-effect-eval.md)记录了有用命中 **4 → 6**、无关注入 **2 → 0**；它衡量的是召回效果。
 
-采集由对应适配器和设置控制，对话记忆默认关闭。输入记录、整理草稿与已接受的记忆分开保存，原始输入不会自动等同于长期事实。
+### 2. 降低模型成本：在具体任务里验证，找到合适的组合
 
-### 2. 降低模型成本：为一个具体场景，找到合适的执行方案
+需求对齐之后，接下来是把事情做好。同一个模型，换一种提示词、检索方式或工具组织方式，结果和成本都可能不同。
 
-当你和 AI 对要做的事达成一致，下一步就是用可接受的成本把它做好。适合任务的方案取决于模型，也取决于提示词、上下文、Tools、Skills 和工作流。PAW Lab 固定场景、任务集与成功标准，先验证质量，再比较每次成功执行的成本，并将通过验证的版本部署为 PAW App，或导出为独立运行的应用。
+Agent Lab 固定任务与通过标准，先运行基线，再比较候选。**质量达标后，才比较成本；失败的便宜方案也会保留在记录中。**
 
-下面选取已有的 **EnterpriseOps 客户支持场景**：同一组 3 个 Validation 任务，由外部程序检查 31 项业务终态条件。所有方案均使用 `max` 推理强度。
+下面是已有的 **EnterpriseOps 客户支持实验**：3 个 Validation 任务，31 项业务终态检查，均使用 `max` 推理强度。
 
-| 方案 | 任务成功率 | 验收条件通过数 | 3 个任务的模型成本估算 | 本轮结论 |
-| --- | --- | --- | --- | --- |
-| Sol · 按需读取工具定义 | 3/3（100%） | 31/31 | $2.258372 | 基线 |
-| Sol · 预加载任务所需工具定义 | 3/3（100%） | 31/31 | $1.565709 | 保留，成本降低 30.67% |
-| Luna · 沿用预加载方案，仅换模型 | 2/3（66.7%） | 30/31 | $0.094533 | 质量不达标，不保留 |
-| Luna · 进一步明确提示词中的枚举约束 | 3/3（100%） | 31/31 | $0.072917 | 保留这一组合 |
+| 方案 | 完整任务通过 | 业务检查通过 | 3 个任务的成本估算 | 判定 |
+| --- | ---: | ---: | ---: | --- |
+| Sol · 已预加载所需工具定义 | 3/3 | 31/31 | $1.711214 | 基线 |
+| Luna · 只替换模型 | 2/3 | 30/31 | $0.094533 | 不保留，质量未达标 |
+| Luna · 再明确提示词中的枚举约束 | 3/3 | 31/31 | $0.072917 | 保留这一组合 |
 
-最后一个组合相对 Sol 预加载方案，成本估算降低 **95.34%**，本轮任务成功率保持 3/3。它包含模型和提示词两项变化，收益不能全部归因于更换模型。这也是 Lab 的用途：用同一场景的结果选择方案，便宜的失败候选也保留在对照中。
+最后一组相对 **Sol 基线**，成本估算降低 **95.74%**，本轮仍为 3/3 任务通过。收益来自模型与提示词的组合变化，不能全部归因于换模型。
 
-数据来自 2026-09-04 的历史 Validation 回执，成本按保存的用量和价格快照计算并与 Runtime 回执核对；不是 Provider 账单，也不是生产成功率或最终盲测结论。Sol 预加载方案耗时 564.55 秒，Luna 最终方案耗时 574.32 秒；这组成本收益伴随约 1.73% 的耗时增加。[工具定义对比](eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json) · [仅换模型结果](eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json) · [最终质量回执](eval/interview-metrics/runs/enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json) · [最终成本回执](eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-explicit-enum-prompt-20260904.r7.v1.json)
+<details>
+<summary>数据来源与适用范围</summary>
 
-![PAWOS 桌面与应用入口](assets/showcase/current/pawos-desktop.webp)
+数据对应当前公开记录的三阶段对照：Sol 基线 r8、Luna 仅换模型 r5、Luna 提示词调整 r7。金额使用保存的用量与价格快照计算，并与 Runtime 回执核对；它不是 Provider 账单。题目来自开发过程中使用过的 Validation 集，不能当作新盲测或生产成功率。
 
-PAWOS 前端参考 React OS，将 Agent、项目、协作、Memory、Knowledge 和 Agent Lab 放在同一个桌面工作空间。
+[Sol 基线质量](eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json) · [Sol 基线成本](eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-current-runtime-20260904.r8.v1.json) · [仅换模型的质量结果](eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json) · [提示词调整后的质量结果](eval/interview-metrics/runs/enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json) · [最终成本回执](eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-explicit-enum-prompt-20260904.r7.v1.json)
 
-当前仓库同时提供源码预览版和 Apple Silicon macOS 离线安装预览版。安装器包含桌面端、听写组件、Python 和 Pi Runtime，无需另装开发工具；请从 Release 下载 `.dmg`。安装预览版尚未获得 Developer ID 签名或 Apple 公证，签名、公证、安装和前台验收状态见[发布说明](release/README.md#source-publication-and-binary-release)。
-
-> 本页截图来自当前源码的公开演示数据，不含个人 Session 或凭据。截图中的运行状态和指标用于说明界面，不代表实时模型执行、性能结论或 macOS 前台验收。
-> [查看 17 张截图及采集范围](assets/showcase/current/README.md)。
+</details>
 
 ## 核心工作流
 
-PAW 把 Agent 工作拆成一条可以反复运行的链路：
-
-```text
-继续工作 → 组织协作 → 记录执行 → 定位问题 → 评测候选 → 交付应用
-   ↑                                                   ↓
-   └──────────── Memory / Knowledge / 项目上下文 ────────┘
-```
-
-1. **继续工作**：在一个 Session 中对话、读写工作区、运行命令、调用工具，并从中断处恢复。
-2. **组织协作**：任务需要分工时，再展开 Room，让多个独立 Pi Session 各自承担明确职责。
-3. **记录执行**：Trace 保存输入、模型请求、工具调用、记忆召回、状态变化和结果。
-4. **定位问题**：从真实执行记录中区分缺少上下文、工具失败、流程问题和配置问题。
-5. **评测候选**：在 Agent Lab 中固定案例和预期结果，比较 Model、Prompt、Tool、Skill、检索和 Workflow。
-6. **交付应用**：把经过验证的成果绑定到版本、文件和配置，准备为 PAW App 或导出为独立应用。
-
-## 功能
-
-### Agent：持续对话与工具执行
-
-围绕一个任务选择模型、推理强度和工作目录，在同一个 Session 中读取文件、运行命令、调用工具和查看结果。支持附件、消息分支、执行中补充指令、停止以及中断后的恢复。Pi 管理模型与工具循环，PAW 展示执行状态和持久回执。
-
-[上下文轨迹](assets/showcase/current/pawos-agent-trace.webp)按轮次呈现输入、角色、工具、Memory 召回和模型请求。正文、代码、文件和运行细节可以在同一工作空间中阅读。
-
-![Agent 对话、代码与结果](assets/showcase/current/pawos-agent.webp)
-
-### Room：按需展开多 Agent 协作
-
-简单任务保持单 Session。需要分工时，主 Agent 可以调用私有 Tool Agent，也可以在 Room 中派发给具有明确职责的 Partner Session。Facilitator 接收各方交付并汇总；每个参与者仍使用自己的 Pi Session。
-
-主对话保留整体任务和最终结果，伙伴窗口展示各自的公开进展、工具和交付。协作窗口可以收起，后台工具仍会继续运行；关闭视图和停止执行是两个不同动作。
-
-![Room 主任务与伙伴窗口](assets/showcase/current/pawos-room-collaboration.webp)
-
-### Memory：可追溯的长期上下文
-
-Memory 管理个人偏好、长期事实和项目决策。每条记忆保留状态、标签、关联来源和被 Session 使用的记录；整理草稿、直接编辑、版本、归档和回滚让长期内容能够持续维护。
-
-活动记录、待确认草稿和已接受事实分开保存。对话记忆默认关闭，可在输入栏开启；Room 中可以分别调整伙伴的 Memory、插件、Skill 和 Tool。设置从下一轮生效，已有内容不会被隐式改写。
-
-![Memory 的正文、来源与使用记录](assets/showcase/current/pawos-memory.webp)
-
-### Knowledge：资料导入、检索与引用
-
-Knowledge 管理外部资料，覆盖导入、解析、分块、索引和检索。搜索结果显示命中段落、标题路径和来源位置，并可返回原文核对；解析可以按配置接入本地 MinerU 等组件。
-
-Knowledge 与 Memory 保持独立的数据和检索边界。Agent 通过工具按需查询文档库，检索结果保留来源，便于检查回答依据。
-
-![Knowledge 的检索结果与原文位置](assets/showcase/current/pawos-knowledge.webp)
-
-### Trace：从执行记录定位改进点
-
-Trace 将原始对话、行动顺序、工具调用和执行状态放在一起。可以选择一个或多个 Session、Room 或运行记录，指定需要关注的 Model、Prompt、Tool、Skill、流程和上下文。
-
-诊断任务、候选改动、重测结果和版本决策分别记录。报告中的分析、验证结果和已应用版本有清晰边界，建议本身不会被当作已经生效的修复。
-
-![Trace Agent 的诊断对象与原始证据](assets/showcase/current/pawos-trace-agent.webp)
-
-### Agent Lab：评测、比较与应用交付
-
-以任务和业务材料建立项目，整理案例与预期结果，先执行基线，再比较 Model、Prompt、Tool、Skill、检索和 Workflow 候选方案。
-
-实验记录变量变化、案例结果、执行轨迹、用量和成本估算。开发集、Validation、Held-out 和生产结果保留各自的适用范围；质量先于成本，耗时单独记录为诊断信号。
-
-通过验证的成果可以准备为 PAW App，或导出为独立运行的应用。交付会绑定所选版本、文件和配置；独立运行所需的 Provider、Tool 与 Knowledge 能力由导出配置决定。
-
-![Agent Lab 的原方案与候选对照](assets/showcase/current/pawos-lab.webp)
-
-### App Center：Tools、Skills、Packages 与扩展 App
-
-Tools 提供可执行能力，Skills 提供按任务加载的方法，Pi Packages 承载可复用资源。App Center 提供安装预览、启用、停用、更新、版本恢复和卸载入口。
-
-源码内 React App 随产品构建；Lab 产物通过服务端激活清单提供应用身份，再由注册的页面宿主加载。宿主注册只决定页面如何打开，安装状态仍来自应用清单；运行中的 Session 保留自己的资源快照。
-
-![App Center 的安装状态与版本管理](assets/showcase/current/pawos-app-center.webp)
-
-### 桌面工作空间
-
-PAWOS 提供窗口、Dock、应用启动器、项目导航和独立结果窗口。以下工具共享工作空间，具体能力取决于已连接的 Runtime 和桌面适配器。
-
-| 工具 | 用途 | 界面 |
-| --- | --- | --- |
-| 项目工作台 | 查看项目概览、任务和工作文档，从最近项目继续工作 | [项目概览](assets/showcase/current/pawos-project.webp) |
-| Files | 无需 Session 即可浏览本机文件夹和外部磁盘；通过路径预览代码、Markdown、diff、SVG 和网页，Session 工作区可作为快捷入口 | [文件与预览](assets/showcase/current/pawos-files.webp) |
-| Browser | 组织网页标签与 Agent 浏览器操作；完整历史、书签和下载由桌面宿主提供 | [网页控制视图](assets/showcase/current/pawos-browser.webp) |
-| Terminal | 使用与工作目录关联的终端，查看输出、搜索记录和管理终端会话 | [内置终端](assets/showcase/current/pawos-terminal.webp) |
-| Input Studio | 配置可选的 Squirrel/Rime 输入、词库、语音和输入记录 | [输入设置](assets/showcase/current/pawos-input.webp) |
-| System Monitor | 按时间线查看事件、耗时、关联 Trace、上下文和问题诊断 | [运行记录](assets/showcase/current/pawos-monitor.webp) |
-| System Settings | 管理模型服务、外观、Agent 配置和治理设置 | [系统外观](assets/showcase/current/pawos-settings.webp) |
-
-## 隐私与权限
-
-PAW 的系统级上下文能力遵循明确边界：
-
-- **用户授权**：输入、语音、浏览器和工作区访问都由对应的桌面适配器与设置控制。
-- **范围控制**：Session 使用授权的工作目录；Room、Tool、Skill 和 Provider 使用自己的资源配置。
-- **敏感信息处理**：活动内容和记忆支持脱敏、隐藏、确认、归档和回滚；密码、银行卡、企业机密等内容不应被当作默认长期记忆。
-- **本地优先**：被动输入预测保持本地运行；显式 Agent、语音和 Knowledge 工作流才按所选配置调用服务。
-- **可追溯**：记忆和检索保留来源与使用记录，执行保留 Trace 和结果回执。
-
-启用输入适配器时，拼音解析、原生候选和用户词库由 Rime 管理，AI 候选保持独立标识，不替换或重排 Rime 解码结果。
-
-## 架构与职责
+### 背景如何变成下一次工作的上下文
 
 ```mermaid
 flowchart TD
-    UI[PAWOS / React 界面] -->|HTTP 命令与查询| GW[PAW Gateway]
-    GW -->|派发业务请求| Services[Session / Room / Memory / Knowledge / Lab]
-    Services -->|执行与停止请求| Pi[Managed Pi Runtime]
-    Pi -->|模型请求| Provider[Model Provider]
-    Pi -->|工具调用| Tools[Tools 与平台适配器]
-    Services -->|保存业务状态与回执| Store[(SQLite 与本地文件)]
-    GW -.->|SSE 事件与恢复快照| UI
-    Pi -.->|完成、失败或中断事件| Services
+    Input[授权输入与工作记录] -->|筛选、脱敏和整理| Draft[待核对的记忆草稿]
+    Draft -->|接受与保存| Memory[(有来源的记忆)]
+    Memory -->|按场景召回| IME[输入法补全]
+    Memory -->|按任务召回| Agent[Agent 执行]
+    Docs[项目资料与知识库] -->|检索相关段落| Agent
+    Agent -->|缺少必要背景时| Ask[向用户询问]
+    Ask -->|补充本次要求| Agent
 ```
 
-PAW 管理业务状态和持久记录，Pi 管理模型与工具执行，界面通过事件和快照恢复已有状态。
+记忆让已知背景可复用；缺失的信息在任务中补齐。输入记录、整理草稿与已接受的记忆分别保存，不把原始输入直接当成长期事实。
 
-| 层 | 主要职责 | 源码入口 |
-| --- | --- | --- |
-| 产品装配 | 启动界面，注册具体扩展页面宿主 | [src/app](control-center-web/src/app/) |
-| PAWOS | 桌面、窗口、扩展清单和页面加载 | [src/paw-os](control-center-web/src/paw-os/) |
-| 功能页面 | Agent、Memory、Knowledge、Lab、Trace 等交互 | [src/features](control-center-web/src/features/) |
-| Gateway / 应用服务 | API、持久化事件、Room 协作和能力配置 | [rag_ime](rag_ime/) |
-| HTTP 适配 | 请求参数、合约和错误响应 | [路由表](rag_ime/control_api/route_table.py) · [Lab 错误映射](rag_ime/control_api/lab_errors.py) |
-| Pi 接入 | Session、模型/工具循环、压缩、停止和恢复 | [模块说明](rag_ime/pi/README.md) · [生命周期适配器](rag_ime/pi/runtime.py) |
-| Room 工作项 | 分配、交付、验收、返修和通知 | [模块说明](rag_ime/rooms/README.md) · [应用服务](rag_ime/rooms/work_application.py) |
-| Agent Lab | 项目接入、Trial、场景适配、比较和应用交付 | [模块说明](rag_ime/agent_lab/README.md) |
-| 数据与平台 | 数据库、浏览器、桌面、语音和输入适配 | [db](rag_ime/db/) · [integrations](integrations/) · [squirrel-patches](squirrel-patches/) |
+### 一个方案如何变成可交付的 App
 
-Pi 执行只支持协议 2 Host。旧协议 1 执行器已退役；历史 Session 的 JSONL 和 RuntimeBinding 读取仍保留。
+```mermaid
+flowchart TD
+    Eval[目标、材料与冻结的评测标准] -->|运行当前方案| Baseline[基线结果]
+    Eval -->|只改一个方向后运行| Candidate[候选结果]
+    Baseline -->|作为对照| Gate{候选质量是否达标}
+    Candidate -->|逐项核对| Gate
+    Gate -->|未达标| Retry[保存失败依据，继续调整下一轮]
+    Gate -->|达标，再比较成本与用量| Result[保留方案与原始运行]
+    Result -->|准备版本并试用| App[PAW App / 独立 App]
+```
 
-扩展页面采用产品装配：`registerProductExtensionHosts()` 绑定 `lab-html` 的惰性加载器，OS 注册表通过宿主类型加载页面，不直接导入 `LabAppHost`。依赖约束由 [check_owner_boundaries.py](scripts/check_owner_boundaries.py) 检查并接入 CI。
+Agent 围绕同一项目推进材料、运行、结果和交付。每轮改了什么、为什么保留或放弃，都能回到对应的运行记录。[查看指标对照图](assets/showcase/readme/lab-metrics.webp)。
+
+![新版 Agent Lab：材料、运行、成果与应用交付](assets/showcase/readme/lab-workspace.webp)
+
+*新版源码界面，使用公开实验元数据展示。图中历史实验没有重新运行，不代表当前模型成绩。[配图来源](assets/showcase/readme/README.md)。*
 
 ## 开始使用
 
-### 查看 PAWOS 前端
+### 直接安装 macOS 预览版
 
-需要 Git、Python 3.12+、uv、Node.js 22.19+ 和 pnpm 11.9.0：
+1. 打开 [Releases](https://github.com/7155/personal-agent-workbench/releases)，选择所需版本的 `macOS-arm64-unsigned.dmg`，按同页 `SHA256SUMS.txt` 核对文件。
+2. 打开 DMG，运行 **Install Personal Agent Workbench**。安装到当前用户的 `~/Applications`。
+3. 启动 PAW，在设置中连接模型服务：填写自己的 API Key，或使用该 Provider 支持的 OAuth 登录。
+4. 打开 **Agent**，选择一个可用模型，完成下面的第一个教程。
+
+需要 **Apple Silicon、macOS 14+**。离线安装包包含所需运行组件，无需单独安装 Git、Node 或 Python。当前为未经过 Developer ID 签名和 Apple 公证的预览版；macOS 可能要求在“隐私与安全性”中选择“仍要打开”。可选 Squirrel 输入法与本地模型权重单独安装。[完整安装、升级与回滚说明](release/README.md)。
+
+### 先看界面，再决定是否安装
+
+只预览前端，需要 Git、**Node.js 22.19+、pnpm 11.9.0**；无需模型账号：
 
 ```bash
 git clone https://github.com/7155/personal-agent-workbench.git
-cd personal-agent-workbench
-uv sync --locked
+cd personal-agent-workbench/control-center-web
 corepack enable
 corepack prepare pnpm@11.9.0 --activate
-pnpm --dir control-center-web install --frozen-lockfile
-pnpm --dir control-center-web dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
-开发服务器会显示访问地址。加上 `/?frontend=paw-os&controlTransport=mock` 可打开公开演示界面。真实 Agent 调用需要 Gateway 和匹配的 managed Pi Runtime。
+在开发服务器显示的地址后添加 `/?frontend=paw-os&controlTransport=mock`。这是公开演示模式，可以查看界面；真实模型调用、本机文件读取和完整原生 Browser 需要实际运行环境。开发后端与 Gateway 的步骤见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [源码构建指南](release/README.md#source-build-requirements)。
 
-### 运行本地 Gateway
+## 上手教程
 
-```bash
-uv run --locked python -m rag_ime.cli init-db
+以下真实执行教程适用于已连接 Runtime 和模型的安装版。输入法与自动采集都不是开始使用的前提。
 
-RAG_IME_CONTROL_TRANSPORT=http \
-RAG_IME_CONTROL_BUILD_CHANNEL=production \
-  scripts/build_control_center_web.sh
+### 教程一：完成一次对话，再接着修改
 
-uv run --locked python -m rag_ime.cli agent-gateway \
-  --host 127.0.0.1 --port 8768 \
-  --web-dist control-center-web/dist
+1. 打开 **Agent**，选择可用模型，发送：
+
+   ```text
+   把下面的安排整理成待办清单，保留时间，不补充未提供的信息：
+   周三上午整理产品反馈，周四下午和同事核对，下周一提交总结。
+   ```
+
+2. 回答完成后，在同一个对话继续输入：“改成表格，增加一列待确认事项。”
+3. 展开本轮执行记录，核对所用模型、完成状态和实际返回的内容。
+
+**完成标志**：后续修改沿用同一任务背景，原始回答和执行记录仍可查看。
+
+想体验记忆时，先在 **Memory** 核对已有记忆及来源，再打开对话栏的记忆选项。在本轮记忆记录中查看实际召回的内容；没有召回时，补充背景或调整记忆，不把“已开启”当成“已理解”。
+
+### 教程二：让回答带着资料来源
+
+把下面内容保存为 `support-demo.md`。这是教程用的虚构业务说明，不含个人资料：
+
+```markdown
+# 示例售后说明
+- 普通商品在签收后 7 天内可以申请退货。
+- 人工客服会在 1 个工作日内首次回复工单。
+- 因商品质量问题退货，商家承担退货运费。
+- 退款到账时间未在本说明中约定，需要客服进一步确认。
 ```
 
-随后访问 `http://127.0.0.1:8768`。Agent 执行需要安装与[Runtime 合约](integrations/pi/session-runtime-host-contract.json)兼容的 Pi，并在设置中配置 Provider API Key 或受支持的 OAuth 登录。
+1. 打开 **Knowledge**，创建一个用于练习的知识库，导入这个文件，等解析和索引完成。
+2. 先搜索“退货运费”，检查命中段落是否来自该文件。
+3. 在 Agent 中要求：“查询这个知识库，说明退货期限和运费规则，并标明来源；资料没写的内容请明确说明。”
 
-已有安装应使用整套安装脚本更新组件，避免前后端和 Runtime 版本不同步。数据库、认证信息、模型权重和插件业务资料由用户本地管理。
+**完成标志**：回答能回到导入文件中的对应段落。再问“退款几天到账”，应得到资料未约定的说明，而不是猜测一个天数。
 
-## 构建、验证与证据边界
+![Knowledge：从检索结果回到资料原文](assets/showcase/current/pawos-knowledge.webp)
 
-从 [CONTRIBUTING.md](CONTRIBUTING.md) 配置开发环境，并按功能定位源码和测试。常用检查如下：
+### 教程三：在 Lab 比较方案，导出自己的 App
 
-```bash
-uv run --locked python scripts/check_project_harness.py
-uv run --locked python -m compileall -q rag_ime scripts tests
-uv run --locked python scripts/check_owner_boundaries.py
-uv run --locked python scripts/check_import_boundaries.py
-uv run --locked python scripts/check_route_ownership.py
-uv run --locked python -m unittest discover -s tests
-pnpm --dir control-center-web typecheck
-pnpm --dir control-center-web test
-pnpm --dir control-center-web build
-```
+使用同一份 `support-demo.md`：
 
-输入、语音和桌面行为还需要在真实前台应用中验证。源码、Mock、JSON、截图和构建产物可以证明对应层的状态，不能单独证明 Provider 额度、真实候选可见性、macOS 权限、安装状态或前台交互已经通过。
+1. 打开 **Agent Lab → 新建项目**，添加文件，并写下目标：
 
-更完整的构建、签名、安装、升级、回滚和维护说明见 [release/README.md](release/README.md)。
+   ```text
+   做一个基于这份售后说明的问答 App。
+   回答必须有资料依据；资料未约定的内容要说明未知。
+   先起草 4 道小型评测题及通过标准，区分开发题和留出题供我核对。
+   使用已配置的模型，本轮只比较一组基线和候选；保留失败与实际用量。
+   完成后把结果做成可视化，并准备可试用、可导出的 App。
+   ```
 
-## 项目文档
+2. 在项目对话中核对题目与通过标准。缺少材料或模型配置时补齐，沿用当前项目继续。
+3. 在 **运行** 中查看基线与候选的真实状态；在 **成果** 中查看改动、逐项指标和原始运行引用。
+4. 在 **应用交付** 试用准备好的版本。满意后选择 **添加至 PAW**，或 **下载独立 App**。
+5. 解压独立包，按包内 README 配置模型并启动。文本生成 App 的基本命令为 `python3 app.py`；知识库、工具与外部工作台的依赖以所导出版本的说明为准。
 
-| 文档或目录 | 用途 |
+**完成标志**：有可核对的运行结果，也有能实际输入并获得回答的 App。候选没超过基线、金额未回报、运行失败，都应该如实显示；不需要为了“优化成功”改写成绩。
+
+> **版本提示**：`main` 的 Lab 已包含新版项目与成果界面。Release 只包含对应标签的代码；若安装包界面与本文不同，先查看版本和 [CHANGELOG](CHANGELOG.md)。导入已有实验只复制历史记录，复跑需要当前材料和执行环境。
+
+## 功能
+
+| 你要做的事 | 使用什么 | 可以看到什么 |
+| --- | --- | --- |
+| 持续完成一项工作 | **Agent** | 对话、附件、工具、分支、停止与恢复 |
+| 任务需要分工 | **Room** | 主任务、伙伴进展和交付；每个伙伴使用自己的 Pi Session |
+| 复用偏好与决策 | **Memory** | 记忆正文、来源、使用记录、版本与撤回 |
+| 查阅文档 | **Knowledge** | 导入、解析、检索、引用与原文位置 |
+| 找出为什么失败 | **Trace** | 模型请求、工具调用、上下文与执行状态 |
+| 比较并交付方案 | **Agent Lab** | 基线、候选、失败、指标、版本与 App |
+| 管理扩展能力 | **App Center** | Tools、Skills、Packages、扩展 App 及安装状态 |
+| 操作本机工作环境 | **Files / Browser / Terminal** | 文件预览、完整浏览器与终端；Files 读取不要求 Session |
+| 配置输入与系统 | **Input Studio / System Settings** | 可选输入法、语音、模型服务和外观设置 |
+
+简单任务使用一个 Session；需要分工时再展开 Room。[查看完整功能图集](assets/showcase/current/README.md)。
+
+## 常见问题
+
+| 遇到的情况 | 下一步 |
 | --- | --- |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 开发环境、变更纪律、扩展合约和验证要求 |
-| [release](release/README.md) | 依赖、构建、安装、升级、回滚和发布 |
-| [本地运维](release/operations.md) | 对话导入、旧记忆迁移和多设备 Gateway |
-| [功能图集](assets/showcase/current/README.md) | 各 App 的界面、用途和截图说明 |
-| [eval](eval/) | 测评案例、实验方法和结果记录 |
-| [tests](tests/) · [scripts](scripts/) | 回归检查、构建和维护工具 |
-| [SECURITY.md](SECURITY.md) | 漏洞报告和敏感数据处理 |
-| [AGENTS.md](AGENTS.md) | 仓库协作和项目边界说明 |
+| 页面有示例数据，却不能执行真实任务 | 检查是否用了 `controlTransport=mock`；切换到安装版或已连接的真实 Gateway。 |
+| 模型不可用、未登录或额度不足 | 在设置中核对所选 Provider 与模型。界面连通不等于模型账号可调用。 |
+| 历史项目提示“准备复跑” | 补充当前材料和执行条件；已有结果仍可查看。 |
+| 文件不在任何 Session 中 | 在 Files 地址栏直接打开本机文件夹或外部磁盘路径；保存修改仍遵循工作区权限。 |
+| 独立 App 能打开，却无法生成回答 | 按包内 README 配置模型服务，或连接持有该版本的本机 PAW；模型凭据不随包导出。 |
+| 后端更新了，界面仍是旧版 | 使用整套安装流程更新，核对版本后重新打开 PAW。[更新与回滚](release/README.md#local-installation)。 |
+
+## 隐私与权限
+
+- **采集可选、范围明确**：输入、语音、浏览器和桌面能力由对应适配器与设置控制。对话记忆默认关闭。
+- **内容可核对、可撤回**：原始记录、整理草稿和已接受事实分开保存，记忆与检索保留来源。
+- **本地优先**：被动输入预测保持本地运行；显式 Agent、语音和 Knowledge 工作流按配置调用服务。
+- **权限由执行方落实**：Session、Room、工具和 Provider 使用各自的资源配置。Rime 继续负责拼音解析与原生候选，AI 补全保持独立标识。
+
+[Memory 生命周期](rag_ime/memory_lifecycle/README.md) · [安全问题反馈](SECURITY.md)。
+
+## 架构与职责
+
+Pi 负责 Session、模型与工具执行；PAW 负责工作空间、协作、记忆、评测与交付。界面通过命令、事件和快照恢复当前状态。
+
+```mermaid
+flowchart TD
+    UI[PAWOS 界面] -->|HTTP 命令与查询| GW[PAW Gateway]
+    GW -->|业务请求| Services[PAW 应用服务]
+    Services -->|执行与停止请求| Pi[Pi Runtime]
+    Pi -->|模型请求| Provider[Model Provider]
+    Pi -->|工具调用| Tools[Tools 与平台适配器]
+    Services -->|保存状态与回执| Store[(SQLite 与本地文件)]
+    Pi -.->|完成、失败或中断事件| Services
+    GW -.->|SSE 事件与恢复快照| UI
+```
+
+执行成功、失败和中断都回到同一套状态记录；窗口关闭与任务停止分别处理。
+
+| 层 | 源码入口 |
+| --- | --- |
+| 产品装配与扩展宿主 | [src/app](control-center-web/src/app/) |
+| PAWOS 桌面与窗口 | [src/paw-os](control-center-web/src/paw-os/) |
+| 各功能页面 | [src/features](control-center-web/src/features/) |
+| Gateway 与应用服务 | [rag_ime](rag_ime/) |
+| Pi 集成与资源 | [integrations/pi](integrations/pi/) |
+| 生命周期与持久化 | [rag_ime/db](rag_ime/db/) · [Runtime 合约](integrations/pi/session-runtime-host-contract.json) |
+
+扩展页面通过 `registerProductExtensionHosts()` 装配，OS 按宿主类型加载页面。职责边界由 [check_owner_boundaries.py](scripts/check_owner_boundaries.py) 检查。
+
+## 开发与文档
+
+[CONTRIBUTING.md](CONTRIBUTING.md) 包含环境、测试与贡献流程；[release/README.md](release/README.md) 包含源码构建、安装、升级和回滚。源码开发需要 Python 3.12+、uv，以及前端要求的 Node / pnpm；完整 Agent 执行还需要符合合约的 managed Pi Runtime。
+
+| 文档 | 用途 |
+| --- | --- |
+| [本地运维](release/operations.md) | 对话导入、旧记忆迁移、多设备 Gateway |
+| [功能图集](assets/showcase/current/README.md) | 各 App 的截图与范围说明 |
+| [eval](eval/) · [examples/lab](examples/lab/README.md) | 实验回执与可运行的离线 Lab 示例 |
+| [tests](tests/) · [scripts](scripts/) | 回归、构建与维护 |
+| [AGENTS.md](AGENTS.md) | 仓库协作规范 |
 
 ## 许可与致谢
 
 项目自有源码采用 [GPL-3.0-only](LICENSE)，Copyright © 2026 7155。第三方组件、模型和服务保留各自许可，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-感谢 Pi、Electron、React、Squirrel/librime 及相关开源项目。PAWOS 的界面设计参考 React OS，来源和许可边界见[来源说明](control-center-web/docs/references/README.md)。
+感谢 Pi、Electron、React、Squirrel/librime 及相关开源项目。PAWOS 界面参考 React OS，详见[来源说明](control-center-web/docs/references/README.md)。

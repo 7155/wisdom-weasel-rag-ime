@@ -1,0 +1,5 @@
+html,body,#root{height:100%;margin:0;overflow:hidden}
+body{font-family:var(--font-sans);background:var(--color-surface,#fff)}
+.readme-label{height:30px;padding:0 22px;display:flex;align-items:center;background:#f5f6f8;color:#596476;border-bottom:1px solid #dde2e9;font-size:12px}
+.readme-lab{height:calc(100dvh - 30px)}
+[data-theme=dark] .readme-label{background:#141e30;color:#a9b5c9;border-bottom-color:#34425a}
